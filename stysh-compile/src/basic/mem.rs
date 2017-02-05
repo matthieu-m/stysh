@@ -10,11 +10,12 @@
 //! Memory once owned by an arena is never deallocated unless explicitly asked
 //! for; recycling is simply about wiping it out (in Debug mode) and reusing it.
 
-use std::{cell, mem, ptr};
+use std;
+use std::{cell, mem, ops, ptr, slice};
 
 /// The Arena structure
 ///
-/// Handles type-less allocation; types so allocated must not implement `Drop`
+/// Handles type-less allocation; types so allocated should not implement `Drop`
 /// as it will never be called.
 ///
 /// The Arena cannot be recycled or shrunk as long as a single reference lives.
@@ -22,6 +23,16 @@ use std::{cell, mem, ptr};
 /// On the other hand, further values may be handed to the Arena without
 /// invalidating the current ones.
 pub struct Arena(cell::UnsafeCell<ArenaImpl>);
+
+/// The Array structure
+///
+/// Similar to the standard Vec, but grows its memory from an arena instead.
+pub struct Array<'a, T: 'a> {
+    arena: &'a Arena,
+    capacity: usize,
+    length: usize,
+    ptr: *mut T
+}
 
 impl Arena {
     /// Creates a fresh `Arena`.
@@ -41,6 +52,21 @@ impl Arena {
     /// value.
     pub fn insert<'a, T: 'a>(&'a self, t: T) -> &'a mut T {
         self.get_mut().insert(t)
+    }
+
+    /// Inserts a slice into the `Arena`, and returns a reference to the new
+    /// slice.
+    pub fn insert_slice<'a, T: 'a>(&'a mut self, ts: &[T]) -> &'a mut [T] {
+        self.get_mut().insert_slice(ts)
+    }
+
+    /// Reserves an area of memory for `nb` items of type `T` laid contiguously.
+    ///
+    /// # Warning
+    ///
+    /// The memory is uninitialized, and no lifetime is carried by the pointer.
+    pub fn reserve<'a, T: 'a>(&'a self, nb: usize) -> *mut T {
+        self.get_mut().reserve::<T>(nb)
     }
 
     /// Shrinks the `Arena` to fit its current load.
@@ -73,6 +99,80 @@ impl Arena {
     }
 }
 
+impl<'a, T: 'a> Array<'a, T> {
+    /// Creates a new, empty, instance.
+    pub fn new(arena: &'a Arena) -> Array<'a, T> {
+        Array { arena: arena, capacity: 0, length: 0, ptr: ptr::null_mut() }
+    }
+
+    /// Creates a new, empty, instance with at least the specified capacity.
+    pub fn with_capacity(cap: usize, arena: &'a Arena) -> Array<'a, T> {
+        let mut result = Array::new(arena);
+        result.reserve(cap);
+        result
+    }
+
+    /// Returns the current capacity of the array.
+    pub fn capacity(&self) -> usize { self.capacity }
+
+    /// Clears the array, removing all elements.
+    ///
+    /// Note: does NOT call `Drop` on any element.
+    pub fn clear(&mut self) { self.length = 0; }
+
+    /// Pushes a new item at the back of the array.
+    ///
+    /// Note: in the case where the array does not have enough capacity, it
+    /// reallocates the underlying storage.
+    pub fn push(&mut self, t: T) {
+        self.reserve(1);
+        unsafe {
+            ptr::write(self.ptr.offset(self.length as isize), t);
+        }
+        self.length += 1;
+    }
+
+    /// Reserves the necessary spaces for `n` more items.
+    ///
+    /// Note: if the capacity is already sufficient, has no effect, otherwise
+    /// increases the capacity to at least be enough for `n` more items. This
+    /// reallocates the underlying storage.
+    pub fn reserve(&mut self, n: usize) {
+        if self.length + n <= self.capacity { return; }
+
+        let new_capacity = Array::<T>::next_power_of_two(self.length + n);
+        assert!(new_capacity <= std::usize::MAX / 2 + 1);
+
+        let new_ptr = self.arena.reserve::<T>(new_capacity);
+        unsafe {
+            ptr::copy_nonoverlapping(self.ptr, new_ptr, self.length);
+        }
+
+        self.capacity = new_capacity;
+        self.ptr = new_ptr;
+    }
+
+    /// Extracts a slice containing the entire array.
+    pub fn as_slice(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.ptr, self.length) }
+    }
+
+    /// Extracts a mutable slice containing the entire array.
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
+}
+
+impl<'a, T: 'a> ops::Deref for Array<'a, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] { self.as_slice() }
+}
+
+impl<'a, T: 'a> ops::DerefMut for Array<'a, T> {
+    fn deref_mut(&mut self) -> &mut [T] { self.as_mut_slice() }
+}
+
 //
 //  Implementation Details
 //
@@ -102,10 +202,33 @@ impl ArenaImpl {
     }
 
     fn insert<'a, T: 'a>(&'a mut self, t: T) -> &'a mut T {
+        unsafe {
+            let spot = self.reserve::<T>(1);
+            ptr::write(spot, t);
+            &mut *spot
+        }
+    }
+
+    fn insert_slice<'a, T: 'a>(&'a mut self, ts: &[T]) -> &'a mut [T] {
+        if ts.is_empty() {
+            return &mut [];
+        }
+
+        unsafe {
+            let spot = self.reserve::<T>(ts.len());
+            ptr::copy_nonoverlapping(ts.as_ptr(), spot, ts.len());
+            slice::from_raw_parts_mut(spot, ts.len())
+        }
+    }
+
+    fn reserve<'a, T: 'a>(&'a mut self, nb: usize) -> *mut T {
+        if nb == 0 { return ptr::null_mut() }
+
         debug_assert!(mem::align_of::<T>() <= 8);
+        assert!(mem::size_of::<T>() <= std::usize::MAX / nb);
 
         // 1. Ensure 8-bytes alignment for next type.
-        let size = mem::size_of::<T>();
+        let size = mem::size_of::<T>() * nb;
         let size = if size % 8 == 0 { size } else { size + (8 - size % 8) };
 
         // 2. Prepare memory
@@ -120,14 +243,9 @@ impl ArenaImpl {
         }
 
         // 3. Place in memory
-        unsafe {
-            let spot: &mut u8 =
-                &mut self.pools[self.pool_index][self.next_index];
-            let spot: *mut T = spot as *mut u8 as *mut T;
-            ptr::write(spot, t);
-            self.next_index += size;
-            &mut *spot
-        }
+        let spot: &mut u8 = &mut self.pools[self.pool_index][self.next_index];
+        self.next_index += size;
+        spot as *mut u8 as *mut T
     }
 
     fn shrink_to_fit(&mut self) {
@@ -157,16 +275,33 @@ impl ArenaImpl {
     }
 }
 
+impl<'a, T: 'a> Array<'a, T> {
+    fn next_power_of_two(n: usize) -> usize {
+        //  http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+        let mut n = n;
+        n -= 1;
+        n |= n >> 1;
+        n |= n >> 2;
+        n |= n >> 4;
+        n |= n >> 8;
+        n |= n >> 16;
+        if mem::size_of::<usize>() == 64 {
+            n |= n >> 32;
+        }
+        n + 1
+    }
+}
+
 //
 //  Tests
 //
 #[cfg(test)]
 mod tests {
     use std::fmt;
-    use super::Arena;
+    use super::{Arena, Array};
 
     #[test]
-    fn overview() {
+    fn arena_overview() {
         //  A simple brush test exercising a mixture of features:
         //  -   a mixed load of varied size and alignment, interspersed,
         //  -   the new/capacity/used/insert methods,
@@ -228,5 +363,32 @@ mod tests {
         check(&v16, &c16);
         check(&v32, &c32);
         check(&v64, &c64);
+    }
+
+    #[test]
+    fn array_overview() {
+        let arena = Arena::new();
+        let mut array = Array::new(&arena);
+        let mut vec = Vec::new();
+
+        for i in 0..256usize {
+            array.push(i);
+            vec.push(i);
+        }
+
+        assert_eq!(array.as_slice(), vec.as_slice());
+
+        let used = arena.used();
+
+        array.clear();
+        vec.clear();
+
+        for i in 0..256usize {
+            array.push(i);
+            vec.push(i);
+        }
+
+        assert_eq!(arena.used(), used);
+        assert_eq!(array.as_slice(), vec.as_slice());
     }
 }

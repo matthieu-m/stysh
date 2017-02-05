@@ -5,6 +5,7 @@
 //! This is implemented as a stream, to avoid unnecessary memory allocation.
 
 use std;
+use basic::com;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Kind {
@@ -45,6 +46,10 @@ impl Token {
 
     pub fn offset(&self) -> usize {
         self.offset as usize
+    }
+
+    pub fn range(&self) -> com::Range {
+        com::Range::new(self.offset(), self.length())
     }
 }
 

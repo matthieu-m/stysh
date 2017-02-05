@@ -161,6 +161,11 @@ impl<'a, T: 'a> Array<'a, T> {
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
     }
+
+    /// Extracts the mutable slice containing the array elements.
+    pub fn into_slice(self) -> &'a mut [T] {
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
 }
 
 impl<'a, T: 'a> ops::Deref for Array<'a, T> {
@@ -390,5 +395,6 @@ mod tests {
 
         assert_eq!(arena.used(), used);
         assert_eq!(array.as_slice(), vec.as_slice());
+        assert_eq!(array.into_slice(), vec.as_slice());
     }
 }

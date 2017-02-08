@@ -8,30 +8,41 @@
 
 use basic::com;
 
+/// A List of AST nodes.
 pub type List<'a> = &'a [Node<'a>];
 
+/// An AST node, the building piece of the graph.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Node<'a> {
+    /// An expression.
     Expr(&'a Expression<'a>),
 }
 
+/// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expression<'a> {
+    /// A binary operation.
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
+    /// A literal.
     Lit(Literal, com::Range),
 }
 
+/// A Binary Operator such as `+` or `*`.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BinaryOperator {
+    /// The `+` operator.
     Plus,
 }
 
+/// A Literal value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Literal {
+    /// An integral value.
     Integral
 }
 
 impl<'a> Node<'a> {
+    /// Returns the range spanned by the node.
     pub fn range(&self) -> com::Range {
         use self::Node::Expr;
 
@@ -42,6 +53,7 @@ impl<'a> Node<'a> {
 }
 
 impl<'a> Expression<'a> {
+    /// Returns the range spanned by the expression.
     pub fn range(&self) -> com::Range {
         use self::Expression::{BinOp, Lit};
 

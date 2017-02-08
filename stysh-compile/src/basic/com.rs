@@ -4,6 +4,11 @@
 
 use std;
 
+/// A Range represents a start and end position in a buffer.
+///
+/// Note:   the `Range` does not know which buffer it indexes in.
+///
+/// Note:   a `Range` cannot index past 4GB.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Range {
     offset: u32,
@@ -11,6 +16,9 @@ pub struct Range {
 }
 
 impl Range {
+    /// Creates a new `Range` from a start position and length.
+    ///
+    /// In Debug, it is checked that the end position will not exceed 4GB.
     pub fn new(offset: usize, length: usize) -> Range {
         debug_assert!(offset <= std::u32::MAX as usize);
         debug_assert!(length <= std::u32::MAX as usize);
@@ -18,12 +26,17 @@ impl Range {
         Range { offset: offset as u32, length: length as u32 }
     }
 
+    /// Returns the start position of the range.
     pub fn offset(self) -> usize { self.offset as usize }
 
+    /// Returns the end position of the range (excluded).
     pub fn end_offset(self) -> usize { self.offset() + self.length() }
 
+    /// Returns the length of the range.
     pub fn length(self) -> usize { self.length as usize }
 
+    /// Extend one range with another, the resulting range spans both ranges,
+    /// and in the case they were discontiguous also spans the interval.
     pub fn extend(self, other: Range) -> Range {
         if self.offset > other.offset {
             other.extend(self)

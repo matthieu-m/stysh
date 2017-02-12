@@ -15,7 +15,7 @@ pub type List<'a> = &'a [Node<'a>];
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Node<'a> {
     /// An expression.
-    Expr(&'a Expression<'a>),
+    Expr(Expression<'a>),
 }
 
 /// An Expression.
@@ -92,7 +92,7 @@ mod tests {
         let left = expr_lit_integral(3, 1);
         let right = expr_lit_integral(7, 1);
         let expr = Expression::BinOp(BinaryOperator::Plus, &left, &right);
-        let node = Node::Expr(&expr);
+        let node = Node::Expr(expr);
 
         assert_eq!(node.range(), range(3, 5));
     }

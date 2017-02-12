@@ -56,7 +56,7 @@ impl Arena {
 
     /// Inserts a slice into the `Arena`, and returns a reference to the new
     /// slice.
-    pub fn insert_slice<'a, T: 'a>(&'a mut self, ts: &[T]) -> &'a mut [T] {
+    pub fn insert_slice<'a, T: 'a>(&'a self, ts: &[T]) -> &'a mut [T] {
         self.get_mut().insert_slice(ts)
     }
 

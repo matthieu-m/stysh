@@ -1,22 +1,19 @@
 //! Syntactic pass, aka parsing.
 //!
-//! There is for now a single pass:
-//! -   the "parse" pass produces a list of `syn::Node` from raw input.
+//! This pass is in charge of transforming the Token Tree into the Syn model,
+//! aka Abstract Syntax Tree.
 
-use std::iter::Peekable;
+use std::iter;
 
 use basic::mem;
 
+use model::tt;
 use model::syn::*;
-use pass::syn::lex;
 
 /// The Stysh parser.
 ///
-/// The responsibility of the parser is to turn a raw slice of bytes and turn it
-/// into an Abstract Syntax Tree retaining all pertinent information (even
-/// comments).
-///
-/// No client should have to parse the raw slice by themselves.
+/// The responsibility of the parser is to transform the Token Tree into an
+/// Abstract Syntax Tree.
 pub struct Parser<'g, 'local> {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
@@ -33,16 +30,18 @@ impl<'g, 'local> Parser<'g, 'local> {
         Parser { global_arena: global, local_arena: local }
     }
 
-    /// Parses a raw slice of bytes into a list of top-level AST items.
-    ///
-    /// Note:   since the T in AST stands for Tree, each top-level AST item may
-    ///         have children items.
-    pub fn parse(&mut self, raw: &[u8]) -> List<'g> {
+    /// Parses a slice of raw Token Trees into an Abstract Syntax Tree.
+    pub fn parse(&mut self, nodes: &'g [tt::Node<'g>]) -> List<'g> {
         let mut buffer = mem::Array::new(self.local_arena);
 
-        let mut tokens = lex::Stream::new(raw).peekable();
-        while let Some(_) = tokens.peek() {
-            buffer.push(self.parse_node(&mut tokens));
+        let imp = ParserImpl {
+            nodes: nodes,
+            global_arena: self.global_arena,
+            local_arena: self.local_arena,
+        };
+
+        for node in imp {
+            buffer.push(node);
         }
 
         self.global_arena.insert_slice(buffer.into_slice())
@@ -56,39 +55,56 @@ trait IntoExpr<'g> {
     fn into_expr(self) -> Option<Expression<'g>>;
 }
 
-impl<'g> IntoExpr<'g> for lex::Token {
+impl<'g> IntoExpr<'g> for tt::Token {
     fn into_expr(self) -> Option<Expression<'g>> {
         use self::Expression::*;
         use self::Literal::*;
 
         match self.kind() {
-            lex::Kind::Integral => Some(Lit(Integral, self.range())),
-            lex::Kind::OperatorPlus => None,
+            tt::Kind::Integral => Some(Lit(Integral, self.range())),
+            tt::Kind::OperatorPlus => None,
         }
     }
 }
 
-impl<'g, 'local> Parser<'g, 'local> {
-    fn parse_node(&mut self, tokens: &mut Peekable<lex::Stream>) -> Node<'g> {
-        Node::Expr(self.parse_expression(tokens))
-    }
+struct ParserImpl<'g, 'local> {
+    nodes: &'g [tt::Node<'g>],
+    global_arena: &'g mem::Arena,
+    #[allow(dead_code)]
+    local_arena: &'local mem::Arena,
+}
 
-    fn parse_expression(&mut self, tokens: &mut Peekable<lex::Stream>)
-        -> Expression<'g>
-    {
+impl<'g, 'local> iter::Iterator for ParserImpl<'g, 'local> {
+    type Item = Node<'g>;
+
+    fn next(&mut self) -> Option<Node<'g>> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+
+        let result = match self.nodes[0] {
+            tt::Node::Run(tokens) =>
+                Some(Node::Expr(self.parse_expression(tokens))),
+            _ => unimplemented!(),
+        };
+
+        self.nodes = &self.nodes[1..];
+
+        result
+    }
+}
+
+impl<'g, 'local> ParserImpl<'g, 'local> {
+    fn parse_expression(&mut self, tokens: &[tt::Token]) -> Expression<'g> {
         let left_operand: &'g Expression<'g> = self.intern(
-            tokens
-                .next().expect("Left operand")
-                .into_expr().expect("Integral")
+            tokens[0].into_expr().expect("Integral")
         );
 
-        let operator = tokens.next().expect("Operator");
-        assert_eq!(operator.kind(), lex::Kind::OperatorPlus);
+        let operator = tokens[1];
+        assert_eq!(operator.kind(), tt::Kind::OperatorPlus);
 
         let right_operand: &Expression = self.intern(
-            tokens
-                .next().expect("Right operand")
-                .into_expr().expect("Integral")
+            tokens[2].into_expr().expect("Integral")
         );
 
         Expression::BinOp(
@@ -109,19 +125,25 @@ impl<'g, 'local> Parser<'g, 'local> {
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
+    use model::tt;
     use model::syn::*;
     use super::Parser;
 
     #[test]
     fn first_parse() {
         let global_arena = mem::Arena::new();
-        let mut local_arena = mem::Arena::new();
-
-        let items = Parser::new(&global_arena, &local_arena).parse(b"1 + 2");
-        local_arena.recycle();
 
         assert_eq!(
-            items,
+            synit(
+                &global_arena,
+                &[
+                    tt::Node::Run(&[
+                        tt::Token::new(tt::Kind::Integral, 0, 1),
+                        tt::Token::new(tt::Kind::OperatorPlus, 2, 1),
+                        tt::Token::new(tt::Kind::Integral, 4, 1),
+                    ])
+                ]
+            ),
             &[
                 Node::Expr(
                     Expression::BinOp(
@@ -138,5 +160,16 @@ mod tests {
                 )
             ]
         );
+    }
+
+    fn synit<'g>(global_arena: &'g mem::Arena, nodes: &'g [tt::Node<'g>])
+        -> List<'g>
+    {
+        let mut local_arena = mem::Arena::new();
+
+        let items = Parser::new(&global_arena, &local_arena).parse(nodes);
+        local_arena.recycle();
+
+        items
     }
 }

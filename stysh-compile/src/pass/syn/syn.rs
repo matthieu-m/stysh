@@ -8,7 +8,7 @@ use std::iter::Peekable;
 use basic::mem;
 
 use model::syn::*;
-use pass::lex;
+use pass::syn::lex;
 
 /// The Stysh parser.
 ///

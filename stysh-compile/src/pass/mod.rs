@@ -2,5 +2,3 @@
 
 pub mod syn;
 pub mod sem;
-
-mod lex;

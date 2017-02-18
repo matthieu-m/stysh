@@ -8,6 +8,7 @@ use std::iter;
 use basic::mem;
 
 use model::tt::*;
+use super::raw::{RawStream, RawToken};
 
 /// The Stysh lexer.
 ///
@@ -49,8 +50,7 @@ impl<'g, 'local> Lexer<'g, 'local> {
 //  Implementation Details
 //
 struct LexerImpl<'a, 'g, 'local> {
-    raw: &'a [u8],
-    offset: usize,
+    stream: RawStream<'a>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -78,60 +78,27 @@ impl<'a, 'g, 'local> LexerImpl<'a, 'g, 'local> {
     fn new(raw: &'a [u8], g: &'g mem::Arena, a: &'local mem::Arena)
         -> LexerImpl<'a, 'g, 'local>
     {
-        let mut result =
-            LexerImpl { raw: raw, offset: 0, global_arena: g, local_arena: a };
-        result.skip_whitespace();
-        result
-    }
-
-    fn skip(&mut self, length: usize) {
-        debug_assert!(length <= self.raw.len());
-        self.raw = &self.raw[length..];
-        self.offset += length;
-    }
-
-    fn skip_whitespace(&mut self) {
-        //  Apart from strings and comments, source code only contains ASCII
-        //  characters, making things much simpler here.
-        while self.raw.len() > 0 {
-            if self.raw[0] > 0x20 { break; }
-
-            match self.raw[0] {
-                b' ' | b'\n' | b'\r' => self.skip(1),
-                byte => panic!("Unexpected byte {}", byte),
-            }
+        LexerImpl {
+            stream: RawStream::new(raw),
+            global_arena: g,
+            local_arena: a
         }
     }
 
     fn parse_token(&mut self) -> Option<Token> {
-        if self.raw.is_empty() {
-            return None;
-        }
-
-        let result = match self.raw[0] {
-            b'0' ... b'9' => self.parse_number(),
-            b'+' => Some(Token::new(Kind::OperatorPlus, self.offset, 1)),
-            _ => unimplemented!(),
-        };
-
-        if let Some(token) = result {
-            self.skip(token.length());
-        }
-
-        self.skip_whitespace();
-        result
+        self.stream.next().and_then(|tok| {
+            match tok.raw[0] {
+                b'0'...b'9' => self.parse_number(tok),
+                b'+' => Some(Token::new(Kind::OperatorPlus, tok.offset, 1)),
+                _ => unimplemented!(),
+            }
+        })
     }
 
-    fn parse_number(&self) -> Option<Token> {
-        let mut length = 1;
-        while length < self.raw.len() {
-            match self.raw[length] {
-                b'0' ... b'9' => length += 1,
-                _ => break,
-            };
-        }
+    fn parse_number(&self, tok: RawToken) -> Option<Token> {
+        assert!(tok.raw.iter().all(|&c| c >= b'0' && c <= b'9'));
 
-        Some(Token::new(Kind::Integral, self.offset, length))
+        Some(Token::new(Kind::Integral, tok.offset, tok.raw.len()))
     }
 }
 

@@ -19,9 +19,9 @@ pub enum Node<'a> {
     /// A single string literal.
     BalancedString(Token, &'a [StringFragment], Token),
     /// A brace-enclosed group missing its closing brace.
-    UnclosedGroup(Token, &'a Node<'a>),
+    UnclosedGroup(Token, &'a Node<'a>, Token),
     /// A single string literal missing its closing quote.
-    UnclosedString(Token, &'a [StringFragment]),
+    UnclosedString(Token, &'a [StringFragment], Token),
     /// An unexpected closing brace.
     UnexpectedBrace(Token),
 }

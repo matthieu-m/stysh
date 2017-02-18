@@ -7,5 +7,6 @@
 //! It produces the token tree.
 
 mod lex;
+mod raw;
 
 pub use self::lex::Lexer;

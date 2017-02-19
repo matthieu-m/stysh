@@ -9,11 +9,12 @@ use basic::mem;
 
 use model::tt;
 use model::syn::*;
+use pass::lex;
 
 /// The Stysh parser.
 ///
-/// The responsibility of the parser is to transform the Token Tree into an
-/// Abstract Syntax Tree.
+/// The responsibility of the parser is to transform raw input into an Abstract
+/// Syntax Tree.
 pub struct Parser<'g, 'local> {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
@@ -30,8 +31,14 @@ impl<'g, 'local> Parser<'g, 'local> {
         Parser { global_arena: global, local_arena: local }
     }
 
-    /// Parses a slice of raw Token Trees into an Abstract Syntax Tree.
-    pub fn parse(&mut self, nodes: &'g [tt::Node<'g>]) -> List<'g> {
+    /// Parses a raw slite of bytes into an Abstract Syntax Tree.
+    pub fn parse(&mut self, raw: &[u8]) -> List<'g> {
+        let mut lexer = lex::Lexer::new(self.local_arena, self.local_arena);
+        self.transform(lexer.parse(raw))
+    }
+
+    /// Transforms a slice of raw Token Trees into an Abstract Syntax Tree.
+    pub fn transform(&mut self, nodes: &[tt::Node]) -> List<'g> {
         let mut buffer = mem::Array::new(self.local_arena);
 
         let imp = ParserImpl {
@@ -67,14 +74,14 @@ impl<'g> IntoExpr<'g> for tt::Token {
     }
 }
 
-struct ParserImpl<'g, 'local> {
-    nodes: &'g [tt::Node<'g>],
+struct ParserImpl<'a, 'g, 'local> {
+    nodes: &'a [tt::Node<'a>],
     global_arena: &'g mem::Arena,
     #[allow(dead_code)]
     local_arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> iter::Iterator for ParserImpl<'g, 'local> {
+impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
     type Item = Node<'g>;
 
     fn next(&mut self) -> Option<Node<'g>> {
@@ -94,7 +101,7 @@ impl<'g, 'local> iter::Iterator for ParserImpl<'g, 'local> {
     }
 }
 
-impl<'g, 'local> ParserImpl<'g, 'local> {
+impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
     fn parse_expression(&mut self, tokens: &[tt::Token]) -> Expression<'g> {
         let left_operand: &'g Expression<'g> = self.intern(
             tokens[0].into_expr().expect("Integral")
@@ -125,7 +132,6 @@ impl<'g, 'local> ParserImpl<'g, 'local> {
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::tt;
     use model::syn::*;
     use super::Parser;
 
@@ -134,16 +140,7 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         assert_eq!(
-            synit(
-                &global_arena,
-                &[
-                    tt::Node::Run(&[
-                        tt::Token::new(tt::Kind::Integral, 0, 1),
-                        tt::Token::new(tt::Kind::OperatorPlus, 2, 1),
-                        tt::Token::new(tt::Kind::Integral, 4, 1),
-                    ])
-                ]
-            ),
+            synit(&global_arena, b"1 + 2"),
             &[
                 Node::Expr(
                     Expression::BinOp(
@@ -162,12 +159,12 @@ mod tests {
         );
     }
 
-    fn synit<'g>(global_arena: &'g mem::Arena, nodes: &'g [tt::Node<'g>])
+    fn synit<'g>(global_arena: &'g mem::Arena, raw: &[u8])
         -> List<'g>
     {
         let mut local_arena = mem::Arena::new();
 
-        let items = Parser::new(&global_arena, &local_arena).parse(nodes);
+        let items = Parser::new(&global_arena, &local_arena).parse(raw);
         local_arena.recycle();
 
         items

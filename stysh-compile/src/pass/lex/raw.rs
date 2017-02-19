@@ -64,7 +64,6 @@ impl<'a> iter::Iterator for RawStream<'a> {
             _ => self.lex_generic(),
         };
 
-        self.skip(tok.len());
         self.skip_whitespace();
 
         Some(RawToken::new(tok, o, li, lo))
@@ -95,9 +94,13 @@ impl<'a> RawStream<'a> {
     fn new_line(&mut self) {
         self.line_index += 1;
         self.line_offset = 0;
+        self.line_indent = 0;
     }
 
     fn skip_whitespace(&mut self) {
+        let mut seen_new_line = false;
+        let line_indent = self.line_indent;
+
         while !self.raw.is_empty() {
             match self.raw[0] {
                 b' ' => {
@@ -107,67 +110,87 @@ impl<'a> RawStream<'a> {
                 b'\n' => {
                     self.skip(1);
                     self.new_line();
+                    seen_new_line = true;
                 },
                 b'\r' if self.raw.get(1) == Some(&b'\n') => {
                     self.skip(2);
                     self.new_line();
+                    seen_new_line = true;
                 },
                 _ => break,
             };
         }
+
+        if !seen_new_line {
+            self.line_indent = line_indent;
+        }
     }
 
-    fn lex_attribute(&self) -> &'a [u8] {
+    fn lex_attribute(&mut self) -> &'a [u8] {
         debug_assert!(self.raw[0] == b'#' && self.raw[1] == b'[');
 
         unimplemented!()
     }
 
-    fn lex_comment(&self) -> &'a [u8] {
+    fn lex_comment(&mut self) -> &'a [u8] {
         debug_assert!(self.raw[0] == b'#' && self.raw[1] != b'[');
 
-        let index = self.first(|c| c == b'\n').unwrap_or(self.raw.len());
-        &self.raw[..index]
+        let length = self.first(|c| c == b'\n').unwrap_or(self.raw.len());
+        self.pop(length)
     }
 
-    fn lex_generic(&self) -> &'a [u8] {
+    fn lex_generic(&mut self) -> &'a [u8] {
         let is_special = |c| {
             c <= b' ' ||
             c >= 0x7f ||
             ASCII_SINGLETONS.contains(c)
         };
 
-        let index = self.first(is_special).unwrap_or(self.raw.len());
-        &self.raw[..index]
+        let length = self.first(is_special).unwrap_or(self.raw.len());
+        self.pop(length)
     }
 
-    fn lex_singleton(&self) -> &'a [u8] {
+    fn lex_singleton(&mut self) -> &'a [u8] {
         debug_assert!(
             self.raw[0] == b'(' || self.raw[0] == b')' ||
             self.raw[0] == b'{' || self.raw[0] == b'}' ||
             self.raw[0] == b'[' || self.raw[0] == b']' ||
             self.raw[0] == b';' || self.raw[0] == b','
         );
-        &self.raw[..1]
+        self.pop(1)
     }
 
-    fn lex_string(&self) -> &'a [u8] {
-        let start = if self.raw[0] == b'b' { 1 } else { 0 };
-        debug_assert!(self.raw[start] == 0x22 || self.raw[start] == b'\'');
+    fn lex_string(&mut self) -> &'a [u8] {
+        use std::str;
 
-        let quote = self.raw[start];
+        fn first_from<F: Fn(u8) -> bool>(raw: &[u8], start: usize, f: F)
+            -> Option<usize>
+        {
+            if start >= raw.len() {
+                None
+            } else {
+                raw[start..].iter().position(|&c| f(c)).map(|i| i + start)
+            }
+        }
+
+        let raw = self.raw;
+
+        let start = if raw[0] == b'b' { 1 } else { 0 };
+        debug_assert!(raw[start] == 0x22 || raw[start] == b'\'');
+
+        let quote = raw[start];
 
         let advance_until_end_or_eol = |mut index| -> Option<usize> {
             let matcher = |c| -> bool { c == b'\n' || c == quote };
 
-            while let Some(i) = self.first_from(index + 1, &matcher) {
+            while let Some(i) = first_from(raw, index, &matcher) {
                 //  If we reached EOL or an unescaped quote
-                if self.raw[i] == b'\n' || self.raw.get(i + 1) != Some(&quote) {
+                if raw[i] == b'\n' || raw.get(i + 1) != Some(&quote) {
                     return Some(i);
                 }
 
                 //  Move past the escaped quote
-                index = i + 1;
+                index = i + 2;
             }
 
             //  Unterminated string!
@@ -175,31 +198,74 @@ impl<'a> RawStream<'a> {
         };
 
         let is_whitespace = |range: ops::Range<usize>| {
-            self.raw[range].iter().all(|&c| c == b' ')
+            raw[range].iter().all(|&c| c == b' ')
         };
 
-        //  Simple case: single-line.
-        let index = advance_until_end_or_eol(start + 1);
+        let line_index = self.line_index;
+        let line_indent = self.line_indent;
 
-        match index {
-            Some(i) if self.raw[i] != b'\n' => return &self.raw[..i+1],
-            Some(i) if !is_whitespace(0..i) => return &self.raw[..i],
-            Some(_) => (),
-            None => return &self.raw[..],
+        let mut index = start + 1;
+        let mut line_start_offset = self.offset - self.line_offset;
+
+        loop {
+            //  Look for end of string or line
+            index = match advance_until_end_or_eol(index) {
+                None => return self.pop_all(),
+
+                Some(i) if raw[i] == quote =>
+                    return self.pop_string(i + 1, line_start_offset),
+
+                Some(i) if line_index == self.line_index &&
+                            !is_whitespace(start + 1..i) =>
+                    return self.pop_string(i, line_start_offset),
+
+                Some(i) => i + 1,
+            };
+
+            self.new_line();
+            line_start_offset = self.offset + index;
+
+            //  Look for end of string, line or start of "next" raw token with
+            //  no quote to terminate the string.
+            index = match first_from(raw, index, |c| c != b' ') {
+                None => return self.pop_all(),
+
+                Some(i) if raw[i] == quote =>
+                    return self.pop_string(i + 1, line_start_offset),
+
+                Some(i) if raw[i] == b'\n' => i + 1,
+
+                Some(i) if i - index > line_indent => i,
+
+                Some(_) => return self.pop_string(index, line_start_offset),
+            };
         }
-
-        //  Complex case: multi-line.
-        unimplemented!()
     }
 
     fn first<F: Fn(u8) -> bool>(&self, f: F) -> Option<usize> {
         self.raw.iter().position(|&c| f(c))
     }
 
-    fn first_from<F: Fn(u8) -> bool>(&self, start: usize, f: F)
-        -> Option<usize>
+    fn pop(&mut self, length: usize) -> &'a [u8] {
+        let result = &self.raw[..length];
+        self.skip(length);
+        result
+    }
+
+    fn pop_string(&mut self, length: usize, line_start_offset: usize) ->
+        &'a [u8]
     {
-        self.raw[start..].iter().position(|&c| f(c)).map(|i| i + start)
+        let result = &self.raw[..length];
+        self.raw = &self.raw[length..];
+        self.offset += length;
+        self.line_offset = self.offset - line_start_offset;
+        result
+    }
+
+    fn pop_all(&mut self) -> &'a [u8] {
+        let result = &self.raw[..];
+        self.skip(result.len());
+        result
     }
 }
 
@@ -316,6 +382,16 @@ mod tests {
     }
 
     #[test]
+    fn lex_multiline_string() {
+        assert_eq!(
+            lexit(b"'\n    Hello, Arnold\n'"),
+            vec![
+                RawToken::new(b"'\n    Hello, Arnold\n'", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
     fn lex_simple_string_bind() {
         assert_eq!(
             lexit(b":let x := 'Hello, Arnold';"),
@@ -325,6 +401,81 @@ mod tests {
                 RawToken::new(b":=", 7, 0, 7),
                 RawToken::new(b"'Hello, Arnold'", 10, 0, 10),
                 RawToken::new(b";", 25, 0, 25),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_multiline_string_bind() {
+        assert_eq!(
+            lexit(b":let x := '\n    Hello, Arnold\n';"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n    Hello, Arnold\n'", 10, 0, 10),
+                RawToken::new(b";", 31, 2, 1),
+            ]
+        );
+
+        assert_eq!(
+            lexit(b":let x := \n    '\n        Hello, Arnold\n    ';"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n        Hello, Arnold\n    '", 15, 1, 4),
+                RawToken::new(b";", 44, 3, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_multiline_string_bind_misindented_end_quote() {
+        assert_eq!(
+            lexit(b":let x := \n    '\n        Hello, Arnold\n';"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n        Hello, Arnold\n'", 15, 1, 4),
+                RawToken::new(b";", 40, 3, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_multiline_string_bind_missing_end_quote() {
+        assert_eq!(
+            lexit(b":let x := '\n    Hello, Arnold\n:let"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n    Hello, Arnold\n", 10, 0, 10),
+                RawToken::new(b":let", 30, 2, 0),
+            ]
+        );
+
+        assert_eq!(
+            lexit(b":let x := \n    '\n        Hello, Arnold\n:let"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n        Hello, Arnold\n", 15, 1, 4),
+                RawToken::new(b":let", 39, 3, 0),
+            ]
+        );
+
+        assert_eq!(
+            lexit(b":let x := \n    '\n        Hello, Arnold\n    :let"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'\n        Hello, Arnold\n", 15, 1, 4),
+                RawToken::new(b":let", 43, 3, 4),
             ]
         );
     }

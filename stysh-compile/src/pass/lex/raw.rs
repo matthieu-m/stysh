@@ -11,7 +11,7 @@
 //! The one exception to the rule is string literals; multi-line string literals
 //! always require more effort. They are useful enough to be worth it.
 
-use std::iter;
+use std::{iter, ops};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct RawStream<'a> {
@@ -64,6 +64,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
             _ => self.lex_generic(),
         };
 
+        self.skip(tok.len());
         self.skip_whitespace();
 
         Some(RawToken::new(tok, o, li, lo))
@@ -116,20 +117,20 @@ impl<'a> RawStream<'a> {
         }
     }
 
-    fn lex_attribute(&mut self) -> &'a [u8] {
+    fn lex_attribute(&self) -> &'a [u8] {
         debug_assert!(self.raw[0] == b'#' && self.raw[1] == b'[');
 
         unimplemented!()
     }
 
-    fn lex_comment(&mut self) -> &'a [u8] {
+    fn lex_comment(&self) -> &'a [u8] {
         debug_assert!(self.raw[0] == b'#' && self.raw[1] != b'[');
 
         let index = self.first(|c| c == b'\n').unwrap_or(self.raw.len());
-        self.pop(index)
+        &self.raw[..index]
     }
 
-    fn lex_generic(&mut self) -> &'a [u8] {
+    fn lex_generic(&self) -> &'a [u8] {
         let is_special = |c| {
             c <= b' ' ||
             c >= 0x7f ||
@@ -137,42 +138,58 @@ impl<'a> RawStream<'a> {
         };
 
         let index = self.first(is_special).unwrap_or(self.raw.len());
-        self.pop(index)
+        &self.raw[..index]
     }
 
-    fn lex_singleton(&mut self) -> &'a [u8] {
+    fn lex_singleton(&self) -> &'a [u8] {
         debug_assert!(
             self.raw[0] == b'(' || self.raw[0] == b')' ||
             self.raw[0] == b'{' || self.raw[0] == b'}' ||
             self.raw[0] == b'[' || self.raw[0] == b']' ||
             self.raw[0] == b';' || self.raw[0] == b','
         );
-        self.pop(1)
+        &self.raw[..1]
     }
 
-    fn lex_string(&mut self) -> &'a [u8] {
+    fn lex_string(&self) -> &'a [u8] {
         let start = if self.raw[0] == b'b' { 1 } else { 0 };
         debug_assert!(self.raw[start] == 0x22 || self.raw[start] == b'\'');
 
         let quote = self.raw[start];
 
-        let matcher = |c| -> bool { c == b'\n' || c == quote };
+        let advance_until_end_or_eol = |mut index| -> Option<usize> {
+            let matcher = |c| -> bool { c == b'\n' || c == quote };
 
-        //  Simple case: single-line and no escaped quote.
-        if let Some(i) = self.first_from(start + 1, matcher) {
-            if self.raw[i] == quote && self.raw.get(i+1) != Some(&quote) {
-                return self.pop(i+1);
+            while let Some(i) = self.first_from(index + 1, &matcher) {
+                //  If we reached EOL or an unescaped quote
+                if self.raw[i] == b'\n' || self.raw.get(i + 1) != Some(&quote) {
+                    return Some(i);
+                }
+
+                //  Move past the escaped quote
+                index = i + 1;
             }
+
+            //  Unterminated string!
+            None
+        };
+
+        let is_whitespace = |range: ops::Range<usize>| {
+            self.raw[range].iter().all(|&c| c == b' ')
+        };
+
+        //  Simple case: single-line.
+        let index = advance_until_end_or_eol(start + 1);
+
+        match index {
+            Some(i) if self.raw[i] != b'\n' => return &self.raw[..i+1],
+            Some(i) if !is_whitespace(0..i) => return &self.raw[..i],
+            Some(_) => (),
+            None => return &self.raw[..],
         }
 
-        //  Complex case: multi-line and/or escaped quotes.
+        //  Complex case: multi-line.
         unimplemented!()
-    }
-
-    fn pop(&mut self, length: usize) -> &'a [u8] {
-        let result = &self.raw[..length];
-        self.skip(length);
-        result
     }
 
     fn first<F: Fn(u8) -> bool>(&self, f: F) -> Option<usize> {
@@ -258,6 +275,42 @@ mod tests {
             lexit(b"'Hello, \"Arnold\"'"),
             vec![
                 RawToken::new(b"'Hello, \"Arnold\"'", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_string_with_escaped_quotes() {
+        assert_eq!(
+            lexit(b"'Hello, ''Arnold'''"),
+            vec![
+                RawToken::new(b"'Hello, ''Arnold'''", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_string_with_too_many_escaped_quotes() {
+        assert_eq!(
+            lexit(b"'Hello, ''Arnold'''''"),
+            vec![
+                RawToken::new(b"'Hello, ''Arnold'''''", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_string_with_missing_end_quote() {
+        assert_eq!(
+            lexit(b"'Hello, ''Arnold''''"),
+            vec![
+                RawToken::new(b"'Hello, ''Arnold''''", 0, 0, 0),
+            ]
+        );
+        assert_eq!(
+            lexit(b"'Hello, ''Arnold''''\n"),
+            vec![
+                RawToken::new(b"'Hello, ''Arnold''''", 0, 0, 0),
             ]
         );
     }

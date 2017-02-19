@@ -66,7 +66,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
 
         self.skip_whitespace();
 
-        Some(RawToken { raw: tok, offset: o, line_index: li, line_offset: lo })
+        Some(RawToken::new(tok, o, li, lo))
     }
 }
 
@@ -152,14 +152,14 @@ impl<'a> RawStream<'a> {
 
     fn lex_string(&mut self) -> &'a [u8] {
         let start = if self.raw[0] == b'b' { 1 } else { 0 };
-        debug_assert!(self.raw[start] == 0x20 || self.raw[start] == b'\'');
+        debug_assert!(self.raw[start] == 0x22 || self.raw[start] == b'\'');
 
         let quote = self.raw[start];
 
         let matcher = |c| -> bool { c == b'\n' || c == quote };
 
         //  Simple case: single-line and no escaped quote.
-        if let Some(i) = self.first(matcher) {
+        if let Some(i) = self.first_from(start + 1, matcher) {
             if self.raw[i] == quote && self.raw.get(i+1) != Some(&quote) {
                 return self.pop(i+1);
             }
@@ -177,6 +177,20 @@ impl<'a> RawStream<'a> {
 
     fn first<F: Fn(u8) -> bool>(&self, f: F) -> Option<usize> {
         self.raw.iter().position(|&c| f(c))
+    }
+
+    fn first_from<F: Fn(u8) -> bool>(&self, start: usize, f: F)
+        -> Option<usize>
+    {
+        self.raw[start..].iter().position(|&c| f(c)).map(|i| i + start)
+    }
+}
+
+impl<'a> RawToken<'a> {
+    fn new(raw: &'a [u8], o: usize, li: usize, lo: usize)
+        -> RawToken<'a>
+    {
+        RawToken { raw: raw, offset: o, line_index: li, line_offset: lo }
     }
 }
 
@@ -198,3 +212,72 @@ impl AsciiSet {
         }
     }
 }
+
+//
+//  Tests
+//
+#[cfg(test)]
+mod tests {
+    use super::{RawStream, RawToken};
+
+    #[test]
+    fn lex_integer() {
+        assert_eq!(
+            lexit(b"1"),
+            vec![
+                RawToken::new(b"1", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_add_expression() {
+        assert_eq!(
+            lexit(b"1 +  2"),
+            vec![
+                RawToken::new(b"1", 0, 0, 0),
+                RawToken::new(b"+", 2, 0, 2),
+                RawToken::new(b"2", 5, 0, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_simple_string() {
+        assert_eq!(
+            lexit(b"'Hello, Arnold'"),
+            vec![
+                RawToken::new(b"'Hello, Arnold'", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_mixed_quotes_string() {
+        assert_eq!(
+            lexit(b"'Hello, \"Arnold\"'"),
+            vec![
+                RawToken::new(b"'Hello, \"Arnold\"'", 0, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_simple_string_bind() {
+        assert_eq!(
+            lexit(b":let x := 'Hello, Arnold';"),
+            vec![
+                RawToken::new(b":let", 0, 0, 0),
+                RawToken::new(b"x", 5, 0, 5),
+                RawToken::new(b":=", 7, 0, 7),
+                RawToken::new(b"'Hello, Arnold'", 10, 0, 10),
+                RawToken::new(b";", 25, 0, 25),
+            ]
+        );
+    }
+
+    fn lexit<'a>(raw: &'a [u8]) -> Vec<RawToken<'a>> {
+        RawStream::new(&raw).collect()
+    }
+}
+

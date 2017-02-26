@@ -69,7 +69,7 @@ impl<'g> IntoExpr<'g> for tt::Token {
 
         match self.kind() {
             tt::Kind::Integral => Some(Lit(Integral, self.range())),
-            tt::Kind::OperatorPlus => None,
+            _ => None,
         }
     }
 }

@@ -8,6 +8,7 @@ use std::iter;
 use basic::mem;
 
 use model::tt::*;
+use super::str;
 use super::raw::{RawStream, RawToken};
 
 /// The Stysh lexer.
@@ -50,7 +51,7 @@ impl<'g, 'local> Lexer<'g, 'local> {
 //  Implementation Details
 //
 struct LexerImpl<'a, 'g, 'local> {
-    stream: RawStream<'a>,
+    stream: iter::Peekable<RawStream<'a>>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -59,18 +60,19 @@ impl<'a, 'g, 'local> iter::Iterator for LexerImpl<'a, 'g, 'local> {
     type Item = Node<'g>;
 
     fn next(&mut self) -> Option<Node<'g>> {
-        let mut buffer = mem::Array::new(self.local_arena);
+        use super::raw::RawKind::*;
 
-        while let Some(token) = self.parse_token() {
-            buffer.push(token);
-        }
-
-        if buffer.is_empty() {
-            None
-        } else {
-            let slice = self.global_arena.insert_slice(buffer.into_slice());
-            Some(Node::Run(slice))
-        }
+        self.stream.peek().cloned().map(|tok| {
+            match tok.kind {
+                Attribute => self.parse_attribute(),
+                Bytes => self.parse_bytes(),
+                BytesMultiLines => self.parse_bytes_multi_lines(),
+                Comment => self.parse_comment(),
+                Generic => self.parse_generic(),
+                String => self.parse_string(),
+                StringMultiLines => self.parse_string_multi_lines(),
+            }
+        })
     }
 }
 
@@ -79,10 +81,64 @@ impl<'a, 'g, 'local> LexerImpl<'a, 'g, 'local> {
         -> LexerImpl<'a, 'g, 'local>
     {
         LexerImpl {
-            stream: RawStream::new(raw),
+            stream: RawStream::new(raw).peekable(),
             global_arena: g,
             local_arena: a
         }
+    }
+
+    fn parse_attribute(&mut self) -> Node<'g> {
+        unimplemented!()
+    }
+
+    fn parse_bytes(&mut self) -> Node<'g> {
+        let (start, fragments, end) = self.parse_string_literal(1, false);
+        Node::Bytes(start, fragments, end)
+    }
+
+    fn parse_bytes_multi_lines(&mut self) -> Node<'g> {
+        let (start, fragments, end) = self.parse_string_literal(1, true);
+        Node::Bytes(start, fragments, end)
+    }
+
+    fn parse_comment(&mut self) -> Node<'g> {
+        unimplemented!()
+    }
+
+    fn parse_generic(&mut self) -> Node<'g> {
+        let mut buffer = mem::Array::new(self.local_arena);
+
+        while let Some(token) = self.parse_token() {
+            buffer.push(token);
+        }
+
+        debug_assert!(!buffer.is_empty());
+
+        Node::Run(self.global_arena.insert_slice(buffer.into_slice()))
+    }
+
+    fn parse_string(&mut self) -> Node<'g> {
+        let (start, fragments, end) = self.parse_string_literal(0, false);
+        Node::String(start, fragments, end)
+    }
+
+    fn parse_string_multi_lines(&mut self) -> Node<'g> {
+        let (start, fragments, end) = self.parse_string_literal(0, true);
+        Node::String(start, fragments, end)
+    }
+
+    fn parse_string_literal(&mut self, offset: usize, with_new_lines: bool)
+        -> (Token, &'g [StringFragment], Token)
+    {
+        let tok = self.stream.next().expect("Only called if peek succeeds");
+
+        str::parse(
+            tok,
+            offset,
+            with_new_lines,
+            &self.global_arena,
+            &self.local_arena
+        )
     }
 
     fn parse_token(&mut self) -> Option<Token> {

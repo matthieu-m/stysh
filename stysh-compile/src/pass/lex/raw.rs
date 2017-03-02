@@ -13,6 +13,10 @@
 
 use std::{iter, ops};
 
+pub trait PeekableTokenStream<'a>: iter::Iterator<Item = RawToken<'a>> {
+    fn underlying(&mut self) -> &mut iter::Peekable<RawStream<'a>>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct RawStream<'a> {
     raw: &'a [u8],
@@ -154,8 +158,6 @@ impl<'a> RawStream<'a> {
     }
 
     fn lex_generic(&mut self) -> (RawKind, &'a [u8]) {
-        println!("lex_generic: {} {}", self.offset, self.line_indent);
-
         let is_special = |c| {
             c <= b' ' ||
             c >= 0x7f ||

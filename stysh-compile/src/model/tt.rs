@@ -40,12 +40,24 @@ pub struct Token {
 /// Kind of the token, the primary information used in forming the AST.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Kind {
+    /// A '}' brace.
+    BraceClose,
+    /// A '{' brace.
+    BraceOpen,
+    /// A ']' brace.
+    BracketClose,
+    /// A '[' brace.
+    BracketOpen,
     /// A ':' sign.
     Colon,
     /// An integral.
     Integral,
     /// A '+' sign.
     OperatorPlus,
+    /// A ')' brace,
+    ParenthesisClose,
+    /// A '(' brace,
+    ParenthesisOpen,
     /// A double quote.
     QuoteDouble,
     /// A single quote.
@@ -83,6 +95,23 @@ pub enum StringFragment {
     Interpolated(Token, Token, Token),
     /// An unexpectedly formatted interpolated section: "{", ..., "}".
     Unexpected(com::Range),
+}
+
+impl<'g> Node<'g> {
+    /// Returns the range spanned by the node.
+    pub fn range(&self) -> com::Range {
+        match *self {
+            Node::Run(slice) => {
+                let offset = slice.first().map_or(0, |n| n.range().offset());
+                let end = slice.last().map_or(0, |n| n.range().end_offset());
+                com::Range::new(offset, end - offset)
+            },
+            Node::Braced(o, _, c) => o.range().extend(c.range()),
+            Node::Bytes(o, _, c) => o.range().extend(c.range()),
+            Node::String(o, _, c) => o.range().extend(c.range()),
+            Node::UnexpectedBrace(t) => t.range(),
+        }
+    }
 }
 
 impl StringFragment {

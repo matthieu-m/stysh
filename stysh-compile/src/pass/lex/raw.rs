@@ -21,7 +21,6 @@ pub trait PeekableTokenStream<'a>: iter::Iterator<Item = RawToken<'a>> {
 pub struct RawStream<'a> {
     raw: &'a [u8],
     offset: usize,
-    line_index: usize,
     line_offset: usize,
     line_indent: usize,
 }
@@ -31,7 +30,6 @@ pub struct RawToken<'a> {
     pub kind: RawKind,
     pub raw: &'a [u8],
     pub offset: usize,
-    pub line_index: usize,
     pub line_offset: usize,
     pub line_indent: usize,
 }
@@ -52,7 +50,6 @@ impl<'a> RawStream<'a> {
         let mut result = RawStream {
             raw: raw,
             offset: 0,
-            line_index: 0,
             line_offset: 0,
             line_indent: 0,
         };
@@ -70,8 +67,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
         }
 
         let next = self.raw.get(1).cloned();
-        let (o, li, lo, id) =
-            (self.offset, self.line_index, self.line_offset, self.line_indent);
+        let (o, lo, id) = (self.offset, self.line_offset, self.line_indent);
 
         let (kind, tok) = match self.raw[0] {
             c if ASCII_SINGLETONS.contains(c) => self.lex_singleton(),
@@ -84,7 +80,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
 
         self.skip_whitespace();
 
-        Some(RawToken::new(kind, tok, o, li, lo, id))
+        Some(RawToken::new(kind, tok, o, lo, id))
     }
 }
 
@@ -110,7 +106,6 @@ impl<'a> RawStream<'a> {
     }
 
     fn new_line(&mut self) {
-        self.line_index += 1;
         self.line_offset = 0;
         self.line_indent = 0;
     }
@@ -224,9 +219,9 @@ impl<'a> RawStream<'a> {
             raw[range].iter().all(|&c| c == b' ')
         };
 
-        let line_index = self.line_index;
         let line_indent = self.line_indent;
 
+        let mut first_line = true;
         let mut index = start + 1;
         let mut line_start_offset = self.offset - self.line_offset;
 
@@ -238,14 +233,14 @@ impl<'a> RawStream<'a> {
                 Some(i) if raw[i] == quote =>
                     return (kind, self.pop_string(i + 1, line_start_offset)),
 
-                Some(i) if line_index == self.line_index &&
-                            !is_whitespace(start + 1..i) =>
+                Some(i) if first_line && !is_whitespace(start + 1..i) =>
                     return (kind, self.pop_string(i, line_start_offset)),
 
                 Some(i) => i + 1,
             };
 
             self.new_line();
+            first_line = false;
             kind = kind_multi;
             line_start_offset = self.offset + index;
 
@@ -300,7 +295,6 @@ impl<'a> RawToken<'a> {
         kind: RawKind,
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
@@ -310,7 +304,6 @@ impl<'a> RawToken<'a> {
             kind: kind,
             raw: raw,
             offset: offset,
-            line_index: line_index,
             line_offset: line_offset,
             line_indent: line_indent
         }
@@ -320,7 +313,6 @@ impl<'a> RawToken<'a> {
     fn new_attribute(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
@@ -330,7 +322,6 @@ impl<'a> RawToken<'a> {
             RawKind::Attribute,
             raw,
             offset,
-            line_index,
             line_offset,
             line_indent
         )
@@ -340,22 +331,18 @@ impl<'a> RawToken<'a> {
     fn new_bytes(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
         -> RawToken<'a>
     {
-        RawToken::new(
-            RawKind::Bytes, raw, offset, line_index, line_offset, line_indent
-        )
+        RawToken::new(RawKind::Bytes, raw, offset, line_offset, line_indent)
     }
 
     #[allow(dead_code)]
     fn new_bytes_multi(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
@@ -365,7 +352,6 @@ impl<'a> RawToken<'a> {
             RawKind::BytesMultiLines,
             raw,
             offset,
-            line_index,
             line_offset,
             line_indent
         )
@@ -375,64 +361,49 @@ impl<'a> RawToken<'a> {
     fn new_comment(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
         -> RawToken<'a>
     {
-        RawToken::new(
-            RawKind::Comment, raw, offset, line_index, line_offset, line_indent
-        )
+        RawToken::new(RawKind::Comment, raw, offset, line_offset, line_indent)
     }
 
     #[cfg(test)]
     fn new_generic(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
         -> RawToken<'a>
     {
-        RawToken::new(
-            RawKind::Generic, raw, offset, line_index, line_offset, line_indent
-        )
+        RawToken::new(RawKind::Generic, raw, offset, line_offset, line_indent)
     }
 
     #[cfg(test)]
     fn new_string(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
         -> RawToken<'a>
     {
-        RawToken::new(
-            RawKind::String, raw, offset, line_index, line_offset, line_indent
-        )
+        RawToken::new(RawKind::String, raw, offset, line_offset, line_indent)
     }
 
     #[cfg(test)]
     fn new_string_multi(
         raw: &'a [u8],
         offset: usize,
-        line_index: usize,
         line_offset: usize,
         line_indent: usize
     )
         -> RawToken<'a>
     {
         RawToken::new(
-            RawKind::StringMultiLines,
-            raw,
-            offset,
-            line_index,
-            line_offset,
-            line_indent
+            RawKind::StringMultiLines, raw, offset, line_offset, line_indent
         )
     }
 }
@@ -468,7 +439,7 @@ mod tests {
         assert_eq!(
             lexit(b"1"),
             vec![
-                RawToken::new_generic(b"1", 0, 0, 0, 0),
+                RawToken::new_generic(b"1", 0, 0, 0),
             ]
         );
     }
@@ -478,9 +449,9 @@ mod tests {
         assert_eq!(
             lexit(b"1 +  2"),
             vec![
-                RawToken::new_generic(b"1", 0, 0, 0, 0),
-                RawToken::new_generic(b"+", 2, 0, 2, 0),
-                RawToken::new_generic(b"2", 5, 0, 5, 0),
+                RawToken::new_generic(b"1", 0, 0, 0),
+                RawToken::new_generic(b"+", 2, 2, 0),
+                RawToken::new_generic(b"2", 5, 5, 0),
             ]
         );
     }
@@ -490,7 +461,7 @@ mod tests {
         assert_eq!(
             lexit(b"'Hello, Arnold'"),
             vec![
-                RawToken::new_string(b"'Hello, Arnold'", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, Arnold'", 0, 0, 0),
             ]
         );
     }
@@ -500,7 +471,7 @@ mod tests {
         assert_eq!(
             lexit(b"'Hello, \"Arnold\"'"),
             vec![
-                RawToken::new_string(b"'Hello, \"Arnold\"'", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, \"Arnold\"'", 0, 0, 0),
             ]
         );
     }
@@ -510,7 +481,7 @@ mod tests {
         assert_eq!(
             lexit(b"'Hello, ''Arnold'''"),
             vec![
-                RawToken::new_string(b"'Hello, ''Arnold'''", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, ''Arnold'''", 0, 0, 0),
             ]
         );
     }
@@ -520,7 +491,7 @@ mod tests {
         assert_eq!(
             lexit(b"'Hello, ''Arnold'''''"),
             vec![
-                RawToken::new_string(b"'Hello, ''Arnold'''''", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, ''Arnold'''''", 0, 0, 0),
             ]
         );
     }
@@ -530,13 +501,13 @@ mod tests {
         assert_eq!(
             lexit(b"'Hello, ''Arnold''''"),
             vec![
-                RawToken::new_string(b"'Hello, ''Arnold''''", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, ''Arnold''''", 0, 0, 0),
             ]
         );
         assert_eq!(
             lexit(b"'Hello, ''Arnold''''\n"),
             vec![
-                RawToken::new_string(b"'Hello, ''Arnold''''", 0, 0, 0, 0),
+                RawToken::new_string(b"'Hello, ''Arnold''''", 0, 0, 0),
             ]
         );
     }
@@ -547,7 +518,7 @@ mod tests {
             lexit(b"'\n    Hello, Arnold\n'"),
             vec![
                 RawToken::new_string_multi(
-                    b"'\n    Hello, Arnold\n'", 0, 0, 0, 0
+                    b"'\n    Hello, Arnold\n'", 0, 0, 0
                 ),
             ]
         );
@@ -558,11 +529,11 @@ mod tests {
         assert_eq!(
             lexit(b":let x := 'Hello, Arnold';"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
-                RawToken::new_string(b"'Hello, Arnold'", 10, 0, 10, 0),
-                RawToken::new_generic(b";", 25, 0, 25, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
+                RawToken::new_string(b"'Hello, Arnold'", 10, 10, 0),
+                RawToken::new_generic(b";", 25, 25, 0),
             ]
         );
     }
@@ -572,26 +543,26 @@ mod tests {
         assert_eq!(
             lexit(b":let x := '\n    Hello, Arnold\n';"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n    Hello, Arnold\n'", 10, 0, 10, 0
+                    b"'\n    Hello, Arnold\n'", 10, 10, 0
                 ),
-                RawToken::new_generic(b";", 31, 2, 1, 0),
+                RawToken::new_generic(b";", 31, 1, 0),
             ]
         );
 
         assert_eq!(
             lexit(b":let x := \n    '\n        Hello, Arnold\n    ';"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n        Hello, Arnold\n    '", 15, 1, 4, 4
+                    b"'\n        Hello, Arnold\n    '", 15, 4, 4
                 ),
-                RawToken::new_generic(b";", 44, 3, 5, 4),
+                RawToken::new_generic(b";", 44, 5, 4),
             ]
         );
     }
@@ -601,13 +572,13 @@ mod tests {
         assert_eq!(
             lexit(b":let x := \n    '\n        Hello, Arnold\n';"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n        Hello, Arnold\n'", 15, 1, 4, 4
+                    b"'\n        Hello, Arnold\n'", 15, 4, 4
                 ),
-                RawToken::new_generic(b";", 40, 3, 1, 0),
+                RawToken::new_generic(b";", 40, 1, 0),
             ]
         );
     }
@@ -617,39 +588,39 @@ mod tests {
         assert_eq!(
             lexit(b":let x := '\n    Hello, Arnold\n:let"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n    Hello, Arnold\n", 10, 0, 10, 0
+                    b"'\n    Hello, Arnold\n", 10, 10, 0
                 ),
-                RawToken::new_generic(b":let", 30, 2, 0, 0),
+                RawToken::new_generic(b":let", 30, 0, 0),
             ]
         );
 
         assert_eq!(
             lexit(b":let x := \n    '\n        Hello, Arnold\n:let"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n        Hello, Arnold\n", 15, 1, 4, 4
+                    b"'\n        Hello, Arnold\n", 15, 4, 4
                 ),
-                RawToken::new_generic(b":let", 39, 3, 0, 0),
+                RawToken::new_generic(b":let", 39, 0, 0),
             ]
         );
 
         assert_eq!(
             lexit(b":let x := \n    '\n        Hello, Arnold\n    :let"),
             vec![
-                RawToken::new_generic(b":let", 0, 0, 0, 0),
-                RawToken::new_generic(b"x", 5, 0, 5, 0),
-                RawToken::new_generic(b":=", 7, 0, 7, 0),
+                RawToken::new_generic(b":let", 0, 0, 0),
+                RawToken::new_generic(b"x", 5, 5, 0),
+                RawToken::new_generic(b":=", 7, 7, 0),
                 RawToken::new_string_multi(
-                    b"'\n        Hello, Arnold\n", 15, 1, 4, 4
+                    b"'\n        Hello, Arnold\n", 15, 4, 4
                 ),
-                RawToken::new_generic(b":let", 43, 3, 4, 4),
+                RawToken::new_generic(b":let", 43, 4, 4),
             ]
         );
     }

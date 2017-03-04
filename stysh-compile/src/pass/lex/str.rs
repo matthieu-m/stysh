@@ -599,7 +599,7 @@ mod tests {
             (false, true ) => RawKind::StringMultiLines,
         };
 
-        let tok = RawToken::new(kind, raw, indent, 0, indent, indent);
+        let tok = RawToken::new(kind, raw, indent, indent, indent);
 
         let (start, fragments, end) =
             parse(tok, 0, with_new_lines, &global_arena, &local_arena);

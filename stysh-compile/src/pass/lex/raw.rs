@@ -37,6 +37,8 @@ pub struct RawToken<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum RawKind {
     Attribute,
+    BraceOpen,
+    BraceClose,
     Bytes,
     BytesMultiLines,
     Comment,
@@ -170,7 +172,12 @@ impl<'a> RawStream<'a> {
             self.raw[0] == b'[' || self.raw[0] == b']' ||
             self.raw[0] == b';' || self.raw[0] == b','
         );
-        (RawKind::Generic, self.pop(1))
+
+        match self.raw[0] {
+            b'(' | b'{' | b'[' => (RawKind::BraceOpen, self.pop(1)),
+            b')' | b'}' | b']' => (RawKind::BraceClose, self.pop(1)),
+            _ => (RawKind::Generic, self.pop(1)),
+        }
     }
 
     fn lex_string(&mut self) -> (RawKind, &'a [u8]) {

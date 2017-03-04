@@ -38,7 +38,7 @@ impl<'g, 'local> Lexer<'g, 'local> {
         let mut raw = RawStream::new(raw).peekable();
 
         LexerImpl::new(
-            RawPeekableStream::new(&mut raw, b"", -1),
+            RawPeekableStream::new(&mut raw, 0, 0),
             self.global_arena,
             self.local_arena
         ).parse_all()
@@ -58,8 +58,8 @@ struct LexerImpl<'a, 'b, 'g, 'local>  where 'a: 'b {
 
 pub struct RawPeekableStream<'a, 'b>  where 'a: 'b {
     raw: &'b mut UnderlyingStream<'a>,
-    seek: &'static [u8],
-    min_indent: isize,
+    close: u8,
+    min_indent: usize,
 }
 
 impl<'a, 'b, 'g, 'local> iter::Iterator for LexerImpl<'a, 'b, 'g, 'local> {
@@ -68,7 +68,7 @@ impl<'a, 'b, 'g, 'local> iter::Iterator for LexerImpl<'a, 'b, 'g, 'local> {
     fn next(&mut self) -> Option<Node<'g>> {
         use super::raw::RawKind::*;
 
-        self.stream.peek().map(|tok| {
+        if let Some(node) = self.stream.peek().map(|tok| {
             match tok.kind {
                 Attribute => self.parse_attribute(),
                 Bytes => self.parse_bytes(),
@@ -77,6 +77,18 @@ impl<'a, 'b, 'g, 'local> iter::Iterator for LexerImpl<'a, 'b, 'g, 'local> {
                 Generic => self.parse_generic(),
                 String => self.parse_string(),
                 StringMultiLines => self.parse_string_multi_lines(),
+                BraceOpen | BraceClose => panic!("Unreachable: {:?}", tok),
+            }
+        }) {
+            return Some(node);
+        }
+
+        self.stream.underlying().peek().cloned().and_then(|tok| {
+            match tok.kind {
+                BraceOpen => Some(self.parse_braces()),
+                BraceClose if tok.raw[0] != self.stream.close =>
+                    Some(self.parse_unexpected_brace()),
+                _ => None,
             }
         })
     }
@@ -112,7 +124,9 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     }
 
     fn parse_braces(&mut self) -> Node<'g> {
-        let raw_open = self.stream.next().expect("Only called when available");
+        let underlying = self.stream.underlying();
+
+        let raw_open = underlying.next().expect("Only called when available");
 
         let (open_kind, close_kind, raw_close) = match raw_open.raw {
             b"{" => (Kind::BraceOpen, Kind::BraceClose, b"}"),
@@ -125,19 +139,14 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
 
         let inner = {
             let inner_stream = RawPeekableStream::new(
-                self.stream.underlying(),
-                raw_close,
-                raw_open.line_indent as isize
+                underlying,
+                raw_close[0],
+                raw_open.line_indent + 1
             );
 
             LexerImpl::new(inner_stream, self.global_arena, self.local_arena)
                 .parse_all()
         };
-
-        //  In case of nested braces such as "(())", self.stream will refuse to
-        //  let one pull a ")", so we use the underlying directly to pull out
-        //  the closing brace (if any).
-        let underlying = self.stream.underlying();
 
         let pop = underlying.peek().map_or(false, |tok| tok.raw == raw_close);
 
@@ -175,12 +184,6 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     fn parse_generic(&mut self) -> Node<'g> {
         let mut buffer = mem::Array::new(self.local_arena);
 
-        if let Some(tok) = self.stream.peek() {
-            if tok.raw == b"{" || tok.raw == b"(" || tok.raw == b"[" {
-                return self.parse_braces();
-            }
-        }
-
         while let Some(token) = self.parse_token() {
             buffer.push(token);
         }
@@ -214,6 +217,21 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         )
     }
 
+    fn parse_unexpected_brace(&mut self) -> Node<'g> {
+        let tok =
+            self.stream.underlying().next()
+                .expect("Only called if peek succeeds");
+
+        let kind = match tok.raw[0] {
+            b'}' => Kind::BraceClose,
+            b']' => Kind::BracketClose,
+            b')' => Kind::ParenthesisClose,
+            _ => panic!("Unreachable: {:?}", tok),
+        };
+
+        Node::UnexpectedBrace(Token::new(kind, tok.offset, 1))
+    }
+
     fn parse_token(&mut self) -> Option<Token> {
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
@@ -234,18 +252,21 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
 impl<'a, 'b> RawPeekableStream<'a, 'b> {
     pub fn new(
         raw: &'b mut iter::Peekable<RawStream<'a>>,
-        seek: &'static [u8],
-        min_indent: isize
+        close: u8,
+        min_indent: usize
     )
         -> RawPeekableStream<'a, 'b>
     {
-        RawPeekableStream { raw: raw, seek: seek, min_indent: min_indent }
+        RawPeekableStream { raw: raw, close: close, min_indent: min_indent }
     }
 
     pub fn peek(&mut self) -> Option<RawToken<'a>> {
+        use super::raw::RawKind;
+
         if let Some(tok) = self.raw.peek().cloned() {
-            if tok.line_offset as isize > self.min_indent &&
-                tok.raw != self.seek
+            if tok.line_offset >= self.min_indent &&
+                tok.kind != RawKind::BraceClose &&
+                tok.kind != RawKind::BraceOpen
             {
                 return Some(tok);
             }

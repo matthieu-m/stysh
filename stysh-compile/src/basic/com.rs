@@ -136,6 +136,62 @@ impl Range {
     }
 }
 
+impl std::fmt::Display for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}@{}", self.length, self.offset)
+    }
+}
+
+/// A Slice of bytes, printed more pleasantly
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Slice<'a>(pub &'a [u8]);
+
+impl<'a> Slice<'a> {
+    /// Returns true if empty, false otherwise.
+    pub fn is_empty(&self) -> bool { self.0.is_empty() }
+
+    /// Returns the length of the slice.
+    pub fn len(&self) -> usize { self.0.len() }
+
+    /// Returns the byte at the indicated position, or None if it is invalid.
+    pub fn get(&self, pos: usize) -> Option<&u8> { self.0.get(pos) }
+}
+
+impl<'a> std::fmt::Debug for Slice<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self)
+    }
+}
+
+impl<'a> std::fmt::Display for Slice<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let mut start = 0;
+        while start < self.0.len() {
+            let end =
+                self.0[start..].iter().position(|&b| b < 32 || b > 126)
+                    .unwrap_or(self.len());
+
+            f.write_str(
+                std::str::from_utf8(&self.0[start..end]).expect("Valid UTF-8")
+            )?;
+
+            start = end;
+
+            let end =
+                self.0[start..].iter().position(|&b| b >= 32 && b <= 126)
+                    .unwrap_or(self.len());
+
+            for &byte in &self.0[start..end] {
+                write!(f, "{{0x{:X}}}", byte)?;
+            }
+
+            start = end;
+        }
+
+        Ok(())
+    }
+}
+
 //
 //  Tests
 //

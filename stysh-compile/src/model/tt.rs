@@ -181,6 +181,12 @@ impl Token {
 //
 //  Implementation Details
 //
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl std::fmt::Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(
@@ -190,5 +196,11 @@ impl std::fmt::Debug for Token {
             self.offset(),
             self.length()
         )
+    }
+}
+
+impl std::fmt::Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{{ {} {} }}", self.kind(), self.range())
     }
 }

@@ -120,12 +120,10 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::sem::*;
-    use super::GraphBuilder;
 
     #[test]
     fn first_translate() {
         let global_arena = mem::Arena::new();
-        let mut local_arena = mem::Arena::new();
 
         let fragment = com::CodeFragment::new(b"1 + 2".to_vec());
 
@@ -143,22 +141,36 @@ mod tests {
                 )
             );
 
-        let value =
-            GraphBuilder::new(fragment, &global_arena, &local_arena)
-            .translate(&node);
-        local_arena.recycle();
-
         assert_eq!(
-            value,
+            semit(&global_arena, fragment, &node),
             Value::BuiltinCall(
                 BuiltinFunction::Add,
                 &[
                     Value::BuiltinVal(BuiltinValue::Int(1), left_range),
                     Value::BuiltinVal(BuiltinValue::Int(2), right_range),
                 ],
-                com::Range::new(0, 5)
+                range(0, 5)
             )
         );
+    }
+
+    fn semit<'g>(
+        global_arena: &'g mem::Arena,
+        fragment: com::CodeFragment,
+        node: &syn::Node
+    )
+        -> Value<'g>
+    {
+        use super::GraphBuilder;
+
+        let mut local_arena = mem::Arena::new();
+
+        let result =
+            GraphBuilder::new(fragment, global_arena, &local_arena)
+                .translate(node);
+        local_arena.recycle();
+
+        result
     }
 
     fn lit_integral(range: com::Range) -> syn::Expression<'static> {

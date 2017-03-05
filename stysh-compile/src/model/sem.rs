@@ -36,3 +36,15 @@ pub enum BuiltinFunction {
     /// An addition.
     Add,
 }
+
+impl<'a> Value<'a> {
+    /// Returns the range spanned by the expression.
+    pub fn range(&self) -> com::Range {
+        use self::Value::*;
+
+        match *self {
+            BuiltinVal(_, r) => r,
+            BuiltinCall(_, _, r) => r,
+        }
+    }
+}

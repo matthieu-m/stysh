@@ -12,6 +12,8 @@
 //! The structures are parameterized by the lifetime of the arena providing the
 //! memory for their members.
 
+use std;
+
 use basic::com;
 
 /// A typed Value.
@@ -45,6 +47,26 @@ impl<'a> Value<'a> {
         match *self {
             BuiltinVal(_, r) => r,
             BuiltinCall(_, _, r) => r,
+        }
+    }
+}
+
+//
+//  Implementation Details
+//
+
+impl std::fmt::Display for BuiltinValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match *self {
+            BuiltinValue::Int(i) => write!(f, "{:x}", i),
+        }
+    }
+}
+
+impl std::fmt::Display for BuiltinFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match *self {
+            BuiltinFunction::Add => write!(f, "add"),
         }
     }
 }

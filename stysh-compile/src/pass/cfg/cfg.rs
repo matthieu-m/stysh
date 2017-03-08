@@ -150,29 +150,15 @@ mod tests {
         );
 
         assert_eq!(
-            cfg_expr(&global_arena, &expr),
-            ControlFlowGraph {
-                blocks: &[
-                    BasicBlock {
-                        instructions: &[
-                            Instruction::Load(
-                                sem::BuiltinValue::Int(1),
-                                left.range(),
-                            ),
-                            Instruction::Load(
-                                sem::BuiltinValue::Int(2),
-                                right.range(),
-                            ),
-                            Instruction::CallFunction(
-                                sem::BuiltinFunction::Add,
-                                &[instr_id(0), instr_id(1)],
-                                expr_range
-                            ),
-                        ],
-                        exit: TerminatorInstruction::Return(instr_id(2)),
-                    }
-                ]
-            }
+            cfg_expr(&global_arena, &expr).to_string(),
+            cat(&[
+                "0:",
+                "    $0 := load 1 ; 1@0",
+                "    $1 := load 2 ; 1@4",
+                "    $2 := add($0, $1) ; 5@0",
+                "    return $2",
+                ""
+            ])
         )
     }
 
@@ -204,5 +190,14 @@ mod tests {
 
     fn range(offset: usize, length: usize) -> com::Range {
         com::Range::new(offset, length)
+    }
+
+    fn cat(lines: &[&str]) -> String {
+        let mut result = String::from("");
+        for i in lines.iter() {
+            result.push_str(i);
+            result.push_str("\n");
+        }
+        result
     }
 }

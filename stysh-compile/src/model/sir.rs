@@ -30,6 +30,8 @@
 //! The structures are parameterized by the lifetime of the arena providing the
 //! memory for their members.
 
+use std;
+
 use basic::com;
 use model::sem;
 
@@ -123,6 +125,67 @@ impl ValueId {
 //  Implementation Details
 //
 const VALUE_ID_ARGUMENT_MASK: u16 = 1u16 << 15;
+
+impl<'a> std::fmt::Display for ControlFlowGraph<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        for (index, block) in self.blocks.iter().enumerate() {
+            write!(f, "{}:{}\n", index, block)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'a> std::fmt::Display for BasicBlock<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "\n")?;
+        for (index, instr) in self.instructions.iter().enumerate() {
+            write!(f, "    ${} := {}\n", index, instr)?;
+        }
+        write!(f, "    {}\n", self.exit)
+    }
+}
+
+impl<'a> std::fmt::Display for Instruction<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match *self {
+            Instruction::CallFunction(fun, vals, r) => {
+                write!(f, "{}(", fun)?;
+                for (i, v) in vals.iter().enumerate() {
+                    if i != 0 { write!(f, ", ")?; }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ") ; {}", r)
+            },
+            Instruction::Load(val, r) => {
+                write!(f, "load {} ; {}", val, r)
+            },
+        }
+    }
+}
+
+impl<'a> std::fmt::Display for TerminatorInstruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match *self {
+            TerminatorInstruction::Return(v) => write!(f, "return {}", v),
+            TerminatorInstruction::Unreachable => write!(f, "unreachable"),
+        }
+    }
+}
+
+impl std::fmt::Display for ValueId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        let prefix = if self.is_argument() {
+            '@'
+        } else {
+            '$'
+        };
+        let index =
+            self.as_argument().unwrap_or_else(
+                || self.as_instruction().unwrap()
+            );
+        write!(f, "{}{}", prefix, index)
+    }
+}
 
 //
 //  Tests

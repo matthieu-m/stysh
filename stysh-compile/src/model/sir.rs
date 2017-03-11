@@ -79,6 +79,34 @@ pub enum TerminatorInstruction {
     Unreachable
 }
 
+impl<'a> ControlFlowGraph<'a> {
+    /// Returns the range spanned by the graph.
+    pub fn range(&self) -> com::Range {
+        let initial = self.blocks[0].range();
+        self.blocks.iter().fold(initial, |acc, b| acc.extend(b.range()))
+    }
+}
+
+impl<'a> BasicBlock<'a> {
+    /// Returns the range spanned by the block.
+    pub fn range(&self) -> com::Range {
+        let initial = self.instructions[0].range();
+        self.instructions
+            .iter()
+            .fold(initial, |acc, instr| acc.extend(instr.range()))
+    }
+}
+
+impl<'a> Instruction<'a> {
+    /// Returns the range spanned by the instruction.
+    pub fn range(&self) -> com::Range {
+        match *self {
+            Instruction::CallFunction(_, _, r) => r,
+            Instruction::Load(_, r) => r,
+        }
+    }
+}
+
 impl BlockId {
     /// Returns a BlockId from a block index.
     pub fn new(index: usize) -> BlockId { BlockId(index as u32) }

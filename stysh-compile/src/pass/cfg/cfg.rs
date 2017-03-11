@@ -186,8 +186,6 @@ mod tests {
         )
     }
 
-    fn instr_id(id: usize) -> ValueId { ValueId::new_instruction(id) }
-
     fn range(offset: usize, length: usize) -> com::Range {
         com::Range::new(offset, length)
     }

@@ -77,11 +77,11 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
     }
 
-    fn from_expression(&mut self, expr: &sem::Value<'g>) {
+    fn from_expression(&mut self, value: &sem::Value<'g>) {
         let mut imp =
             BlockBuilderImpl::new(self.global_arena, self.local_arena);
 
-        imp.from_expression(expr);
+        imp.from_expression(value);
 
         let return_value = sir::ValueId::new_instruction(imp.instrs.len() - 1);
 
@@ -105,21 +105,21 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
         }
     }
 
-    fn from_expression(&mut self, expr: &sem::Value<'g>) -> sir::ValueId {
+    fn from_expression(&mut self, value: &sem::Value<'g>) -> sir::ValueId {
         let index = self.instrs.len();
-        match *expr {
-            sem::Value::BuiltinCall(fun, args, r) => {
+        match value.expr {
+            sem::Expr::BuiltinCall(fun, args) => {
                 let mut arguments = mem::Array::new(self.local_arena);
                 for a in args {
                     arguments.push(self.from_expression(a));
                 }
                 let arguments = self.global_arena.insert_slice(&arguments);
                 self.instrs.push(
-                    sir::Instruction::CallFunction(fun, arguments, r)
+                    sir::Instruction::CallFunction(fun, arguments, value.range)
                 );
             },
-            sem::Value::BuiltinVal(val, r) =>
-                self.instrs.push(sir::Instruction::Load(val, r)),
+            sem::Expr::BuiltinVal(val) =>
+                self.instrs.push(sir::Instruction::Load(val, value.range)),
         };
         sir::ValueId::new_instruction(index)
     }
@@ -143,11 +143,14 @@ mod tests {
         let arguments = &[left, right];
         let expr_range = range(0, 5);
 
-        let expr = sem::Value::BuiltinCall(
-            sem::BuiltinFunction::Add,
-            arguments,
-            expr_range
-        );
+        let expr = sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+            range: expr_range,
+            expr: sem::Expr::BuiltinCall(
+                sem::BuiltinFunction::Add,
+                arguments,
+            )
+        };
 
         assert_eq!(
             cfg_expr(&global_arena, &expr).to_string(),
@@ -180,10 +183,11 @@ mod tests {
     fn lit_integral(value: i64, offset: usize, length: usize)
         -> sem::Value<'static>
     {
-        sem::Value::BuiltinVal(
-            sem::BuiltinValue::Int(value),
-            range(offset, length)
-        )
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+            range: range(offset, length),
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
+        }
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

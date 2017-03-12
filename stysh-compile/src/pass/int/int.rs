@@ -37,8 +37,12 @@ impl<'g, 'local> Interpreter<'g, 'local> {
 //
 impl<'g, 'local> Interpreter<'g, 'local> {
     fn duplicate(&self, value: sem::Value<'local>) -> sem::Value<'g> {
-        match value {
-            sem::Value::BuiltinVal(v, r) => sem::Value::BuiltinVal(v, r),
+        match value.expr {
+            sem::Expr::BuiltinVal(v) => sem::Value {
+                type_: value.type_,
+                range: value.range,
+                expr: sem::Expr::BuiltinVal(v),
+            },
             _ => unimplemented!(),
         }
     }
@@ -57,7 +61,11 @@ impl<'a> FrameInterpreter<'a> {
         let mut interpreter = BlockInterpreter::new(self.arena);
 
         match interpreter.evaluate(&cfg.blocks[0]) {
-            BlockResult::Return(v) => sem::Value::BuiltinVal(v, cfg.range()),
+            BlockResult::Return(v) => sem::Value {
+                type_: sem::Type::Builtin(sem::BuiltinType::Int),
+                range: cfg.range(),
+                expr: sem::Expr::BuiltinVal(v),
+            }
         }
     }
 }
@@ -160,10 +168,11 @@ mod tests {
 
         assert_eq!(
             eval(&global_arena, &cfg),
-            sem::Value::BuiltinVal(
-                sem::BuiltinValue::Int(3),
-                com::Range::new(0, 0),
-            )
+            sem::Value {
+                type_: sem::Type::Builtin(sem::BuiltinType::Int),
+                range: com::Range::new(0, 0),
+                expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(3)),
+            }
         );
     }
 

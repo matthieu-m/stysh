@@ -16,13 +16,38 @@ use std;
 
 use basic::com;
 
-/// A typed Value.
+/// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Value<'a> {
+pub enum Type {
+    /// A built-in type.
+    Builtin(BuiltinType),
+}
+
+/// A built-in Type.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum BuiltinType {
+    /// A 64-bits signed integer.
+    Int,
+}
+
+/// A Value.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Value<'a> {
+    /// Type of the value.
+    pub type_: Type,
+    /// Range of the expression evaluating to the value.
+    pub range: com::Range,
+    /// Expression evaluating to the value.
+    pub expr: Expr<'a>,
+}
+
+/// An Expression.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Expr<'a> {
     /// A built-in value.
-    BuiltinVal(BuiltinValue, com::Range),
+    BuiltinVal(BuiltinValue),
     /// A built-in function call.
-    BuiltinCall(BuiltinFunction, &'a [Value<'a>], com::Range),
+    BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
 }
 
 /// A built-in value, the type is implicit.
@@ -39,22 +64,9 @@ pub enum BuiltinFunction {
     Add,
 }
 
-impl<'a> Value<'a> {
-    /// Returns the range spanned by the expression.
-    pub fn range(&self) -> com::Range {
-        use self::Value::*;
-
-        match *self {
-            BuiltinVal(_, r) => r,
-            BuiltinCall(_, _, r) => r,
-        }
-    }
-}
-
 //
 //  Implementation Details
 //
-
 impl std::fmt::Display for BuiltinValue {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {

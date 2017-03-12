@@ -81,7 +81,11 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 
         let arguments = self.global_arena.insert_slice(buffer.into_slice());
 
-        sem::Value::BuiltinCall(op, arguments, range)
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+            range: range,
+            expr: sem::Expr::BuiltinCall(op, arguments),
+        }
     }
 
     fn translate_literal(&mut self, lit: syn::Literal, range: com::Range)
@@ -104,7 +108,11 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
             }
         }
 
-        sem::Value::BuiltinVal(sem::BuiltinValue::Int(value), range)
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+            range: range,
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
+        }
     }
 
     fn source(&self, range: com::Range) -> &[u8] {
@@ -143,14 +151,14 @@ mod tests {
 
         assert_eq!(
             semit(&global_arena, fragment, &node),
-            Value::BuiltinCall(
-                BuiltinFunction::Add,
-                &[
-                    Value::BuiltinVal(BuiltinValue::Int(1), left_range),
-                    Value::BuiltinVal(BuiltinValue::Int(2), right_range),
-                ],
-                range(0, 5)
-            )
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: range(0, 5),
+                expr: Expr::BuiltinCall(
+                    BuiltinFunction::Add,
+                    &[ int(1, left_range), int(2, right_range) ],
+                )
+            }
         );
     }
 
@@ -175,6 +183,14 @@ mod tests {
 
     fn lit_integral(range: com::Range) -> syn::Expression<'static> {
         syn::Expression::Lit(syn::Literal::Integral, range)
+    }
+
+    fn int(value: i64, range: com::Range) -> Value<'static> {
+        Value {
+            type_: Type::Builtin(BuiltinType::Int),
+            range: range,
+            expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
+        }
     }
 
     fn range(start: usize, length: usize) -> com::Range {

@@ -236,16 +236,48 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
                 b'0'...b'9' => self.parse_number(tok),
-                b'+' => Some(Token::new(Kind::OperatorPlus, tok.offset, 1)),
-                _ => { println!("parse_token - {:?}", tok); unimplemented!() },
+                b'A'...b'Z' => self.parse_name(tok),
+                b'a'...b'z' => self.parse_name(tok),
+                b':' if tok.raw.len() > 1 => self.parse_keyword(tok),
+                b':' | b'-' | b'+' | b',' => self.parse_sign(tok),
+                _ => { println!("parse_token - {}", tok); unimplemented!() },
             }
         })
+    }
+
+    fn parse_keyword(&self, tok: RawToken) -> Option<Token> {
+        assert!(tok.raw == b":fun");
+        Some(Token::new(Kind::KeywordFun, tok.offset, tok.raw.len()))
+    }
+
+    fn parse_name(&self, tok: RawToken) -> Option<Token> {
+        // TODO(matthieum): validate identifiers.
+
+        let kind = match tok.raw[0] {
+            b'A'...b'Z' => Kind::NameType,
+            b'a'...b'z' => Kind::NameValue,
+            _ => unreachable!("parse_name - {}", tok),
+        };
+
+        Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 
     fn parse_number(&self, tok: RawToken) -> Option<Token> {
         assert!(tok.raw.iter().all(|&c| c >= b'0' && c <= b'9'));
 
-        Some(Token::new(Kind::Integral, tok.offset, tok.raw.len()))
+        Some(Token::new(Kind::LitIntegral, tok.offset, tok.raw.len()))
+    }
+
+    fn parse_sign(&self, tok: RawToken) -> Option<Token> {
+        let kind = match tok.raw {
+            b"+" => Kind::OperatorPlus,
+            b"->" => Kind::SignArrowSingle,
+            b":" => Kind::SignColon,
+            b"," => Kind::SignComma,
+            _ => { println!("parse_sign - {}", tok); unimplemented!() },
+        };
+
+        Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 }
 
@@ -378,9 +410,9 @@ mod tests {
                     Token::new(Kind::ParenthesisOpen, 0, 1),
                     &[
                         Node::Run(&[
-                            Token::new(Kind::Integral, 1, 1),
+                            Token::new(Kind::LitIntegral, 1, 1),
                             Token::new(Kind::OperatorPlus, 3, 1),
-                            Token::new(Kind::Integral, 5, 1),
+                            Token::new(Kind::LitIntegral, 5, 1),
                         ])
                     ],
                     Token::new(Kind::ParenthesisClose, 6, 1),
@@ -400,9 +432,9 @@ mod tests {
                     Token::new(Kind::ParenthesisOpen, 0, 1),
                     &[
                         Node::Run(&[
-                            Token::new(Kind::Integral, 1, 1),
+                            Token::new(Kind::LitIntegral, 1, 1),
                             Token::new(Kind::OperatorPlus, 3, 1),
-                            Token::new(Kind::Integral, 5, 1),
+                            Token::new(Kind::LitIntegral, 5, 1),
                         ])
                     ],
                     Token::new(Kind::ParenthesisClose, 6, 0),
@@ -417,18 +449,63 @@ mod tests {
                     Token::new(Kind::BraceOpen, 0, 1),
                     &[
                         Node::Run(&[
-                            Token::new(Kind::Integral, 6, 1),
+                            Token::new(Kind::LitIntegral, 6, 1),
                             Token::new(Kind::OperatorPlus, 8, 1),
-                            Token::new(Kind::Integral, 10, 1),
+                            Token::new(Kind::LitIntegral, 10, 1),
                         ])
                     ],
                     Token::new(Kind::BraceClose, 11, 0),
                 ),
                 Node::Run(&[
-                    Token::new(Kind::Integral, 12, 1),
+                    Token::new(Kind::LitIntegral, 12, 1),
                     Token::new(Kind::OperatorPlus, 14, 1),
-                    Token::new(Kind::Integral, 16, 1),
+                    Token::new(Kind::LitIntegral, 16, 1),
                 ])
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_function_simple() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b":fun add(x: Int, y: Int) -> Int { x + y }"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::KeywordFun, 0, 4),
+                    Token::new(Kind::NameValue, 5, 3),
+                ]),
+                Node::Braced(
+                    Token::new(Kind::ParenthesisOpen, 8, 1),
+                    &[
+                        Node::Run(&[
+                            Token::new(Kind::NameValue, 9, 1),
+                            Token::new(Kind::SignColon, 10, 1),
+                            Token::new(Kind::NameType, 12, 3),
+                            Token::new(Kind::SignComma, 15, 1),
+                            Token::new(Kind::NameValue, 17, 1),
+                            Token::new(Kind::SignColon, 18, 1),
+                            Token::new(Kind::NameType, 20, 3),
+                        ]),
+                    ],
+                    Token::new(Kind::ParenthesisClose, 23, 1),
+                ),
+                Node::Run(&[
+                    Token::new(Kind::SignArrowSingle, 25, 2),
+                    Token::new(Kind::NameType, 28, 3),
+                ]),
+                Node::Braced(
+                    Token::new(Kind::BraceOpen, 32, 1),
+                    &[
+                        Node::Run(&[
+                            Token::new(Kind::NameValue, 34, 1),
+                            Token::new(Kind::OperatorPlus, 36, 1),
+                            Token::new(Kind::NameValue, 38, 1),
+                        ]),
+                    ],
+                    Token::new(Kind::BraceClose, 40, 1),
+                ),
             ]
         );
     }
@@ -441,7 +518,7 @@ mod tests {
             lexit(&global_arena, b"1"),
             &[
                 Node::Run(&[
-                    Token::new(Kind::Integral, 0, 1),
+                    Token::new(Kind::LitIntegral, 0, 1),
                 ])
             ]
         );
@@ -455,7 +532,7 @@ mod tests {
             lexit(&global_arena, b"0123"),
             &[
                 Node::Run(&[
-                    Token::new(Kind::Integral, 0, 4),
+                    Token::new(Kind::LitIntegral, 0, 4),
                 ])
             ]
         );
@@ -469,9 +546,9 @@ mod tests {
             lexit(&global_arena, b" 12 + 34 "),
             &[
                 Node::Run(&[
-                    Token::new(Kind::Integral, 1, 2),
+                    Token::new(Kind::LitIntegral, 1, 2),
                     Token::new(Kind::OperatorPlus, 4, 1),
-                    Token::new(Kind::Integral, 6, 2),
+                    Token::new(Kind::LitIntegral, 6, 2),
                 ])
             ]
         );

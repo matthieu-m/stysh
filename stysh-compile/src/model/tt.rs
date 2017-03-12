@@ -48,10 +48,14 @@ pub enum Kind {
     BracketClose,
     /// A '[' brace.
     BracketOpen,
-    /// A ':' sign.
-    Colon,
+    /// The :fun keyword.
+    KeywordFun,
     /// An integral.
-    Integral,
+    LitIntegral,
+    /// The name of a type.
+    NameType,
+    /// The name of a value.
+    NameValue,
     /// A '+' sign.
     OperatorPlus,
     /// A ')' brace,
@@ -62,6 +66,12 @@ pub enum Kind {
     QuoteDouble,
     /// A single quote.
     QuoteSingle,
+    /// A '->' sign.
+    SignArrowSingle,
+    /// A ':' sign.
+    SignColon,
+    /// A ',' sign.
+    SignComma,
     /// A format for an argument or interpolated identifier.
     StringFormat,
     /// An identifier in scope, to be interpolated.

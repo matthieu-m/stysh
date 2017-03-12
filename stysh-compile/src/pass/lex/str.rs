@@ -176,7 +176,7 @@ fn parse_fragment<'a>(quote: u8, offset: usize, raw: &'a [u8])
         if raw.is_empty() {
             return StringFragment::Interpolated(
                 Token::new(Kind::StringPositionalArgument, offset, 0),
-                Token::new(Kind::Colon, offset, 0),
+                Token::new(Kind::SignColon, offset, 0),
                 Token::new(Kind::StringFormat, offset, 0)
             );
         }
@@ -209,7 +209,7 @@ fn parse_fragment<'a>(quote: u8, offset: usize, raw: &'a [u8])
         };
 
         let colon =
-            Token::new(Kind::Colon, id.offset() + id.length(), colon.len());
+            Token::new(Kind::SignColon, id.offset() + id.length(), colon.len());
 
         //  TODO(matthieum): validate format.
         let format = Token::new(
@@ -561,7 +561,7 @@ mod tests {
         StringFragment::Interpolated(
             //  Note: the token itself does not account for the braces {}.
             Token::new(kind, offset + 1, len - 2),
-            Token::new(Kind::Colon, offset + len - 1, 0),
+            Token::new(Kind::SignColon, offset + len - 1, 0),
             Token::new(Kind::StringFormat, offset + len - 1, 0),
         )
     }
@@ -572,7 +572,7 @@ mod tests {
         StringFragment::Interpolated(
             //  Note: the token itself does not account for the braces {}.
             Token::new(kind, offset + 1, len_id),
-            Token::new(Kind::Colon, offset + 1 + len_id, 1),
+            Token::new(Kind::SignColon, offset + 1 + len_id, 1),
             Token::new(Kind::StringFormat, offset + 2 + len_id, len_format),
         )
     }

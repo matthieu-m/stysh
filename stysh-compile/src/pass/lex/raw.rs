@@ -11,7 +11,9 @@
 //! The one exception to the rule is string literals; multi-line string literals
 //! always require more effort. They are useful enough to be worth it.
 
-use std::{iter, ops};
+use std::{fmt, iter, ops};
+
+use basic::com;
 
 pub trait PeekableTokenStream<'a>: iter::Iterator<Item = RawToken<'a>> {
     fn underlying(&mut self) -> &mut iter::Peekable<RawStream<'a>>;
@@ -77,7 +79,8 @@ impl<'a> iter::Iterator for RawStream<'a> {
             b'b' if ASCII_QUOTES.contains_opt(next) => self.lex_string(),
             b'#' if next == Some(b'[') => self.lex_attribute(),
             b'#' => self.lex_comment(),
-            _ => self.lex_generic(),
+            b':' => self.lex_generic(1),
+            _ => self.lex_generic(0),
         };
 
         self.skip_whitespace();
@@ -154,14 +157,21 @@ impl<'a> RawStream<'a> {
         (RawKind::Comment, self.pop(length))
     }
 
-    fn lex_generic(&mut self) -> (RawKind, &'a [u8]) {
-        let is_special = |c| {
+    fn lex_generic(&mut self, offset: usize) -> (RawKind, &'a [u8]) {
+        let is_special = |&c| {
             c <= b' ' ||
             c >= 0x7f ||
+            c == b':' ||
             ASCII_SINGLETONS.contains(c)
         };
 
-        let length = self.first(is_special).unwrap_or(self.raw.len());
+        let length =
+            self.raw[offset..]
+                .iter()
+                .position(is_special)
+                .map(|i| i + offset)
+                .unwrap_or(self.raw.len());
+
         (RawKind::Generic, self.pop(length))
     }
 
@@ -411,6 +421,20 @@ impl<'a> RawToken<'a> {
     {
         RawToken::new(
             RawKind::StringMultiLines, raw, offset, line_offset, line_indent
+        )
+    }
+}
+
+impl<'a> fmt::Display for RawToken<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "RawToken {{ kind: {:?}, raw: {}, offset: {}, line_offset: {}, line_indent: {} }}",
+            self.kind,
+            com::Slice(self.raw),
+            self.offset,
+            self.line_offset,
+            self.line_indent
         )
     }
 }

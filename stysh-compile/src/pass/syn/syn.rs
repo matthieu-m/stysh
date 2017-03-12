@@ -68,7 +68,7 @@ impl<'g> IntoExpr<'g> for tt::Token {
         use self::Literal::*;
 
         match self.kind() {
-            tt::Kind::Integral => Some(Lit(Integral, self.range())),
+            tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
             _ => None,
         }
     }

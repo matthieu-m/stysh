@@ -16,6 +16,8 @@ pub type List<'a> = &'a [Node<'a>];
 pub enum Node<'a> {
     /// An expression.
     Expr(Expression<'a>),
+    /// An item.
+    Item(Item<'a>),
 }
 
 /// An Expression.
@@ -25,6 +27,32 @@ pub enum Expression<'a> {
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
     /// A literal.
     Lit(Literal, com::Range),
+    /// A variable identifier.
+    Var(VariableIdentifier),
+}
+
+/// An Item.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Item<'a> {
+    /// A function.
+    Fun {
+        name: VariableIdentifier,
+        arguments: &'a [Argument],
+        result: TypeIdentifier,
+        body: Expression<'a>,
+        keyword: u32,
+        open: u32,
+        close: u32,
+        arrow: u32,
+    },
+}
+
+/// An argument.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Argument {
+    name: VariableIdentifier,
+    type_: TypeIdentifier,
 }
 
 /// A Binary Operator such as `+` or `*`.
@@ -41,13 +69,22 @@ pub enum Literal {
     Integral
 }
 
+/// A Type Identifier.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TypeIdentifier(pub com::Range);
+
+/// A Value Identifier.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct VariableIdentifier(pub com::Range);
+
 impl<'a> Node<'a> {
     /// Returns the range spanned by the node.
     pub fn range(&self) -> com::Range {
-        use self::Node::Expr;
+        use self::Node::*;
 
         match *self {
             Expr(expr) => expr.range(),
+            Item(item) => item.range(),
         }
     }
 }
@@ -55,11 +92,24 @@ impl<'a> Node<'a> {
 impl<'a> Expression<'a> {
     /// Returns the range spanned by the expression.
     pub fn range(&self) -> com::Range {
-        use self::Expression::{BinOp, Lit};
+        use self::Expression::*;
 
         match *self {
             BinOp(_, left, right) => left.range().extend(right.range()),
             Lit(_, range) => range,
+            Var(VariableIdentifier(range)) => range,
+        }
+    }
+}
+
+impl<'a> Item<'a> {
+    /// Returns the range spanned by the expression.
+    pub fn range(&self) -> com::Range {
+        use self::Item::Fun;
+
+        match *self {
+            Fun { keyword: k, body: b, .. } =>
+                com::Range::new(k as usize, 4).extend(b.range()),
         }
     }
 }
@@ -70,7 +120,7 @@ impl<'a> Expression<'a> {
 #[cfg(test)]
 mod tests {
     use basic::com;
-    use super::{Node, Expression, BinaryOperator, Literal};
+    use super::*;
 
     #[test]
     fn range_expression_literal() {
@@ -85,6 +135,26 @@ mod tests {
         let expr = Expression::BinOp(BinaryOperator::Plus, &left, &right);
 
         assert_eq!(expr.range(), range(3, 5));
+    }
+
+    #[test]
+    fn range_item_fun() {
+        let (left, right) =
+            (expr_lit_integral(20, 1), expr_lit_integral(24, 1));
+        let node = Node::Item(
+            Item::Fun {
+                name: VariableIdentifier(range(8, 3)),
+                arguments: &[],
+                result: TypeIdentifier(range(16, 3)),
+                body: Expression::BinOp(BinaryOperator::Plus, &left, &right),
+                keyword: 3,
+                open: 11,
+                close: 12,
+                arrow: 14,
+            }
+        );
+
+        assert_eq!(node.range(), range(3, 22));
     }
 
     #[test]

@@ -38,6 +38,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
     pub fn translate(&mut self, item: &syn::Node) -> sem::Value<'g> {
         match *item {
             syn::Node::Expr(e) => self.translate_expr(&e),
+            _ => unimplemented!(),
         }
     }
 }
@@ -55,6 +56,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
             Expression::BinOp(op, left, right) =>
                 self.translate_binary_operator(op, left, right),
             Expression::Lit(lit, range) => self.translate_literal(lit, range),
+            _ => unimplemented!(),
         }
     }
 

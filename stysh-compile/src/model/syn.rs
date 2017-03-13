@@ -25,6 +25,8 @@ pub enum Node<'a> {
 pub enum Expression<'a> {
     /// A binary operation.
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
+    /// A block expression.
+    Block(List<'a>, com::Range),
     /// A literal.
     Lit(Literal, com::Range),
     /// A variable identifier.
@@ -53,6 +55,8 @@ pub enum Item<'a> {
 pub struct Argument {
     name: VariableIdentifier,
     type_: TypeIdentifier,
+    colon: u32,
+    comma: u32,
 }
 
 /// A Binary Operator such as `+` or `*`.
@@ -96,6 +100,7 @@ impl<'a> Expression<'a> {
 
         match *self {
             BinOp(_, left, right) => left.range().extend(right.range()),
+            Block(_, range) => range,
             Lit(_, range) => range,
             Var(VariableIdentifier(range)) => range,
         }

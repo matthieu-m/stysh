@@ -108,6 +108,17 @@ pub enum StringFragment {
 }
 
 impl<'g> Node<'g> {
+    /// Returns the first token.
+    pub fn front(&self) -> Token {
+        match *self {
+            Node::Run(slice) => slice[0],
+            Node::Braced(o, _, _) => o,
+            Node::Bytes(o, _, _) => o,
+            Node::String(o, _, _) => o,
+            Node::UnexpectedBrace(t) => t,
+        }
+    }
+
     /// Returns the range spanned by the node.
     pub fn range(&self) -> com::Range {
         match *self {

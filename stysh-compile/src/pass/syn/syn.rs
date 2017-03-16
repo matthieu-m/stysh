@@ -39,11 +39,7 @@ impl<'g, 'local> Parser<'g, 'local> {
 
     /// Transforms a slice of raw Token Trees into an Abstract Syntax Tree.
     pub fn transform(&mut self, nodes: &[tt::Node]) -> List<'g> {
-        ParserImpl {
-            nodes: nodes,
-            global_arena: self.global_arena,
-            local_arena: self.local_arena,
-        }.parse_all()
+        ParserImpl::new(nodes, self.global_arena, self.local_arena).parse_all()
     }
 }
 
@@ -67,10 +63,15 @@ impl<'g> IntoExpr<'g> for tt::Token {
 }
 
 struct ParserImpl<'a, 'g, 'local> {
-    nodes: &'a [tt::Node<'a>],
+    state: ParserState<'a>,
     global_arena: &'g mem::Arena,
     #[allow(dead_code)]
     local_arena: &'local mem::Arena,
+}
+
+struct ParserState<'a> {
+    nodes: &'a [tt::Node<'a>],
+    run_start: usize,
 }
 
 impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
@@ -89,6 +90,20 @@ impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
 }
 
 impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
+    fn new(
+        nodes: &'a [tt::Node<'a>],
+        global: &'g mem::Arena,
+        local: &'local mem::Arena
+    )
+        -> ParserImpl<'a, 'g, 'local>
+    {
+        ParserImpl {
+            state: ParserState::new(nodes),
+            global_arena: global,
+            local_arena: local,
+        }
+    }
+
     fn parse_all(self) -> List<'g> {
         let global_arena = self.global_arena;
         let mut buffer = mem::Array::new(self.local_arena);
@@ -101,14 +116,14 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
     }
 
     fn parse_expression(&mut self) -> Expression<'g> {
-        let tokens = match self.pop() {
+        let tokens = match self.peek() {
             Some(tt::Node::Run(tokens)) => tokens,
             Some(tt::Node::Braced(o, n, c)) => {
-                let inner = ParserImpl {
-                    nodes: n,
-                    global_arena: self.global_arena,
-                    local_arena: self.local_arena,
-                }.parse_all();
+                self.pop_node();
+
+                let inner =
+                    ParserImpl::new(n, self.global_arena, self.local_arena)
+                        .parse_all();
 
                 return Expression::Block(inner, o.range().extend(c.range()));
             },
@@ -126,6 +141,8 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
             tokens[2].into_expr().expect("Integral")
         );
 
+        self.pop_tokens(3);
+
         Expression::BinOp(
             BinaryOperator::Plus,
             left_operand,
@@ -135,7 +152,7 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
 
     fn parse_function(&mut self) -> Item<'g> {
         let (keyword, name) = {
-            let start = match self.pop() {
+            let start = match self.peek() {
                 Some(tt::Node::Run(tokens)) => tokens,
                 _ => unimplemented!(),
             };
@@ -144,14 +161,18 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
             assert_eq!(start[0].kind(), tt::Kind::KeywordFun);
             assert_eq!(start[1].kind(), tt::Kind::NameValue);
 
+            self.pop_tokens(2);
+
             (start[0].offset() as u32, VariableIdentifier(start[1].range()))
         };
 
         let (open, arguments, close) = {
-            let (o, a, c) = match self.pop() {
+            let (o, a, c) = match self.peek() {
                 Some(tt::Node::Braced(open, a, close)) => (open, a, close),
                 _ => unimplemented!(),
             };
+
+            self.pop_node();
 
             assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
             assert_eq!(c.kind(), tt::Kind::ParenthesisClose);
@@ -162,7 +183,7 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
         };
 
         let (arrow, result) = {
-            let result = match self.pop() {
+            let result = match self.peek() {
                 Some(tt::Node::Run(tokens)) => tokens,
                 _ => unimplemented!(),
             };
@@ -170,6 +191,8 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
             assert_eq!(result.len(), 2);
             assert_eq!(result[0].kind(), tt::Kind::SignArrowSingle);
             assert_eq!(result[1].kind(), tt::Kind::NameType);
+
+            self.pop_tokens(2);
 
             (result[0].offset() as u32, TypeIdentifier(result[1].range()))
         };
@@ -192,21 +215,48 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
         &[]
     }
 
-    fn peek(&self) -> Option<tt::Node<'a>> {
-        self.nodes.get(0).cloned()
-    }
+    fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
 
-    fn pop(&mut self) -> Option<tt::Node<'a>> {
-        if let Some((head, tail)) = self.nodes.split_first() {
-            self.nodes = tail;
-            Some(head).cloned()
-        } else {
-            None
-        }
-    }
+    fn pop_node(&mut self) { self.state.pop_node(); }
+
+    fn pop_tokens(&mut self, nb: usize) { self.state.pop_tokens(nb); }
 
     fn intern<T: 'g>(&mut self, t: T) -> &'g T {
         self.global_arena.insert(t)
+    }
+}
+
+impl<'a> ParserState<'a> {
+    fn new(nodes: &'a [tt::Node<'a>]) -> ParserState<'a> {
+        ParserState { nodes: nodes, run_start: 0 }
+    }
+
+    fn peek(&self) -> Option<tt::Node<'a>> {
+        match self.nodes.first().cloned() {
+            Some(tt::Node::Run(run)) =>
+                Some(tt::Node::Run(&run[self.run_start..])),
+            other => other,
+        }
+    }
+
+    fn pop_node(&mut self) {
+        self.nodes = &self.nodes[1..];
+        self.run_start = 0;
+    }
+
+    fn pop_tokens(&mut self, nb: usize) {
+        if let Some(tt::Node::Run(run)) = self.nodes.first().cloned() {
+            debug_assert!(self.run_start + nb <= run.len());
+
+            self.run_start += nb;
+
+            if self.run_start == run.len() {
+                self.run_start = 0;
+                self.pop_node();
+            }
+        } else {
+            panic!("Unreachable!");
+        }
     }
 }
 

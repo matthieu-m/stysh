@@ -26,7 +26,7 @@ pub enum Expression<'a> {
     /// A binary operation.
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
-    Block(List<'a>, com::Range),
+    Block(&'a Expression<'a>, com::Range),
     /// A literal.
     Lit(Literal, com::Range),
     /// A variable identifier.
@@ -34,29 +34,44 @@ pub enum Expression<'a> {
 }
 
 /// An Item.
-#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Item<'a> {
     /// A function.
-    Fun {
-        name: VariableIdentifier,
-        arguments: &'a [Argument],
-        result: TypeIdentifier,
-        body: Expression<'a>,
-        keyword: u32,
-        open: u32,
-        close: u32,
-        arrow: u32,
-    },
+    Fun(Function<'a>),
 }
 
-/// An argument.
+/// A Function.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Function<'a> {
+    /// Name of the function.
+    pub name: VariableIdentifier,
+    /// List of arguments of the function.
+    pub arguments: &'a [Argument],
+    /// Return type of the function.
+    pub result: TypeIdentifier,
+    /// Body of the function.
+    pub body: Expression<'a>,
+    /// Offset of the ":fun" keyword.
+    pub keyword: u32,
+    /// Offset of the "(" token.
+    pub open: u32,
+    /// Offset of the ")" token.
+    pub close: u32,
+    /// Offset of the "->" token, if any.
+    pub arrow: u32,
+}
+
+/// An Argument.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Argument {
-    name: VariableIdentifier,
-    type_: TypeIdentifier,
-    colon: u32,
-    comma: u32,
+    /// Name of the argument.
+    pub name: VariableIdentifier,
+    /// Type of the argument.
+    pub type_: TypeIdentifier,
+    /// Offset of the colon.
+    pub colon: u32,
+    /// Offset of the comma, if any.
+    pub comma: u32,
 }
 
 /// A Binary Operator such as `+` or `*`.
@@ -108,14 +123,20 @@ impl<'a> Expression<'a> {
 }
 
 impl<'a> Item<'a> {
-    /// Returns the range spanned by the expression.
+    /// Returns the range spanned by the item.
     pub fn range(&self) -> com::Range {
         use self::Item::Fun;
 
         match *self {
-            Fun { keyword: k, body: b, .. } =>
-                com::Range::new(k as usize, 4).extend(b.range()),
+            Fun(fun) => fun.range(),
         }
+    }
+}
+
+impl<'a> Function<'a> {
+    /// Returns the range spanned by the function.
+    pub fn range(&self) -> com::Range {
+        com::Range::new(self.keyword as usize, 4).extend(self.body.range())
     }
 }
 
@@ -146,20 +167,18 @@ mod tests {
     fn range_item_fun() {
         let (left, right) =
             (expr_lit_integral(20, 1), expr_lit_integral(24, 1));
-        let node = Node::Item(
-            Item::Fun {
-                name: VariableIdentifier(range(8, 3)),
-                arguments: &[],
-                result: TypeIdentifier(range(16, 3)),
-                body: Expression::BinOp(BinaryOperator::Plus, &left, &right),
-                keyword: 3,
-                open: 11,
-                close: 12,
-                arrow: 14,
-            }
-        );
+        let fun = Function {
+            name: VariableIdentifier(range(8, 3)),
+            arguments: &[],
+            result: TypeIdentifier(range(16, 3)),
+            body: Expression::BinOp(BinaryOperator::Plus, &left, &right),
+            keyword: 3,
+            open: 11,
+            close: 12,
+            arrow: 14,
+        };
 
-        assert_eq!(node.range(), range(3, 22));
+        assert_eq!(fun.range(), range(3, 22));
     }
 
     #[test]

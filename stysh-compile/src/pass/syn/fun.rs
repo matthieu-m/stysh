@@ -6,7 +6,7 @@ use model::syn::*;
 use model::tt;
 
 use super::com::RawParser;
-use super::expr;
+use super::{expr, tok, typ};
 
 pub struct FunParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>
@@ -29,19 +29,13 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
     pub fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
     pub fn parse(&mut self) -> Function<'g> {
+        use self::tt::Kind::*;
+
         let (keyword, name) = {
-            let start = match self.raw.peek() {
-                Some(tt::Node::Run(tokens)) => tokens,
-                _ => unimplemented!(),
-            };
+            let keyword = self.pop_token(KeywordFun).unwrap();
+            let name = self.pop_token(NameValue).expect("Function Name");
 
-            assert_eq!(start.len(), 2);
-            assert_eq!(start[0].kind(), tt::Kind::KeywordFun);
-            assert_eq!(start[1].kind(), tt::Kind::NameValue);
-
-            self.raw.pop_tokens(2);
-
-            (start[0].offset() as u32, VariableIdentifier(start[1].range()))
+            (keyword.offset() as u32, VariableIdentifier(name.range()))
         };
 
         let (open, arguments, close) = {
@@ -60,20 +54,12 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             (o.offset() as u32, arguments, c.offset() as u32)
         };
 
-        let (arrow, result) = {
-            let result = match self.raw.peek() {
-                Some(tt::Node::Run(tokens)) => tokens,
-                _ => unimplemented!(),
+        let (arrow, result) =
+            if let Some(arrow) = self.pop_token(SignArrowSingle) {
+                (arrow.offset() as u32, typ::parse_type(&mut self.raw))
+            } else {
+                (0, unimplemented!())
             };
-
-            assert_eq!(result.len(), 2);
-            assert_eq!(result[0].kind(), tt::Kind::SignArrowSingle);
-            assert_eq!(result[1].kind(), tt::Kind::NameType);
-
-            self.raw.pop_tokens(2);
-
-            (result[0].offset() as u32, TypeIdentifier(result[1].range()))
-        };
 
         let body = expr::parse_expression(&mut self.raw);
 
@@ -96,6 +82,10 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
     fn parse_arguments(&self, _arguments: &[tt::Node]) -> &'g [Argument] {
         &[]
+    }
+
+    fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
+        tok::pop_token(kind, &mut self.raw)
     }
 }
 

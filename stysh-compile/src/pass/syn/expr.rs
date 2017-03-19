@@ -42,14 +42,14 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         };
 
         let left_operand: &'g Expression<'g> = self.raw.intern(
-            tokens[0].into_expr().expect("Integral")
+            tokens[0].into_expr().expect("Operand")
         );
 
         let operator = tokens[1];
         assert_eq!(operator.kind(), tt::Kind::OperatorPlus);
 
         let right_operand: &Expression = self.raw.intern(
-            tokens[2].into_expr().expect("Integral")
+            tokens[2].into_expr().expect("Operand")
         );
 
         self.raw.pop_tokens(3);
@@ -76,6 +76,7 @@ impl<'g> IntoExpr<'g> for tt::Token {
 
         match self.kind() {
             tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
+            tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
     }

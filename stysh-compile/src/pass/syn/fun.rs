@@ -80,8 +80,36 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //  Implementation Details
 //
 impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
-    fn parse_arguments(&self, _arguments: &[tt::Node]) -> &'g [Argument] {
-        &[]
+    fn parse_arguments(&self, arguments: &'a [tt::Node]) -> &'g [Argument] {
+        use self::tt::Kind::*;
+
+        if arguments.is_empty() {
+            return &[];
+        }
+
+        let mut raw = self.raw.spawn(arguments);
+        let mut buffer = raw.local_array();
+
+        while raw.peek().is_some() {
+            let name = tok::pop_token(NameValue, &mut raw).expect("Name");
+
+            let colon = tok::pop_token(SignColon, &mut raw)
+                .map(|t| t.offset() as u32).unwrap_or(0);
+
+            let type_ = typ::parse_type(&mut raw);
+
+            let comma = tok::pop_token(SignComma, &mut raw)
+                .map(|t| t.offset() as u32).unwrap_or(0);
+
+            buffer.push(Argument {
+                name: VariableIdentifier(name.range()),
+                type_: type_,
+                colon: colon,
+                comma: comma,
+            });
+        }
+
+        self.raw.global().insert_slice(buffer.into_slice())
     }
 
     fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
@@ -125,6 +153,45 @@ mod tests {
                 open: 8,
                 close: 9,
                 arrow: 11,
+            }
+        );
+    }
+
+    #[test]
+    fn basic_add() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            funit(&global_arena, b":fun add(a: Int, b: Int) -> Int { a + b }"),
+            Function {
+                name: VariableIdentifier(range(5, 3)),
+                arguments: &[
+                    Argument {
+                        name: VariableIdentifier(range(9, 1)),
+                        type_: TypeIdentifier(range(12, 3)),
+                        colon: 10,
+                        comma: 15,
+                    },
+                    Argument {
+                        name: VariableIdentifier(range(17, 1)),
+                        type_: TypeIdentifier(range(20, 3)),
+                        colon: 18,
+                        comma: 0,
+                    }
+                ],
+                result: TypeIdentifier(range(28, 3)),
+                body: Expression::Block(
+                    &Expression::BinOp(
+                        BinaryOperator::Plus,
+                        &Expression::Var( VariableIdentifier(range(34, 1)) ),
+                        &Expression::Var( VariableIdentifier(range(38, 1)) ),
+                    ),
+                    range(32, 9),
+                ),
+                keyword: 0,
+                open: 8,
+                close: 23,
+                arrow: 25,
             }
         );
     }

@@ -59,6 +59,10 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
     pub fn local(&self) -> &'local mem::Arena { self.local_arena }
 
+    pub fn local_array<T>(&self) -> mem::Array<'local, T> {
+        mem::Array::new(self.local_arena)
+    }
+
     pub fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
 
     pub fn pop_node(&mut self) { self.state.pop_node(); }

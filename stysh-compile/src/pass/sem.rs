@@ -52,6 +52,18 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 //
 impl<'g, 'local> GraphBuilder<'g, 'local> {
     fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
+        let mut buffer = mem::Array::new(self.local_arena);
+
+        for a in fun.arguments {
+            buffer.push(sem::Value {
+                type_: sem::Type::Builtin(sem::BuiltinType::Int),
+                range: a.range(),
+                expr: sem::Expr::Binding(a.name.0),
+            })
+        }
+
+        let arguments = self.global_arena.insert_slice(buffer.into_slice());
+
         sem::Prototype {
             name: sem::ItemIdentifier(fun.name.0),
             range: com::Range::new(
@@ -60,7 +72,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
             ),
             proto: sem::Proto::Fun(
                 sem::FunctionProto {
-                    arguments: &[],
+                    arguments: arguments,
                     result: sem::Type::Builtin(sem::BuiltinType::Int),
                 }
             ),
@@ -156,7 +168,9 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         let fragment =
-            com::CodeFragment::new(b":fun add() -> Int { 1 + 2 }".to_vec());
+            com::CodeFragment::new(
+                b":fun add(a: Int, b: Int) -> Int { 1 + 2 }".to_vec()
+            );
 
         assert_eq!(
             protoit(
@@ -165,8 +179,21 @@ mod tests {
                 &syn::Item::Fun(
                     syn::Function {
                         name: syn::VariableIdentifier(range(5, 3)),
-                        arguments: &[],
-                        result: syn::TypeIdentifier(range(14, 3)),
+                        arguments: &[
+                            syn::Argument {
+                                name: syn::VariableIdentifier(range(9, 1)),
+                                type_: syn::TypeIdentifier(range(12, 3)),
+                                colon: 10,
+                                comma: 15,
+                            },
+                            syn::Argument {
+                                name: syn::VariableIdentifier(range(17, 1)),
+                                type_: syn::TypeIdentifier(range(20, 3)),
+                                colon: 18,
+                                comma: 0,
+                            }
+                        ],
+                        result: syn::TypeIdentifier(range(28, 3)),
                         body: syn::Expression::Var(
                             syn::VariableIdentifier(range(0, 0))
                         ),
@@ -179,10 +206,21 @@ mod tests {
             ),
             Prototype {
                 name: ItemIdentifier(range(5, 3)),
-                range: range(0, 17),
+                range: range(0, 31),
                 proto: Proto::Fun(
                     FunctionProto {
-                        arguments: &[],
+                        arguments: &[
+                            Value {
+                                type_: Type::Builtin(BuiltinType::Int),
+                                range: range(9, 7),
+                                expr: Expr::Binding(range(9, 1)),
+                            },
+                            Value {
+                                type_: Type::Builtin(BuiltinType::Int),
+                                range: range(17, 6),
+                                expr: Expr::Binding(range(17, 1)),
+                            }
+                        ],
                         result: Type::Builtin(BuiltinType::Int),
                     }
                 ),

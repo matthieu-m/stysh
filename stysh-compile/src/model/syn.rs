@@ -140,6 +140,19 @@ impl<'a> Function<'a> {
     }
 }
 
+impl Argument {
+    /// Returns the range spanned by the argument.
+    pub fn range(&self) -> com::Range {
+        let offset = self.name.0.offset();
+        let end_offset = if self.comma != 0 {
+            (self.comma + 1) as usize
+        } else {
+            self.type_.0.end_offset()
+        };
+        com::Range::new(offset, end_offset - offset)
+    }
+}
+
 //
 //  Tests
 //

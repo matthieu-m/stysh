@@ -45,7 +45,7 @@ pub struct Value<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
     /// A named value.
-    Binding,
+    Binding(com::Range),
     /// A built-in value.
     BuiltinVal(BuiltinValue),
     /// A built-in function call.

@@ -108,6 +108,7 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
     fn from_expression(&mut self, value: &sem::Value<'g>) -> sir::ValueId {
         let index = self.instrs.len();
         match value.expr {
+            sem::Expr::Binding => unimplemented!(),
             sem::Expr::BuiltinCall(fun, args) => {
                 let mut arguments = mem::Array::new(self.local_arena);
                 for a in args {

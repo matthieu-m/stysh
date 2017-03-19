@@ -34,12 +34,16 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         }
     }
 
-    /// Translates a syntactic tree into a semantic graph.
-    pub fn translate(&mut self, item: &syn::Node) -> sem::Value<'g> {
+    /// Extracts the prototype of an item.
+    pub fn prototype(&mut self, item: &syn::Item) -> sem::Prototype<'g> {
         match *item {
-            syn::Node::Expr(e) => self.translate_expr(&e),
-            _ => unimplemented!(),
+            syn::Item::Fun(fun) => self.fun_prototype(fun),
         }
+    }
+
+    /// Translates an expresion into a value.
+    pub fn value(&mut self, e: &syn::Expression) -> sem::Value<'g> {
+        self.value_of_expr(e)
     }
 }
 
@@ -47,20 +51,36 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 //  Implementation Details
 //
 impl<'g, 'local> GraphBuilder<'g, 'local> {
-    fn translate_expr(&mut self, expr: &syn::Expression)
+    fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
+        sem::Prototype {
+            name: sem::ItemIdentifier(fun.name.0),
+            range: com::Range::new(
+                fun.keyword as usize,
+                fun.result.0.end_offset() - (fun.keyword as usize)
+            ),
+            proto: sem::Proto::Fun(
+                sem::FunctionProto {
+                    arguments: &[],
+                    result: sem::Type::Builtin(sem::BuiltinType::Int),
+                }
+            ),
+        }
+    }
+
+    fn value_of_expr(&mut self, expr: &syn::Expression)
         -> sem::Value<'g>
     {
         use model::syn::Expression;
 
         match *expr {
             Expression::BinOp(op, left, right) =>
-                self.translate_binary_operator(op, left, right),
-            Expression::Lit(lit, range) => self.translate_literal(lit, range),
+                self.value_of_binary_operator(op, left, right),
+            Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             _ => unimplemented!(),
         }
     }
 
-    fn translate_binary_operator(
+    fn value_of_binary_operator(
         &mut self,
         op: syn::BinaryOperator,
         left: &syn::Expression,
@@ -70,8 +90,8 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
     {
         let range = left.range().extend(right.range());
 
-        let left = self.translate_expr(left);
-        let right = self.translate_expr(right);
+        let left = self.value_of_expr(left);
+        let right = self.value_of_expr(right);
 
         let op = match op {
             syn::BinaryOperator::Plus => sem::BuiltinFunction::Add,
@@ -90,15 +110,15 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         }
     }
 
-    fn translate_literal(&mut self, lit: syn::Literal, range: com::Range)
+    fn value_of_literal(&mut self, lit: syn::Literal, range: com::Range)
         -> sem::Value<'g>
     {
         match lit {
-            syn::Literal::Integral => self.translate_literal_integral(range),
+            syn::Literal::Integral => self.value_of_literal_integral(range),
         }
     }
 
-    fn translate_literal_integral(&mut self, range: com::Range)
+    fn value_of_literal_integral(&mut self, range: com::Range)
         -> sem::Value<'g>
     {
         let mut value = 0;
@@ -132,7 +152,46 @@ mod tests {
     use model::sem::*;
 
     #[test]
-    fn first_translate() {
+    fn prototype_fun() {
+        let global_arena = mem::Arena::new();
+
+        let fragment =
+            com::CodeFragment::new(b":fun add() -> Int { 1 + 2 }".to_vec());
+
+        assert_eq!(
+            protoit(
+                &global_arena,
+                fragment,
+                &syn::Item::Fun(
+                    syn::Function {
+                        name: syn::VariableIdentifier(range(5, 3)),
+                        arguments: &[],
+                        result: syn::TypeIdentifier(range(14, 3)),
+                        body: syn::Expression::Var(
+                            syn::VariableIdentifier(range(0, 0))
+                        ),
+                        keyword: 0,
+                        open: 0,
+                        close: 0,
+                        arrow: 0,
+                    }
+                )
+            ),
+            Prototype {
+                name: ItemIdentifier(range(5, 3)),
+                range: range(0, 17),
+                proto: Proto::Fun(
+                    FunctionProto {
+                        arguments: &[],
+                        result: Type::Builtin(BuiltinType::Int),
+                    }
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn value_basic_add() {
         let global_arena = mem::Arena::new();
 
         let fragment = com::CodeFragment::new(b"1 + 2".to_vec());
@@ -142,17 +201,14 @@ mod tests {
         let left_hand = lit_integral(left_range);
         let right_hand = lit_integral(right_range);
 
-        let node =
-            syn::Node::Expr(
-                syn::Expression::BinOp(
-                    syn::BinaryOperator::Plus,
-                    &left_hand,
-                    &right_hand,
-                )
-            );
+        let expr = syn::Expression::BinOp(
+            syn::BinaryOperator::Plus,
+            &left_hand,
+            &right_hand,
+        );
 
         assert_eq!(
-            semit(&global_arena, fragment, &node),
+            valueit(&global_arena, fragment, &expr),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 5),
@@ -164,10 +220,29 @@ mod tests {
         );
     }
 
-    fn semit<'g>(
+    fn protoit<'g>(
         global_arena: &'g mem::Arena,
         fragment: com::CodeFragment,
-        node: &syn::Node
+        item: &syn::Item
+    )
+        -> Prototype<'g>
+    {
+        use super::GraphBuilder;
+
+        let mut local_arena = mem::Arena::new();
+
+        let result =
+            GraphBuilder::new(fragment, global_arena, &local_arena)
+                .prototype(item);
+        local_arena.recycle();
+
+        result
+    }
+
+    fn valueit<'g>(
+        global_arena: &'g mem::Arena,
+        fragment: com::CodeFragment,
+        expr: &syn::Expression
     )
         -> Value<'g>
     {
@@ -177,7 +252,7 @@ mod tests {
 
         let result =
             GraphBuilder::new(fragment, global_arena, &local_arena)
-                .translate(node);
+                .value(expr);
         local_arena.recycle();
 
         result

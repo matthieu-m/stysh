@@ -41,11 +41,18 @@ pub struct Value<'a> {
     pub expr: Expr<'a>,
 }
 
+/// A binding.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Binding<'a> {
+    /// A function argument.
+    Argument(ValueIdentifier, Type, com::Range),
+    /// A variable declaration.
+    Variable(ValueIdentifier, &'a Value<'a>, com::Range),
+}
+
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
-    /// A named value.
-    Binding(com::Range),
     /// A built-in value.
     BuiltinVal(BuiltinValue),
     /// A built-in function call.
@@ -87,8 +94,8 @@ pub enum Proto<'a> {
 /// A function prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionProto<'a> {
-    /// The function's arguments (always bindings).
-    pub arguments: &'a [Value<'a>],
+    /// The function's arguments (always arguments).
+    pub arguments: &'a [Binding<'a>],
     /// The return type of the function.
     pub result: Type,
 }
@@ -96,6 +103,10 @@ pub struct FunctionProto<'a> {
 /// An item identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ItemIdentifier(pub com::Range);
+
+/// A value identifier.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ValueIdentifier(pub com::Range);
 
 //
 //  Implementation Details

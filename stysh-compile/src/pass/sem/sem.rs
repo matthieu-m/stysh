@@ -55,11 +55,11 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         let mut buffer = mem::Array::new(self.local_arena);
 
         for a in fun.arguments {
-            buffer.push(sem::Value {
-                type_: sem::Type::Builtin(sem::BuiltinType::Int),
-                range: a.range(),
-                expr: sem::Expr::Binding(a.name.0),
-            })
+            buffer.push(sem::Binding::Argument(
+                sem::ValueIdentifier(a.name.0),
+                sem::Type::Builtin(sem::BuiltinType::Int),
+                a.range()
+            ));
         }
 
         let arguments = self.global_arena.insert_slice(buffer.into_slice());
@@ -210,16 +210,16 @@ mod tests {
                 proto: Proto::Fun(
                     FunctionProto {
                         arguments: &[
-                            Value {
-                                type_: Type::Builtin(BuiltinType::Int),
-                                range: range(9, 7),
-                                expr: Expr::Binding(range(9, 1)),
-                            },
-                            Value {
-                                type_: Type::Builtin(BuiltinType::Int),
-                                range: range(17, 6),
-                                expr: Expr::Binding(range(17, 1)),
-                            }
+                            Binding::Argument(
+                                ValueIdentifier(range(9, 1)),
+                                Type::Builtin(BuiltinType::Int),
+                                range(9, 7),
+                            ),
+                            Binding::Argument(
+                                ValueIdentifier(range(17, 1)),
+                                Type::Builtin(BuiltinType::Int),
+                                range(17, 6),
+                            ),
                         ],
                         result: Type::Builtin(BuiltinType::Int),
                     }

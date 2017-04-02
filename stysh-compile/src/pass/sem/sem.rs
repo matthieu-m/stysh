@@ -1,4 +1,4 @@
-//! Semantic passes, aka name resolution, type checking, ... 
+//! Semantic passes, aka name resolution, type checking, ...
 //!
 //! Let's start simple here. It'll get MUCH more complicated later.
 
@@ -41,9 +41,36 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         }
     }
 
-    /// Translates an expresion into a value.
-    pub fn value(&mut self, e: &syn::Expression) -> sem::Value<'g> {
-        self.value_of_expr(e)
+    /// Translates a stand-alone expression.
+    pub fn expression(&mut self, e: &syn::Expression) -> sem::Value<'g> {
+        use super::nmr::NameResolver;
+
+        let scope = ();
+
+        let mut resolver = NameResolver::new(
+            &*self.code_fragment,
+            &scope,
+            self.global_arena,
+            self.local_arena
+        );
+
+        resolver.value(e)
+    }
+
+    /// Translates a full-fledged item.
+    pub fn item(&mut self, proto: &'g sem::Prototype<'g>, item: &syn::Item)
+        -> sem::Item<'g>
+    {
+        debug_assert!(
+            item.range().offset() == proto.range.offset(),
+            "Mismatched item and prototype: {} vs {}",
+            item.range(),
+            proto.range
+        );
+
+        match (*item, &proto.proto) {
+            (syn::Item::Fun(i), &sem::Proto::Fun(ref p)) => self.fun_item(i, p),
+        }
     }
 }
 
@@ -79,78 +106,26 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         }
     }
 
-    fn value_of_expr(&mut self, expr: &syn::Expression)
-        -> sem::Value<'g>
+    fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
+        -> sem::Item<'g>
     {
-        use model::syn::Expression;
+        use super::nmr::NameResolver;
+        use super::nmr::scp::FunctionScope;
 
-        match *expr {
-            Expression::BinOp(op, left, right) =>
-                self.value_of_binary_operator(op, left, right),
-            Expression::Lit(lit, range) => self.value_of_literal(lit, range),
-            _ => unimplemented!(),
-        }
-    }
+        let scope =
+            FunctionScope::new(&*self.code_fragment, p, self.local_arena);
 
-    fn value_of_binary_operator(
-        &mut self,
-        op: syn::BinaryOperator,
-        left: &syn::Expression,
-        right: &syn::Expression
-    )
-        -> sem::Value<'g>
-    {
-        let range = left.range().extend(right.range());
+        let mut resolver = NameResolver::new(
+            &*self.code_fragment,
+            &scope,
+            self.global_arena,
+            self.local_arena
+        );
 
-        let left = self.value_of_expr(left);
-        let right = self.value_of_expr(right);
-
-        let op = match op {
-            syn::BinaryOperator::Plus => sem::BuiltinFunction::Add,
-        };
-
-        let mut buffer = mem::Array::with_capacity(2, self.local_arena);
-        buffer.push(left);
-        buffer.push(right);
-
-        let arguments = self.global_arena.insert_slice(buffer.into_slice());
-
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
-            range: range,
-            expr: sem::Expr::BuiltinCall(op, arguments),
-        }
-    }
-
-    fn value_of_literal(&mut self, lit: syn::Literal, range: com::Range)
-        -> sem::Value<'g>
-    {
-        match lit {
-            syn::Literal::Integral => self.value_of_literal_integral(range),
-        }
-    }
-
-    fn value_of_literal_integral(&mut self, range: com::Range)
-        -> sem::Value<'g>
-    {
-        let mut value = 0;
-        for byte in self.source(range) {
-            match *byte {
-                b'0'...b'9' => value += (byte - b'0') as i64,
-                b'_' => (),
-                _ => unimplemented!(),
-            }
-        }
-
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
-            range: range,
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
-        }
-    }
-
-    fn source(&self, range: com::Range) -> &[u8] {
-        &self.code_fragment[range]
+        sem::Item::Fun(sem::Function {
+            prototype: p,
+            body: resolver.value(&fun.body)
+        })
     }
 }
 
@@ -166,16 +141,12 @@ mod tests {
     #[test]
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
-
-        let fragment =
-            com::CodeFragment::new(
-                b":fun add(a: Int, b: Int) -> Int { 1 + 2 }".to_vec()
-            );
+        let int = Type::Builtin(BuiltinType::Int);
 
         assert_eq!(
             protoit(
                 &global_arena,
-                fragment,
+                b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
                 &syn::Item::Fun(
                     syn::Function {
                         name: syn::VariableIdentifier(range(5, 3)),
@@ -212,16 +183,16 @@ mod tests {
                         arguments: &[
                             Binding::Argument(
                                 ValueIdentifier(range(9, 1)),
-                                Type::Builtin(BuiltinType::Int),
+                                int,
                                 range(9, 7),
                             ),
                             Binding::Argument(
                                 ValueIdentifier(range(17, 1)),
-                                Type::Builtin(BuiltinType::Int),
+                                int,
                                 range(17, 6),
                             ),
                         ],
-                        result: Type::Builtin(BuiltinType::Int),
+                        result: int,
                     }
                 ),
             }
@@ -229,38 +200,86 @@ mod tests {
     }
 
     #[test]
-    fn value_basic_add() {
+    fn item_fun() {
         let global_arena = mem::Arena::new();
+        let int = Type::Builtin(BuiltinType::Int);
 
-        let fragment = com::CodeFragment::new(b"1 + 2".to_vec());
+        let function_proto = FunctionProto {
+            arguments: &[
+                Binding::Argument(value(9, 1), int, range(9, 7)),
+                Binding::Argument(value(17, 1), int, range(17, 6)),
+            ],
+            result: int,
+        };
 
-        let (left_range, right_range) = (range(0, 1), range(4, 1));
-
-        let left_hand = lit_integral(left_range);
-        let right_hand = lit_integral(right_range);
-
-        let expr = syn::Expression::BinOp(
-            syn::BinaryOperator::Plus,
-            &left_hand,
-            &right_hand,
-        );
+        let prototype = Prototype {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 31),
+            proto: Proto::Fun(function_proto),
+        };
 
         assert_eq!(
-            valueit(&global_arena, fragment, &expr),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(0, 5),
-                expr: Expr::BuiltinCall(
-                    BuiltinFunction::Add,
-                    &[ int(1, left_range), int(2, right_range) ],
+            itemit(
+                &global_arena,
+                b":fun add(a: Int, b: Int) -> Int { a + b }",
+                &prototype,
+                &syn::Item::Fun(
+                    syn::Function {
+                        name: syn::VariableIdentifier(range(5, 3)),
+                        arguments: &[
+                            syn::Argument {
+                                name: syn::VariableIdentifier(range(9, 1)),
+                                type_: syn::TypeIdentifier(range(12, 3)),
+                                colon: 10,
+                                comma: 15,
+                            },
+                            syn::Argument {
+                                name: syn::VariableIdentifier(range(17, 1)),
+                                type_: syn::TypeIdentifier(range(20, 3)),
+                                colon: 18,
+                                comma: 0,
+                            }
+                        ],
+                        result: syn::TypeIdentifier(range(28, 3)),
+                        body: syn::Expression::Block(
+                            &syn::Expression::BinOp(
+                                syn::BinaryOperator::Plus,
+                                &syn::Expression::Var(
+                                    syn::VariableIdentifier(range(34, 1))
+                                ),
+                                &syn::Expression::Var(
+                                    syn::VariableIdentifier(range(38, 1))
+                                ),
+                            ),
+                            range(32, 9),
+                        ),
+                        keyword: 0,
+                        open: 0,
+                        close: 0,
+                        arrow: 0,
+                    }
                 )
-            }
+            ),
+            Item::Fun(Function {
+                prototype: &function_proto,
+                body: Value {
+                    type_: int,
+                    range: range(34, 5),
+                    expr: Expr::BuiltinCall(
+                        BuiltinFunction::Add,
+                        &[
+                            resolved_argument(value(9, 1), range(34, 1), int),
+                            resolved_argument(value(17, 1), range(38, 1), int),
+                        ]
+                    ),
+                }
+            })
         );
     }
 
     fn protoit<'g>(
         global_arena: &'g mem::Arena,
-        fragment: com::CodeFragment,
+        fragment: &[u8],
         item: &syn::Item
     )
         -> Prototype<'g>
@@ -268,6 +287,8 @@ mod tests {
         use super::GraphBuilder;
 
         let mut local_arena = mem::Arena::new();
+
+        let fragment = com::CodeFragment::new(fragment.to_vec());
 
         let result =
             GraphBuilder::new(fragment, global_arena, &local_arena)
@@ -277,35 +298,40 @@ mod tests {
         result
     }
 
-    fn valueit<'g>(
+    fn itemit<'g>(
         global_arena: &'g mem::Arena,
-        fragment: com::CodeFragment,
-        expr: &syn::Expression
+        fragment: &[u8],
+        proto: &'g Prototype,
+        item: &syn::Item
     )
-        -> Value<'g>
+        -> Item<'g>
     {
         use super::GraphBuilder;
 
         let mut local_arena = mem::Arena::new();
 
+        let fragment = com::CodeFragment::new(fragment.to_vec());
+
         let result =
             GraphBuilder::new(fragment, global_arena, &local_arena)
-                .value(expr);
+                .item(proto, item);
         local_arena.recycle();
 
         result
     }
 
-    fn lit_integral(range: com::Range) -> syn::Expression<'static> {
-        syn::Expression::Lit(syn::Literal::Integral, range)
+    fn resolved_argument(value: ValueIdentifier, range: com::Range, type_: Type)
+        -> Value<'static>
+    {
+        Value {
+            type_: type_,
+            range: range,
+            expr: Expr::ArgumentRef(value),
+        }
     }
 
-    fn int(value: i64, range: com::Range) -> Value<'static> {
-        Value {
-            type_: Type::Builtin(BuiltinType::Int),
-            range: range,
-            expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
-        }
+    fn value(start: usize, length: usize) -> ValueIdentifier {
+        ValueIdentifier(range(start, length))
     }
 
     fn range(start: usize, length: usize) -> com::Range {

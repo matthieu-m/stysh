@@ -21,6 +21,8 @@ use basic::com;
 pub enum Type {
     /// A built-in type.
     Builtin(BuiltinType),
+    /// An unresolved type.
+    Unresolved,
 }
 
 /// A built-in Type.
@@ -53,10 +55,14 @@ pub enum Binding<'a> {
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
+    /// A reference to an existing binding.
+    ArgumentRef(ValueIdentifier),
     /// A built-in value.
     BuiltinVal(BuiltinValue),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
+    /// An unresolved reference.
+    UnresolvedRef(ValueIdentifier),
 }
 
 /// A built-in value, the type is implicit.
@@ -98,6 +104,22 @@ pub struct FunctionProto<'a> {
     pub arguments: &'a [Binding<'a>],
     /// The return type of the function.
     pub result: Type,
+}
+
+/// A function.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Function<'a> {
+    /// The prototype.
+    pub prototype: &'a FunctionProto<'a>,
+    /// The body.
+    pub body: Value<'a>,
+}
+
+/// An full-fledged item.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Item<'a> {
+    /// A full-fledged function definition.
+    Fun(Function<'a>),
 }
 
 /// An item identifier.

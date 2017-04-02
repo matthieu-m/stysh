@@ -120,6 +120,7 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
             },
             sem::Expr::BuiltinVal(val) =>
                 self.instrs.push(sir::Instruction::Load(val, value.range)),
+            _ => unimplemented!(),
         };
         sir::ValueId::new_instruction(index)
     }

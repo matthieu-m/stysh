@@ -15,43 +15,11 @@ impl CodeFragment {
     }
 }
 
-impl std::ops::Index<Range> for CodeFragment {
-    type Output = [u8];
+impl std::ops::Deref for CodeFragment {
+    type Target = [u8];
 
-    fn index(&self, index: Range) -> &[u8] {
-        &(*self.0)[index.offset()..index.end_offset()]
-    }
-}
-
-impl std::ops::Index<std::ops::Range<usize>> for CodeFragment {
-    type Output = [u8];
-
-    fn index(&self, index: std::ops::Range<usize>) -> &[u8] {
-        &(*self.0)[index]
-    }
-}
-
-impl std::ops::Index<std::ops::RangeFrom<usize>> for CodeFragment {
-    type Output = [u8];
-
-    fn index(&self, index: std::ops::RangeFrom<usize>) -> &[u8] {
-        &(*self.0)[index]
-    }
-}
-
-impl std::ops::Index<std::ops::RangeFull> for CodeFragment {
-    type Output = [u8];
-
-    fn index(&self, index: std::ops::RangeFull) -> &[u8] {
-        &(*self.0)[index]
-    }
-}
-
-impl std::ops::Index<std::ops::RangeTo<usize>> for CodeFragment {
-    type Output = [u8];
-
-    fn index(&self, index: std::ops::RangeTo<usize>) -> &[u8] {
-        &(*self.0)[index]
+    fn deref(&self) -> &[u8] {
+        &*self.0
     }
 }
 
@@ -139,6 +107,14 @@ impl Range {
 impl std::fmt::Display for Range {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "{}@{}", self.length, self.offset)
+    }
+}
+
+impl std::ops::Index<Range> for [u8] {
+    type Output = [u8];
+
+    fn index(&self, index: Range) -> &[u8] {
+        &self[index.offset()..index.end_offset()]
     }
 }
 

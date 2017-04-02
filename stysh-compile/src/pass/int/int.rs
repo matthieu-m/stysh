@@ -207,6 +207,7 @@ mod tests {
         -> sir::BasicBlock<'a>
     {
         sir::BasicBlock {
+            arguments: &[],
             instructions: code,
             exit: sir::TerminatorInstruction::Return(val_instr(code.len() - 1)),
         }

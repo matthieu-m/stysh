@@ -58,7 +58,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             if let Some(arrow) = self.pop_token(SignArrowSingle) {
                 (arrow.offset() as u32, typ::parse_type(&mut self.raw))
             } else {
-                (0, unimplemented!())
+                unimplemented!()
             };
 
         let body = expr::parse_expression(&mut self.raw);

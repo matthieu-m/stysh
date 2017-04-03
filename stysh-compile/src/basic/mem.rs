@@ -132,6 +132,19 @@ impl<'a, T: 'a> Array<'a, T> {
         self.length += 1;
     }
 
+    /// Extends the array by appending the slice.
+    ///
+    /// Note: in the case where the array does not have enough capacity, it
+    /// reallocates the underlying storage.
+    pub fn extend(&mut self, t: &[T]) {
+        self.reserve(t.len());
+        unsafe {
+            let dst = self.ptr.offset(self.length as isize);
+            ptr::copy(t.as_ptr(), dst, t.len());
+        }
+        self.length += t.len();
+    }
+
     /// Reserves the necessary spaces for `n` more items.
     ///
     /// Note: if the capacity is already sufficient, has no effect, otherwise

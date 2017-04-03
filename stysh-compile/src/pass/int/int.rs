@@ -42,14 +42,7 @@ impl<'g, 'local> Interpreter<'g, 'local> {
 //
 impl<'g, 'local> Interpreter<'g, 'local> {
     fn duplicate(&self, value: sem::Value<'local>) -> sem::Value<'g> {
-        match value.expr {
-            sem::Expr::BuiltinVal(v) => sem::Value {
-                type_: value.type_,
-                range: value.range,
-                expr: sem::Expr::BuiltinVal(v),
-            },
-            _ => unimplemented!(),
-        }
+        value.duplicate(self.global_arena)
     }
 }
 
@@ -153,13 +146,18 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn load(&self, v: sem::BuiltinValue, range: com::Range) -> sem::Value<'a> {
-        match v {
-            sem::BuiltinValue::Int(_) => sem::Value {
-                type_: sem::Type::Builtin(sem::BuiltinType::Int),
-                range: range,
-                expr: sem::Expr::BuiltinVal(v),
-            },
-        }
+        let type_ = match v {
+            sem::BuiltinValue::Int(_) => sem::BuiltinType::Int,
+            sem::BuiltinValue::String(_) => sem::BuiltinType::String,
+        };
+
+        let value = sem::Value {
+            type_: sem::Type::Builtin(type_),
+            range: range,
+            expr: sem::Expr::BuiltinVal(v),
+        };
+
+        value.duplicate(self.arena)
     }
 
     fn get_value(&self, id: sir::ValueId) -> sem::Value<'a> {
@@ -204,7 +202,7 @@ mod tests {
         let cfg = sir::ControlFlowGraph { blocks: &blocks };
 
         assert_eq!(
-            eval(&global_arena, &cfg, &[]),
+            eval(&global_arena, &[], &cfg),
             sem_int(3)
         );
     }
@@ -217,6 +215,7 @@ mod tests {
         assert_eq!(
             eval(
                 &global_arena,
+                &[sem_int(1), sem_int(2)],
                 &sir::ControlFlowGraph {
                     blocks: &[block_return(
                         &[int, int],
@@ -227,17 +226,39 @@ mod tests {
                             ),
                         ]
                     )]
-                },
-                &[sem_int(1), sem_int(2)]
+                }
             ),
             sem_int(3)
         );
     }
 
+    #[test]
+    fn return_helloworld() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            eval(
+                &global_arena,
+                &[],
+                &sir::ControlFlowGraph {
+                    blocks: &[
+                        block_return(
+                            &[],
+                            &[
+                                instr_load_string(b"Hello, World!")
+                            ]
+                        ),
+                    ]
+                }
+            ),
+            sem_string(b"Hello, World!")
+        );
+    }
+
     fn eval<'g>(
         global_arena: &'g mem::Arena,
-        cfg: &sir::ControlFlowGraph,
-        arguments: &[sem::Value]
+        arguments: &[sem::Value],
+        cfg: &sir::ControlFlowGraph
     )
         -> sem::Value<'g>
     {
@@ -261,6 +282,14 @@ mod tests {
         }
     }
 
+    fn sem_string<'a>(s: &'a [u8]) -> sem::Value<'a> {
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::String),
+            range: range(0, 0),
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(s)),
+        }
+    }
+
     fn val_arg(index: usize) -> sir::ValueId {
         sir::ValueId::new_argument(index)
     }
@@ -272,11 +301,15 @@ mod tests {
     fn instr_call<'a>(fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
         -> sir::Instruction<'a>
     {
-        sir::Instruction::CallFunction(fun, args, com::Range::new(0, 0))
+        sir::Instruction::CallFunction(fun, args, range(0, 0))
     }
 
     fn instr_load_int(i: i64) -> sir::Instruction<'static> {
-        sir::Instruction::Load(sem::BuiltinValue::Int(i), com::Range::new(0, 0))
+        sir::Instruction::Load(sem::BuiltinValue::Int(i), range(0, 0))
+    }
+
+    fn instr_load_string<'a>(s: &'a [u8]) -> sir::Instruction<'a> {
+        sir::Instruction::Load(sem::BuiltinValue::String(s), range(0, 0))
     }
 
     fn block_return<'a>(

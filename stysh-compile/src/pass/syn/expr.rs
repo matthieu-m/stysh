@@ -28,17 +28,36 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     pub fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
     pub fn parse(&mut self) -> Expression<'g> {
-        let tokens = match self.raw.peek() {
-            Some(tt::Node::Run(tokens)) => tokens,
-            Some(tt::Node::Braced(o, n, c)) => {
-                self.raw.pop_node();
+        let tokens = {
+            let node = self.raw.peek().expect("WAT?");
 
-                let inner = ExprParser::new(self.raw.spawn(n)).parse();
-                let inner = self.raw.intern(inner);
+            match node {
+                tt::Node::Run(tokens) => tokens,
+                tt::Node::Braced(_, n, _) => {
+                    self.raw.pop_node();
 
-                return Expression::Block(inner, o.range().extend(c.range()));
-            },
-            _ => unimplemented!(),
+                    let inner = ExprParser::new(self.raw.spawn(n)).parse();
+                    let inner = self.raw.intern(inner);
+
+                    return Expression::Block(inner, node.range());
+                },
+                tt::Node::Bytes(_, f, _) => {
+                    self.raw.pop_node();
+
+                    let bytes = self.raw.global().insert_slice(f);
+                    return Expression::Lit(Literal::Bytes(bytes), node.range());
+                },
+                tt::Node::String(_, f, _) => {
+                    self.raw.pop_node();
+
+                    let string = self.raw.global().insert_slice(f);
+                    return Expression::Lit(
+                        Literal::String(string),
+                        node.range()
+                    );
+                },
+                _ => unimplemented!(),
+            }
         };
 
         let left_operand: &'g Expression<'g> = self.raw.intern(
@@ -107,6 +126,44 @@ mod tests {
                     Literal::Integral,
                     range(4, 1)
                 ),
+            )
+        );
+    }
+
+    #[test]
+    fn basic_bytes() {
+        use model::tt;
+
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"b'1 + 2'"),
+            Expression::Lit(
+                Literal::Bytes(&[
+                    StringFragment::Text(
+                        tt::Token::new(tt::Kind::StringText, 2, 5)
+                    ),
+                ]),
+                range(0, 8)
+            )
+        );
+    }
+
+    #[test]
+    fn basic_string() {
+        use model::tt;
+
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"'1 + 2'"),
+            Expression::Lit(
+                Literal::String(&[
+                    StringFragment::Text(
+                        tt::Token::new(tt::Kind::StringText, 1, 5)
+                    ),
+                ]),
+                range(0, 7)
             )
         );
     }

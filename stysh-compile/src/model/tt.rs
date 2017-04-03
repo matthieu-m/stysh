@@ -127,8 +127,9 @@ impl<'g> Node<'g> {
                 let end = slice.last().map_or(0, |n| n.range().end_offset());
                 com::Range::new(offset, end - offset)
             },
+            Node::Bytes(o, _, c) =>
+                com::Range::new(o.offset() - 1, 1).extend(c.range()),
             Node::Braced(o, _, c) => o.range().extend(c.range()),
-            Node::Bytes(o, _, c) => o.range().extend(c.range()),
             Node::String(o, _, c) => o.range().extend(c.range()),
             Node::UnexpectedBrace(t) => t.range(),
         }

@@ -101,7 +101,26 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         -> sem::Value<'g>
     {
         match lit {
+            syn::Literal::Bytes(b) => self.value_of_literal_bytes(b, range),
             syn::Literal::Integral => self.value_of_literal_integral(range),
+            syn::Literal::String(s) => self.value_of_literal_string(s, range),
+        }
+    }
+
+    fn value_of_literal_bytes(
+        &mut self,
+        bytes: &[syn::StringFragment],
+        range: com::Range
+    )
+        -> sem::Value<'g>
+    {
+        let value = self.catenate_fragments(bytes);
+
+        //  TODO(matthieum): Fix type, should be Array[[Byte]].
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::String),
+            range: range,
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
         }
     }
 
@@ -124,10 +143,44 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    fn value_of_literal_string(
+        &mut self,
+        string: &[syn::StringFragment],
+        range: com::Range
+    )
+        -> sem::Value<'g>
+    {
+        let value = self.catenate_fragments(string);
+
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::String),
+            range: range,
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+        }
+    }
+
     fn value_of_variable(&mut self, var: syn::VariableIdentifier)
         -> sem::Value<'g>
     {
         self.scope.lookup_binding(sem::ValueIdentifier(var.0))
+    }
+
+    fn catenate_fragments(&self, f: &[syn::StringFragment]) -> &'g [u8] {
+        use model::syn::StringFragment::*;
+
+        let mut buffer = mem::Array::new(self.global_arena);
+        for &fragment in f {
+            match fragment {
+                Text(tok) => buffer.extend(self.source(tok.range())),
+                SpecialCharacter(tok) => match self.source(tok.range()) {
+                    b"N" => buffer.push(b'\n'),
+                    _ => unimplemented!(),
+                },
+                _ => unimplemented!(),
+            }
+        }
+
+        buffer.into_slice()
     }
 
     fn source(&self, range: com::Range) -> &[u8] {
@@ -148,8 +201,6 @@ mod tests {
     fn value_basic_add() {
         let global_arena = mem::Arena::new();
 
-        let fragment = b"1 + 2";
-
         let (left_range, right_range) = (range(0, 1), range(4, 1));
 
         let left_hand = lit_integral(left_range);
@@ -162,13 +213,42 @@ mod tests {
         );
 
         assert_eq!(
-            valueit(&global_arena, fragment, &expr),
+            valueit(&global_arena, b"1 + 2", &expr),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 5),
                 expr: Expr::BuiltinCall(
                     BuiltinFunction::Add,
                     &[ int(1, left_range), int(2, right_range) ],
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn value_basic_helloworld() {
+        use model::tt;
+
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                b"'Hello, World!'",
+                &syn::Expression::Lit(
+                    syn::Literal::String(&[
+                        tt::StringFragment::Text(
+                            tt::Token::new(tt::Kind::StringText, 1, 13)
+                        ),
+                    ]),
+                    range(0, 15)
+                )
+            ),
+            Value {
+                type_: Type::Builtin(BuiltinType::String),
+                range: range(0, 15),
+                expr: Expr::BuiltinVal(
+                    BuiltinValue::String(b"Hello, World!")
                 )
             }
         );

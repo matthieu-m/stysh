@@ -69,7 +69,7 @@ pub enum Instruction<'a> {
     /// A function call.
     CallFunction(sem::BuiltinFunction, &'a [ValueId], com::Range),
     /// A value load.
-    Load(sem::BuiltinValue, com::Range),
+    Load(sem::BuiltinValue<'a>, com::Range),
 }
 
 /// An instruction.

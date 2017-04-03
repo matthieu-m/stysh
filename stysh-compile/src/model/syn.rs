@@ -8,6 +8,8 @@
 
 use basic::com;
 
+pub use model::tt::StringFragment;
+
 /// A List of AST nodes.
 pub type List<'a> = &'a [Node<'a>];
 
@@ -28,7 +30,7 @@ pub enum Expression<'a> {
     /// A block expression.
     Block(&'a Expression<'a>, com::Range),
     /// A literal.
-    Lit(Literal, com::Range),
+    Lit(Literal<'a>, com::Range),
     /// A variable identifier.
     Var(VariableIdentifier),
 }
@@ -83,9 +85,13 @@ pub enum BinaryOperator {
 
 /// A Literal value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Literal {
+pub enum Literal<'a> {
+    /// A bytes value.
+    Bytes(&'a [StringFragment]),
     /// An integral value.
-    Integral
+    Integral,
+    /// A string value.
+    String(&'a [StringFragment]),
 }
 
 /// A Type Identifier.

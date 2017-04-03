@@ -14,7 +14,7 @@
 
 use std;
 
-use basic::com;
+use basic::{com, mem};
 
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -30,6 +30,8 @@ pub enum Type {
 pub enum BuiltinType {
     /// A 64-bits signed integer.
     Int,
+    /// A String.
+    String,
 }
 
 /// A Value.
@@ -58,7 +60,7 @@ pub enum Expr<'a> {
     /// A reference to an existing binding.
     ArgumentRef(ValueIdentifier),
     /// A built-in value.
-    BuiltinVal(BuiltinValue),
+    BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
     /// An unresolved reference.
@@ -67,9 +69,11 @@ pub enum Expr<'a> {
 
 /// A built-in value, the type is implicit.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum BuiltinValue {
+pub enum BuiltinValue<'a> {
     /// An integral.
     Int(i64),
+    /// A String.
+    String(&'a [u8]),
 }
 
 /// A built-in function.
@@ -130,13 +134,41 @@ pub struct ItemIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub com::Range);
 
+impl<'a, 'target> Value<'a> {
+    /// Duplicates the value into the target arena.
+    pub fn duplicate(&self, arena: &'target mem::Arena) -> Value<'target> {
+        let e = match self.expr {
+            Expr::BuiltinVal(v) => Expr::BuiltinVal(v.duplicate(arena)),
+            _ => unimplemented!(),
+        };
+
+        Value {
+            type_: self.type_,
+            range: self.range,
+            expr: e,
+        }
+    }
+}
+
+impl<'a, 'target> BuiltinValue<'a> {
+    /// Duplicates the built-in value into the target arena.
+    pub fn duplicate(&self, arena: &'target mem::Arena) -> BuiltinValue<'target> {
+        match *self {
+            BuiltinValue::Int(i) => BuiltinValue::Int(i),
+            BuiltinValue::String(s) =>
+                BuiltinValue::String(arena.insert_slice(s)),
+        }
+    }
+}
+
 //
 //  Implementation Details
 //
-impl std::fmt::Display for BuiltinValue {
+impl<'a> std::fmt::Display for BuiltinValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
             BuiltinValue::Int(i) => write!(f, "{:x}", i),
+            BuiltinValue::String(s) => write!(f, "{}", com::Slice(s)),
         }
     }
 }

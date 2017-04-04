@@ -67,6 +67,16 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
     pub fn pop_node(&mut self) { self.state.pop_node(); }
 
+    pub fn pop_kind(&mut self, kind: tt::Kind) -> Option<tt::Token> {
+        if let Some(tok) = self.state.peek_token() {
+            if tok.kind() == kind {
+                self.pop_tokens(1);
+                return Some(tok);
+            }
+        }
+        None
+    }
+
     pub fn pop_tokens(&mut self, nb: usize) { self.state.pop_tokens(nb); }
 
     pub fn intern<T: 'g>(&mut self, t: T) -> &'g T {
@@ -99,6 +109,13 @@ impl<'a> ParserState<'a> {
             Some(tt::Node::Run(run)) =>
                 Some(tt::Node::Run(&run[self.run_start..])),
             other => other,
+        }
+    }
+
+    fn peek_token(&self) -> Option<tt::Token> {
+        match self.nodes.first().cloned() {
+            Some(tt::Node::Run(run)) => Some(run[self.run_start]),
+            _ => None,
         }
     }
 

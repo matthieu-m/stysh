@@ -7,10 +7,6 @@ use model::syn::*;
 
 use super::com::RawParser;
 
-pub struct ExprParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>
-}
-
 pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     -> Expression<'g>
 {
@@ -18,6 +14,46 @@ pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     let expr = parser.parse();
     *raw = parser.into_raw();
     expr
+}
+
+pub fn parse_variable<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> VariableBinding<'g>
+{
+    let var =
+        raw.pop_kind(tt::Kind::KeywordVar)
+            .map(|t| t.offset() as u32)
+            .expect(":var");
+
+    let name = raw.pop_kind(tt::Kind::NameValue).expect("name");
+
+    let bind =
+        raw.pop_kind(tt::Kind::SignBind)
+            .map(|t| t.offset() as u32)
+            .unwrap_or(0);
+
+    let expr = parse_expression(raw);
+
+    let semi =
+        raw.pop_kind(tt::Kind::SignSemiColon)
+            .map(|t| t.offset())
+            .unwrap_or(expr.range().end_offset() - 1) as u32;
+
+    VariableBinding {
+        name: VariableIdentifier(name.range()),
+        type_: None,
+        expr: expr,
+        var: var,
+        colon: 0,
+        bind: bind,
+        semi: semi,
+    }
+}
+
+//
+//  Implementation Details
+//
+struct ExprParser<'a, 'g, 'local> {
+    raw: RawParser<'a, 'g, 'local>
 }
 
 impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
@@ -60,30 +96,32 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             }
         };
 
-        let left_operand: &'g Expression<'g> = self.raw.intern(
-            tokens[0].into_expr().expect("Operand")
-        );
+        let expr = tokens[0].into_expr().expect("Expression");
+        self.raw.pop_tokens(1);
 
-        let operator = tokens[1];
-        assert_eq!(operator.kind(), tt::Kind::OperatorPlus);
+        if tokens.len() == 1 || tokens[1].kind() == tt::Kind::SignSemiColon {
+            expr
+        } else {
+            let left_operand: &Expression = self.raw.intern(expr);
 
-        let right_operand: &Expression = self.raw.intern(
-            tokens[2].into_expr().expect("Operand")
-        );
+            let operator = tokens[1];
+            assert_eq!(operator.kind(), tt::Kind::OperatorPlus);
 
-        self.raw.pop_tokens(3);
+            let right_operand: &Expression = self.raw.intern(
+                tokens[2].into_expr().expect("Operand")
+            );
 
-        Expression::BinOp(
-            BinaryOperator::Plus,
-            left_operand,
-            right_operand
-        )
+            self.raw.pop_tokens(2);
+
+            Expression::BinOp(
+                BinaryOperator::Plus,
+                left_operand,
+                right_operand
+            )
+        }
     }
 }
 
-//
-//  Implementation Details
-//
 trait IntoExpr<'g> {
     fn into_expr(self) -> Option<Expression<'g>>;
 }
@@ -127,6 +165,48 @@ mod tests {
                     range(4, 1)
                 ),
             )
+        );
+    }
+
+    #[test]
+    fn basic_var() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            varit(&global_arena, b" :var fool := 1234;"),
+            VariableBinding {
+                name: VariableIdentifier(range(6, 4)),
+                type_: None,
+                expr: Expression::Lit(
+                    Literal::Integral,
+                    range(14, 4)
+                ),
+                var: 1,
+                colon: 0,
+                bind: 11,
+                semi: 18,
+            }
+        );
+    }
+
+    #[test]
+    fn basic_var_automatic_insertion() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            varit(&global_arena, b" :var fool 1234"),
+            VariableBinding {
+                name: VariableIdentifier(range(6, 4)),
+                type_: None,
+                expr: Expression::Lit(
+                    Literal::Integral,
+                    range(11, 4)
+                ),
+                var: 1,
+                colon: 0,
+                bind: 0,
+                semi: 14,
+            }
         );
     }
 
@@ -178,11 +258,27 @@ mod tests {
         let mut local_arena = mem::Arena::new();
 
         let e = {
-            let raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::ExprParser::new(raw).parse()
+            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
+            super::parse_expression(&mut raw)
         };
         local_arena.recycle();
 
         e
+    }
+
+    fn varit<'g>(global_arena: &'g mem::Arena, raw: &[u8])
+        -> VariableBinding<'g>
+    {
+        use super::super::com::RawParser;
+
+        let mut local_arena = mem::Arena::new();
+
+        let v = {
+            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
+            super::parse_variable(&mut raw)
+        };
+        local_arena.recycle();
+
+        v
     }
 }

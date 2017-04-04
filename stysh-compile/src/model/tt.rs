@@ -50,6 +50,8 @@ pub enum Kind {
     BracketOpen,
     /// The :fun keyword.
     KeywordFun,
+    /// The :var keyword.
+    KeywordVar,
     /// An integral.
     LitIntegral,
     /// The name of a type.
@@ -68,10 +70,14 @@ pub enum Kind {
     QuoteSingle,
     /// A '->' sign.
     SignArrowSingle,
+    /// A ':=' sign.
+    SignBind,
     /// A ':' sign.
     SignColon,
     /// A ',' sign.
     SignComma,
+    /// A ';' sign.
+    SignSemiColon,
     /// A format for an argument or interpolated identifier.
     StringFormat,
     /// An identifier in scope, to be interpolated.

@@ -60,10 +60,10 @@ impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
 
     fn next(&mut self) -> Option<Node<'g>> {
         self.raw.peek()
-            .map(|node| node.front().kind())
-            .map(|kind| {
-                match kind {
+            .map(|node| {
+                match node.front().kind() {
                     tt::Kind::KeywordFun => Node::Item(self.parse_function()),
+                    tt::Kind::KeywordVar => Node::Stmt(self.parse_variable()),
                     _ => Node::Expr(self.parse_expression()),
                 }
             })
@@ -92,5 +92,9 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
 
     fn parse_function(&mut self) -> Item<'g> {
         Item::Fun(fun::parse_function(&mut self.raw))
+    }
+
+    fn parse_variable(&mut self) -> Statement<'g> {
+        Statement::Var(expr::parse_variable(&mut self.raw))
     }
 }

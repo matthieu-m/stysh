@@ -238,16 +238,22 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
                 b'0'...b'9' => self.parse_number(tok),
                 b'A'...b'Z' => self.parse_name(tok),
                 b'a'...b'z' => self.parse_name(tok),
-                b':' if tok.raw.len() > 1 => self.parse_keyword(tok),
-                b':' | b'-' | b'+' | b',' => self.parse_sign(tok),
+                b':' => self.parse_colon(tok),
+                b'-' | b'+' | b',' | b';' => self.parse_sign(tok),
                 _ => { println!("parse_token - {}", tok); unimplemented!() },
             }
         })
     }
 
-    fn parse_keyword(&self, tok: RawToken) -> Option<Token> {
-        assert!(tok.raw == b":fun");
-        Some(Token::new(Kind::KeywordFun, tok.offset, tok.raw.len()))
+    fn parse_colon(&self, tok: RawToken) -> Option<Token> {
+        let kind = match tok.raw {
+            b":" => Kind::SignColon,
+            b":=" => Kind::SignBind,
+            b":fun" => Kind::KeywordFun,
+            b":var" => Kind::KeywordVar,
+            _ => unimplemented!(),
+        };
+        Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 
     fn parse_name(&self, tok: RawToken) -> Option<Token> {
@@ -269,11 +275,12 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     }
 
     fn parse_sign(&self, tok: RawToken) -> Option<Token> {
+        //  If starting with a colon, already dealt with.
         let kind = match tok.raw {
             b"+" => Kind::OperatorPlus,
             b"->" => Kind::SignArrowSingle,
-            b":" => Kind::SignColon,
             b"," => Kind::SignComma,
+            b";" => Kind::SignSemiColon,
             _ => { println!("parse_sign - {}", tok); unimplemented!() },
         };
 

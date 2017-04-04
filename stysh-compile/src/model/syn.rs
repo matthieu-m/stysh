@@ -20,6 +20,8 @@ pub enum Node<'a> {
     Expr(Expression<'a>),
     /// An item.
     Item(Item<'a>),
+    /// A statement.
+    Stmt(Statement<'a>),
 }
 
 /// An Expression.
@@ -40,6 +42,14 @@ pub enum Expression<'a> {
 pub enum Item<'a> {
     /// A function.
     Fun(Function<'a>),
+}
+
+/// A Statement.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Statement<'a> {
+    //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
+    /// A variable definition.
+    Var(VariableBinding<'a>),
 }
 
 /// A Function.
@@ -94,6 +104,26 @@ pub enum Literal<'a> {
     String(&'a [StringFragment]),
 }
 
+/// A variable binding.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct VariableBinding<'a> {
+    /// Name of the binding.
+    //  TODO(matthieum): make a pattern.
+    pub name: VariableIdentifier,
+    /// Type of the binding, if specified.
+    pub type_: Option<TypeIdentifier>,
+    /// Expression being bound.
+    pub expr: Expression<'a>,
+    /// Offset of the :var keyword.
+    pub var: u32,
+    /// Offset of the : sign, or 0 if none.
+    pub colon: u32,
+    /// Offset of the := sign.
+    pub bind: u32,
+    /// Offset of the ; sign.
+    pub semi: u32,
+}
+
 /// A Type Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TypeIdentifier(pub com::Range);
@@ -110,6 +140,7 @@ impl<'a> Node<'a> {
         match *self {
             Expr(expr) => expr.range(),
             Item(item) => item.range(),
+            Stmt(stmt) => stmt.range(),
         }
     }
 }
@@ -156,6 +187,31 @@ impl Argument {
             self.type_.0.end_offset()
         };
         com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> Statement<'a> {
+    /// Returns the range spanned by the statement.
+    pub fn range(&self) -> com::Range {
+        use self::Statement::*;
+
+        match *self {
+            Var(var) => var.range(),
+        }
+    }
+}
+
+impl<'a> VariableBinding<'a> {
+    /// Returns the range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        debug_assert!(
+            self.semi as usize >= self.expr.range().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.range()
+        );
+        com::Range::new(
+            self.var as usize,
+            (self.semi + 1 - self.var) as usize
+        )
     }
 }
 
@@ -210,8 +266,38 @@ mod tests {
         assert_eq!(node.range(), range(3, 5));
     }
 
+    #[test]
+    fn range_stmt_variable_binding() {
+        let with_semi = bind_var_integral(5);
+
+        let without_semi =
+            VariableBinding { semi: with_semi.semi - 1, .. with_semi };
+
+        assert_eq!(with_semi.range(), range(5, 18));
+        assert_eq!(without_semi.range(), range(5, 17));
+    }
+
+    #[test]
+    fn range_stmt() {
+        let stmt = Statement::Var(bind_var_integral(5));
+        assert_eq!(stmt.range(), range(5, 18));
+    }
+
     fn range(offset: usize, length: usize) -> com::Range {
         com::Range::new(offset, length)
+    }
+
+    fn bind_var_integral<'a>(offset: usize) -> VariableBinding<'a> {
+        //  ":var fool := 1234;" at an arbitrary offset.
+        VariableBinding {
+            name: VariableIdentifier(range(offset + 5, 4)),
+            type_: None,
+            expr: expr_lit_integral(offset + 13, 4),
+            var: offset as u32,
+            colon: 0,
+            bind: (offset + 10) as u32,
+            semi: (offset + 17) as u32,
+        }
     }
 
     fn expr_lit_integral<'a>(offset: usize, length: usize) -> Expression<'a> {

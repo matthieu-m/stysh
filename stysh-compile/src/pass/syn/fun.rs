@@ -136,6 +136,7 @@ mod tests {
                 arguments: &[],
                 result: TypeIdentifier(range(14, 3)),
                 body: Expression::Block(
+                    &[],
                     &Expression::BinOp(
                         BinaryOperator::Plus,
                         &Expression::Lit(
@@ -181,6 +182,7 @@ mod tests {
                 ],
                 result: TypeIdentifier(range(28, 3)),
                 body: Expression::Block(
+                    &[],
                     &Expression::BinOp(
                         BinaryOperator::Plus,
                         &Expression::Var( VariableIdentifier(range(34, 1)) ),

@@ -82,6 +82,10 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
     pub fn intern<T: 'g>(&mut self, t: T) -> &'g T {
         self.global_arena.insert(t)
     }
+
+    pub fn intern_slice<T: 'g>(&mut self, ts: &[T]) -> &'g [T] {
+        self.global_arena.insert_slice(ts)
+    }
 }
 
 impl<'a, 'g, 'local> std::fmt::Debug for RawParser<'a, 'g, 'local>  {

@@ -242,6 +242,7 @@ mod tests {
                         ],
                         result: syn::TypeIdentifier(range(28, 3)),
                         body: syn::Expression::Block(
+                            &[],
                             &syn::Expression::BinOp(
                                 syn::BinaryOperator::Plus,
                                 &syn::Expression::Var(

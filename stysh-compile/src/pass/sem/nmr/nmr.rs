@@ -61,7 +61,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         match *expr {
             Expression::BinOp(op, left, right) =>
                 self.value_of_binary_operator(op, left, right),
-            Expression::Block(e, _) => self.value_of_expr(e),
+            Expression::Block(_, e, _) => self.value_of_expr(e),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Var(id) => self.value_of_variable(id),
         }

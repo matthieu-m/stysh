@@ -30,7 +30,7 @@ pub enum Expression<'a> {
     /// A binary operation.
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
-    Block(&'a Expression<'a>, com::Range),
+    Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A literal.
     Lit(Literal<'a>, com::Range),
     /// A variable identifier.
@@ -152,7 +152,7 @@ impl<'a> Expression<'a> {
 
         match *self {
             BinOp(_, left, right) => left.range().extend(right.range()),
-            Block(_, range) => range,
+            Block(_, _, range) => range,
             Lit(_, range) => range,
             Var(VariableIdentifier(range)) => range,
         }

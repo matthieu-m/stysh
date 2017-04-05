@@ -72,10 +72,22 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                 tt::Node::Braced(_, n, _) => {
                     self.raw.pop_node();
 
-                    let inner = ExprParser::new(self.raw.spawn(n)).parse();
+                    let mut raw = self.raw.spawn(n);
+                    let mut stmts = raw.local_array();
+
+                    while let Some(tok) = raw.peek().map(|n| n.front()) {
+                        if tok.kind() != tt::Kind::KeywordVar {
+                            break;
+                        }
+                        stmts.push(Statement::Var(parse_variable(&mut raw)));
+                    }
+
+                    let stmts = self.raw.intern_slice(&stmts);
+
+                    let inner = ExprParser::new(raw).parse();
                     let inner = self.raw.intern(inner);
 
-                    return Expression::Block(inner, node.range());
+                    return Expression::Block(stmts, inner, node.range());
                 },
                 tt::Node::Bytes(_, f, _) => {
                     self.raw.pop_node();
@@ -207,6 +219,33 @@ mod tests {
                 bind: 0,
                 semi: 14,
             }
+        );
+    }
+
+    #[test]
+    fn basic_block() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
+            Expression::Block(
+                &[
+                    Statement::Var(VariableBinding {
+                        name: VariableIdentifier(range(11, 4)),
+                        type_: None,
+                        expr: Expression::Lit(
+                            Literal::Integral,
+                            range(19, 4)
+                        ),
+                        var: 6,
+                        colon: 0,
+                        bind: 16,
+                        semi: 23,
+                    }),
+                ],
+                &Expression::Var(VariableIdentifier(range(29, 4))),
+                range(0, 35)
+            )
         );
     }
 

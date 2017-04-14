@@ -219,10 +219,10 @@ impl std::fmt::Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(
             f,
-            "Token {{ kind: {:?}, offset: {}, length: {} }}",
+            "{:?}@{}-{}",
             self.kind(),
             self.offset(),
-            self.length()
+            self.offset() + self.length(),
         )
     }
 }

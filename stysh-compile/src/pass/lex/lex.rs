@@ -473,6 +473,35 @@ mod tests {
     }
 
     #[test]
+    fn lex_braces_tuples() {
+        let global_arena = mem::Arena::new();
+
+        fn int(offset: usize) -> Token {
+            Token::new(Kind::NameType, offset, 3)
+        }
+
+        assert_eq!(
+            lexit(&global_arena, b"((Int, Int), Int, )"),
+            &[
+                Node::Braced(
+                    paren_open(0),
+                    &[
+                        Node::Braced(
+                            paren_open(1),
+                            &[
+                                Node::Run(&[int(2), comma(5), int(7)])
+                            ],
+                            paren_close(10),
+                        ),
+                        Node::Run(&[comma(11), int(13), comma(16)]),
+                    ],
+                    paren_close(18),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn lex_function_simple() {
         let global_arena = mem::Arena::new();
 
@@ -568,5 +597,17 @@ mod tests {
         local_arena.recycle();
 
         result
+    }
+
+    fn comma(offset: usize) -> Token {
+        Token::new(Kind::SignComma, offset, 1)
+    }
+
+    fn paren_open(offset: usize) -> Token {
+        Token::new(Kind::ParenthesisOpen, offset, 1)
+    }
+
+    fn paren_close(offset: usize) -> Token {
+        Token::new(Kind::ParenthesisClose, offset, 1)
     }
 }

@@ -80,7 +80,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //  Implementation Details
 //
 impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
-    fn parse_arguments(&self, arguments: &'a [tt::Node]) -> &'g [Argument] {
+    fn parse_arguments(&self, arguments: &'a [tt::Node]) -> &'g [Argument<'g>] {
         use self::tt::Kind::*;
 
         if arguments.is_empty() {
@@ -134,7 +134,7 @@ mod tests {
             Function {
                 name: VariableIdentifier(range(5, 3)),
                 arguments: &[],
-                result: TypeIdentifier(range(14, 3)),
+                result: Type::Simple(TypeIdentifier(range(14, 3))),
                 body: Expression::Block(
                     &[],
                     &Expression::BinOp(
@@ -169,18 +169,18 @@ mod tests {
                 arguments: &[
                     Argument {
                         name: VariableIdentifier(range(9, 1)),
-                        type_: TypeIdentifier(range(12, 3)),
+                        type_: Type::Simple(TypeIdentifier(range(12, 3))),
                         colon: 10,
                         comma: 15,
                     },
                     Argument {
                         name: VariableIdentifier(range(17, 1)),
-                        type_: TypeIdentifier(range(20, 3)),
+                        type_: Type::Simple(TypeIdentifier(range(20, 3))),
                         colon: 18,
                         comma: 0,
                     }
                 ],
-                result: TypeIdentifier(range(28, 3)),
+                result: Type::Simple(TypeIdentifier(range(28, 3))),
                 body: Expression::Block(
                     &[],
                     &Expression::BinOp(

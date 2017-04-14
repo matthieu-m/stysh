@@ -97,7 +97,7 @@ impl<'a, 'g, 'local> std::fmt::Debug for RawParser<'a, 'g, 'local>  {
 //
 //  Implementation Details
 //
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct ParserState<'a> {
     nodes: &'a [tt::Node<'a>],
     run_start: usize,
@@ -141,5 +141,23 @@ impl<'a> ParserState<'a> {
         } else {
             panic!("Unreachable!");
         }
+    }
+}
+
+impl<'a> std::fmt::Debug for ParserState<'a>  {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "ParserState {{ [")?;
+        match self.nodes.first().cloned() {
+            Some(tt::Node::Run(run)) => {
+                write!(f, "Run({:?})", &run[self.run_start..])
+            },
+            other => write!(f, "{:?}", other),
+        }?;
+        if self.nodes.len() > 1 {
+            for n in &self.nodes[1..] {
+                write!(f, ", {:?}", n)?;
+            }
+        }
+        write!(f, "] }}")
     }
 }

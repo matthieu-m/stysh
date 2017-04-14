@@ -8,6 +8,7 @@
 
 use basic::com;
 
+use model::tt;
 pub use model::tt::StringFragment;
 
 /// A List of AST nodes.
@@ -58,9 +59,9 @@ pub struct Function<'a> {
     /// Name of the function.
     pub name: VariableIdentifier,
     /// List of arguments of the function.
-    pub arguments: &'a [Argument],
+    pub arguments: &'a [Argument<'a>],
     /// Return type of the function.
-    pub result: TypeIdentifier,
+    pub result: Type<'a>,
     /// Body of the function.
     pub body: Expression<'a>,
     /// Offset of the ":fun" keyword.
@@ -75,11 +76,11 @@ pub struct Function<'a> {
 
 /// An Argument.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Argument {
+pub struct Argument<'a> {
     /// Name of the argument.
     pub name: VariableIdentifier,
     /// Type of the argument.
-    pub type_: TypeIdentifier,
+    pub type_: Type<'a>,
     /// Offset of the colon.
     pub colon: u32,
     /// Offset of the comma, if any.
@@ -111,7 +112,7 @@ pub struct VariableBinding<'a> {
     //  TODO(matthieum): make a pattern.
     pub name: VariableIdentifier,
     /// Type of the binding, if specified.
-    pub type_: Option<TypeIdentifier>,
+    pub type_: Option<Type<'a>>,
     /// Expression being bound.
     pub expr: Expression<'a>,
     /// Offset of the :var keyword.
@@ -124,9 +125,35 @@ pub struct VariableBinding<'a> {
     pub semi: u32,
 }
 
+/// A Type.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Type<'a> {
+    /// A missing type.
+    Missing(com::Range),
+    /// A simple nominal type.
+    Simple(TypeIdentifier),
+    /// A tuple.
+    Tuple(TypeTuple<'a>),
+}
+
 /// A Type Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TypeIdentifier(pub com::Range);
+
+/// A TupleType.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TypeTuple<'a> {
+    /// Fields of the tuple.
+    pub fields: &'a [Type<'a>],
+    /// Offsets of the commas separating the fields, an absent comma is placed
+    /// at the offset of the last character of the field it would have followed.
+    pub commas: &'a [u32],
+    /// Offset of the opening parenthesis.
+    pub open: u32,
+    /// Offset of the closing parenthesis, an absent parenthesis is placed at
+    /// at the offset of the last character of the field it would have followed.
+    pub close: u32,
+}
 
 /// A Value Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -177,14 +204,14 @@ impl<'a> Function<'a> {
     }
 }
 
-impl Argument {
+impl<'a> Argument<'a> {
     /// Returns the range spanned by the argument.
     pub fn range(&self) -> com::Range {
         let offset = self.name.0.offset();
         let end_offset = if self.comma != 0 {
             (self.comma + 1) as usize
         } else {
-            self.type_.0.end_offset()
+            self.type_.range().end_offset()
         };
         com::Range::new(offset, end_offset - offset)
     }
@@ -212,6 +239,57 @@ impl<'a> VariableBinding<'a> {
             self.var as usize,
             (self.semi + 1 - self.var) as usize
         )
+    }
+}
+
+impl<'a> Type<'a> {
+    /// Returns the range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        match *self {
+            Type::Missing(r) => r,
+            Type::Simple(t) => t.0,
+            Type::Tuple(t) => t.range(),
+        }
+    }
+}
+
+impl<'a> TypeTuple<'a> {
+    /// Returns whether the tuple is empty.
+    pub fn is_empty(&self) -> bool { self.fields.is_empty() }
+
+    /// Returns the number of fields of the tuple.
+    pub fn len(&self) -> usize { self.fields.len() }
+
+    /// Returns the field at index i.
+    pub fn field(&self, i: usize) -> Option<Type<'a>> {
+        self.fields.get(i).cloned()
+    }
+
+    /// Returns the token of the comma following the i-th field, if there is no
+    /// such comma the position it would have been at is faked.
+    pub fn comma(&self, i: usize) -> Option<tt::Token> {
+        self.commas
+            .get(i)
+            .map(|&i| i as usize)
+            .or_else(|| self.fields.get(i).map(|f| f.range().end_offset() - 1))
+            .map(|o| tt::Token::new(tt::Kind::SignComma, o, 1))
+    }
+
+    /// Returns the token of the opening parenthesis.
+    pub fn parenthesis_open(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisOpen, self.open as usize, 1)
+    }
+
+    /// Returns the token of the closing parenthesis.
+    pub fn parenthesis_close(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisClose, self.close as usize, 1)
+    }
+
+    /// Returns the range spanned by the tuple.
+    pub fn range(&self) -> com::Range {
+        let open = self.parenthesis_open().offset();
+        let close = self.parenthesis_close().range().end_offset();
+        com::Range::new(open, close - open)
     }
 }
 
@@ -245,7 +323,7 @@ mod tests {
         let fun = Function {
             name: VariableIdentifier(range(8, 3)),
             arguments: &[],
-            result: TypeIdentifier(range(16, 3)),
+            result: type_simple(16, 3),
             body: Expression::BinOp(BinaryOperator::Plus, &left, &right),
             keyword: 3,
             open: 11,
@@ -287,7 +365,7 @@ mod tests {
         com::Range::new(offset, length)
     }
 
-    fn bind_var_integral<'a>(offset: usize) -> VariableBinding<'a> {
+    fn bind_var_integral(offset: usize) -> VariableBinding<'static> {
         //  ":var fool := 1234;" at an arbitrary offset.
         VariableBinding {
             name: VariableIdentifier(range(offset + 5, 4)),
@@ -300,7 +378,11 @@ mod tests {
         }
     }
 
-    fn expr_lit_integral<'a>(offset: usize, length: usize) -> Expression<'a> {
+    fn expr_lit_integral(offset: usize, length: usize) -> Expression<'static> {
         Expression::Lit(Literal::Integral, range(offset, length))
+    }
+
+    fn type_simple(offset: usize, length: usize) -> Type<'static> {
+        Type::Simple(TypeIdentifier(range(offset, length)))
     }
 }

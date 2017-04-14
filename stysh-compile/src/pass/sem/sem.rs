@@ -95,7 +95,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
             name: sem::ItemIdentifier(fun.name.0),
             range: com::Range::new(
                 fun.keyword as usize,
-                fun.result.0.end_offset() - (fun.keyword as usize)
+                fun.result.range().end_offset() - (fun.keyword as usize)
             ),
             proto: sem::Proto::Fun(
                 sem::FunctionProto {
@@ -153,18 +153,18 @@ mod tests {
                         arguments: &[
                             syn::Argument {
                                 name: syn::VariableIdentifier(range(9, 1)),
-                                type_: syn::TypeIdentifier(range(12, 3)),
+                                type_: type_simple(12, 3),
                                 colon: 10,
                                 comma: 15,
                             },
                             syn::Argument {
                                 name: syn::VariableIdentifier(range(17, 1)),
-                                type_: syn::TypeIdentifier(range(20, 3)),
+                                type_: type_simple(20, 3),
                                 colon: 18,
                                 comma: 0,
                             }
                         ],
-                        result: syn::TypeIdentifier(range(28, 3)),
+                        result: type_simple(28, 3),
                         body: syn::Expression::Var(
                             syn::VariableIdentifier(range(0, 0))
                         ),
@@ -231,18 +231,18 @@ mod tests {
                         arguments: &[
                             syn::Argument {
                                 name: syn::VariableIdentifier(range(9, 1)),
-                                type_: syn::TypeIdentifier(range(12, 3)),
+                                type_: type_simple(12, 3),
                                 colon: 10,
                                 comma: 15,
                             },
                             syn::Argument {
                                 name: syn::VariableIdentifier(range(17, 1)),
-                                type_: syn::TypeIdentifier(range(20, 3)),
+                                type_: type_simple(20, 3),
                                 colon: 18,
                                 comma: 0,
                             }
                         ],
-                        result: syn::TypeIdentifier(range(28, 3)),
+                        result: type_simple(28, 3),
                         body: syn::Expression::Block(
                             &[],
                             &syn::Expression::BinOp(
@@ -334,6 +334,10 @@ mod tests {
             range: range,
             expr: Expr::ArgumentRef(value),
         }
+    }
+
+    fn type_simple(offset: usize, length: usize) -> syn::Type<'static> {
+        syn::Type::Simple(syn::TypeIdentifier(range(offset, length)))
     }
 
     fn value(start: usize, length: usize) -> ValueIdentifier {

@@ -11,7 +11,7 @@
 //! for; recycling is simply about wiping it out (in Debug mode) and reusing it.
 
 use std;
-use std::{cell, cmp, fmt, hash, mem, ops, ptr, slice};
+use std::{cell, cmp, fmt, hash, iter, mem, ops, ptr, slice};
 
 /// The Arena structure
 ///
@@ -222,6 +222,15 @@ impl<'a, T: 'a + fmt::Debug> fmt::Debug for Array<'a, T> {
 impl<'a, T: 'a + hash::Hash> hash::Hash for Array<'a, T> {
     fn hash<H>(&self, state: &mut H) where H: hash::Hasher {
         self.as_slice().hash(state)
+    }
+}
+
+impl<'a, 'b, T: 'a> iter::IntoIterator for &'b Array<'a, T> {
+    type Item = &'b T;
+    type IntoIter = std::slice::Iter<'b, T>;
+
+    fn into_iter(self) -> std::slice::Iter<'b, T> {
+        self.as_slice().into_iter()
     }
 }
 

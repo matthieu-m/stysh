@@ -112,7 +112,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
                 return Value {
                     type_: type_,
                     range: name.0,
-                    expr: Expr::VarRef(identifier)
+                    expr: Expr::VariableRef(identifier)
                 }
             }
         }

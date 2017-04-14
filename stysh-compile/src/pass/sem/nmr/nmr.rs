@@ -415,7 +415,7 @@ mod tests {
         Value {
             type_: Type::Builtin(BuiltinType::Int),
             range: range,
-            expr: Expr::VarRef(ValueIdentifier(name)),
+            expr: Expr::VariableRef(ValueIdentifier(name)),
         }
     }
 

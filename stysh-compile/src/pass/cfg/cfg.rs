@@ -94,6 +94,7 @@ struct BlockBuilderImpl<'g, 'local>
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
     arguments: &'local [(com::Range, sem::Type)],
+    variables: mem::Array<'local, (com::Range, sir::ValueId)>,
     instrs: mem::Array<'local, sir::Instruction<'g>>,
 }
 
@@ -156,6 +157,7 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
             global_arena: global_arena,
             local_arena: local_arena,
             arguments: arguments,
+            variables: mem::Array::new(local_arena),
             instrs: mem::Array::new(local_arena),
         }
     }
@@ -172,6 +174,24 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
                 }
                 panic!("Unresolved argument: {}", id.0);
             },
+            sem::Expr::Block(stmts, &expr) => {
+                for &s in stmts {
+                    match s {
+                        sem::Stmt::Var(sem::Binding::Variable(var, value, _))
+                            =>
+                        {
+                            let id = self.from_value(&value);
+                            self.variables.push((var.0, id));
+                        },
+                        _ => unimplemented!(),
+                    }
+                }
+                self.from_value(&sem::Value {
+                    type_: value.type_, 
+                    range: value.range,
+                    expr: expr
+                });
+            },
             sem::Expr::BuiltinCall(fun, args) => {
                 let mut arguments = mem::Array::new(self.local_arena);
                 for a in args {
@@ -184,6 +204,14 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
             },
             sem::Expr::BuiltinVal(val) =>
                 self.instrs.push(sir::Instruction::Load(val, value.range)),
+            sem::Expr::VariableRef(id) => {
+                for &(range, value_id) in &self.variables {
+                    if range == id.0 {
+                        return value_id;
+                    }
+                }
+                panic!("Unresolved variable: {}", id.0);
+            }
             _ => unimplemented!(),
         };
 
@@ -225,6 +253,54 @@ mod tests {
                 "    $0 := load 1 ; 1@0",
                 "    $1 := load 2 ; 1@4",
                 "    $2 := add($0, $1) ; 5@0",
+                "    return $2",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn block_simple() {
+        let global_arena = mem::Arena::new();
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+
+        //  { :var a := 1; :var b := 2; a + b }
+        let (a, b) = (value(7, 1), value(20, 1));
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &sem::Value {
+                    type_: sem::Type::Builtin(sem::BuiltinType::Int),
+                    range: range(0, 35),
+                    expr: sem::Expr::Block(
+                        &[
+                            sem::Stmt::Var(sem::Binding::Variable(
+                                a,
+                                lit_integral(1, 12, 1),
+                                range(2, 12)
+                            )),
+                            sem::Stmt::Var(sem::Binding::Variable(
+                                b,
+                                lit_integral(2, 25, 1),
+                                range(15, 12)
+                            )),
+                        ],
+                        &sem::Expr::BuiltinCall(
+                            sem::BuiltinFunction::Add,
+                            &[
+                                resolved_variable(a, int),
+                                resolved_variable(b, int),
+                            ]
+                        )
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0:",
+                "    $0 := load 1 ; 1@12",
+                "    $1 := load 2 ; 1@25",
+                "    $2 := add($0, $1) ; 35@0",
                 "    return $2",
                 ""
             ])
@@ -328,6 +404,16 @@ mod tests {
             type_: type_,
             range: range(0, 0),
             expr: sem::Expr::ArgumentRef(value),
+        }
+    }
+
+    fn resolved_variable(value: sem::ValueIdentifier, type_: sem::Type)
+        -> sem::Value<'static>
+    {
+        sem::Value {
+            type_: type_,
+            range: range(0, 0),
+            expr: sem::Expr::VariableRef(value),
         }
     }
 

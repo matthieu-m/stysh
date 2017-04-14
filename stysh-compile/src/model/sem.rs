@@ -68,7 +68,7 @@ pub enum Expr<'a> {
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
-    VarRef(ValueIdentifier),
+    VariableRef(ValueIdentifier),
 }
 
 /// A built-in value, the type is implicit.

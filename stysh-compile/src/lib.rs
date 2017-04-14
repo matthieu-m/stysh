@@ -4,6 +4,10 @@
 
 #![deny(missing_docs)]
 
+#[cfg(test)]
+#[macro_use]
+extern crate pretty_assertions;
+
 pub mod basic;
 pub mod model;
 pub mod pass;

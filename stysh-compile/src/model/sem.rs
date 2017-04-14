@@ -51,20 +51,24 @@ pub enum Binding<'a> {
     /// A function argument.
     Argument(ValueIdentifier, Type, com::Range),
     /// A variable declaration.
-    Variable(ValueIdentifier, &'a Value<'a>, com::Range),
+    Variable(ValueIdentifier, Value<'a>, com::Range),
 }
 
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
-    /// A reference to an existing binding.
+    /// A reference to an existing argument binding.
     ArgumentRef(ValueIdentifier),
+    /// A block expression.
+    Block(&'a [Stmt<'a>], &'a Expr<'a>),
     /// A built-in value.
     BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
+    /// A reference to an existing variable binding.
+    VarRef(ValueIdentifier),
 }
 
 /// A built-in value, the type is implicit.
@@ -74,6 +78,14 @@ pub enum BuiltinValue<'a> {
     Int(i64),
     /// A String.
     String(&'a [u8]),
+}
+
+/// A Statement.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Stmt<'a> {
+    //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
+    /// A variable binding.
+    Var(Binding<'a>),
 }
 
 /// A built-in function.

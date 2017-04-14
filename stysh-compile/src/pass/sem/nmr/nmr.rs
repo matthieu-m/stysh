@@ -6,7 +6,7 @@ use basic::{com, mem};
 
 use model::{syn, sem};
 
-use super::scp::Scope;
+use super::scp::{BlockScope, Scope};
 
 /// The Name Resolver.
 ///
@@ -61,9 +61,51 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         match *expr {
             Expression::BinOp(op, left, right) =>
                 self.value_of_binary_operator(op, left, right),
-            Expression::Block(_, e, _) => self.value_of_expr(e),
+            Expression::Block(s, e, r) => self.value_of_block(s, e, r),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Var(id) => self.value_of_variable(id),
+        }
+    }
+
+    fn value_of_block(
+        &mut self,
+        stmts: &[syn::Statement],
+        expr: &syn::Expression,
+        range: com::Range
+    )
+        -> sem::Value<'g>
+    {
+        let mut scope =
+            BlockScope::new(self.code_fragment, self.scope, self.local_arena);
+        let mut statements = mem::Array::new(self.local_arena);
+
+        for &s in stmts {
+            let (binding, type_, stmt) = match s {
+                syn::Statement::Var(var) => {
+                    let value = self.rescope(&scope).value_of_expr(&var.expr);
+                    let id = sem::ValueIdentifier(var.name.0);
+                    (
+                        id,
+                        value.type_,
+                        sem::Stmt::Var(
+                            sem::Binding::Variable(id, value, var.range())
+                        )
+                    )
+                },
+            };
+            scope.add(binding, type_);
+            statements.push(stmt);
+        }
+
+        let value = self.rescope(&scope).value_of_expr(expr);
+
+        sem::Value {
+            type_: value.type_,
+            range: range,
+            expr: sem::Expr::Block(
+                self.global_arena.insert_slice(statements.into_slice()),
+                self.global_arena.insert(value.expr),
+            ),
         }
     }
 
@@ -183,6 +225,17 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         buffer.into_slice()
     }
 
+    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
+        where 'a: 'b
+    {
+        NameResolver {
+            code_fragment: self.code_fragment,
+            scope: scope,
+            global_arena: self.global_arena,
+            local_arena: self.local_arena,
+        }
+    }
+
     fn source(&self, range: com::Range) -> &[u8] {
         &self.code_fragment[range]
     }
@@ -254,6 +307,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn value_basic_var() {
+        let global_arena = mem::Arena::new();
+
+        let complete_range = range(0, 35);
+        let (a, b) = (range(7, 1), range(20, 1));
+        let (a_lit, b_lit) = (range(12, 1), range(25, 1));
+        let (a_ref, b_ref) = (range(28, 1), range(32, 1));
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                b"{ :var a := 1; :var b := 2; a + b }",
+                &syn::Expression::Block(
+                    &[
+                        syn::Statement::Var(syn::VariableBinding {
+                            name: syn::VariableIdentifier(a),
+                            type_: None,
+                            expr: lit_integral(a_lit),
+                            var: 2,
+                            colon: 0,
+                            bind: 9,
+                            semi: 13,
+                        }),
+                        syn::Statement::Var(syn::VariableBinding {
+                            name: syn::VariableIdentifier(b),
+                            type_: None,
+                            expr: lit_integral(b_lit),
+                            var: 15,
+                            colon: 0,
+                            bind: 22,
+                            semi: 26,
+                        }),
+                    ],
+                    &syn::Expression::BinOp(
+                        syn::BinaryOperator::Plus,
+                        &var(a_ref),
+                        &var(b_ref),
+                    ),
+                    complete_range
+                )
+            ),
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: complete_range,
+                expr: Expr::Block(
+                    &[
+                        Stmt::Var(Binding::Variable(
+                            ValueIdentifier(a),
+                            int(1, a_lit),
+                            range(2, 12)
+                        )),
+                        Stmt::Var(Binding::Variable(
+                            ValueIdentifier(b),
+                            int(2, b_lit),
+                            range(15, 12)
+                        )),
+                    ],
+                    &Expr::BuiltinCall(
+                        BuiltinFunction::Add,
+                        &[ int_ref(a, a_ref), int_ref(b, b_ref) ]
+                    )
+                )
+            }
+        );
+    }
+
     fn valueit<'g>(
         global_arena: &'g mem::Arena,
         fragment: &'g [u8],
@@ -279,11 +399,23 @@ mod tests {
         syn::Expression::Lit(syn::Literal::Integral, range)
     }
 
+    fn var(range: com::Range) -> syn::Expression<'static> {
+        syn::Expression::Var(syn::VariableIdentifier(range))
+    }
+
     fn int(value: i64, range: com::Range) -> Value<'static> {
         Value {
             type_: Type::Builtin(BuiltinType::Int),
             range: range,
             expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
+        }
+    }
+
+    fn int_ref(name: com::Range, range: com::Range) -> Value<'static> {
+        Value {
+            type_: Type::Builtin(BuiltinType::Int),
+            range: range,
+            expr: Expr::VarRef(ValueIdentifier(name)),
         }
     }
 

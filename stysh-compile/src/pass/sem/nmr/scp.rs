@@ -52,6 +52,37 @@ impl<'a> FunctionScope<'a> {
     }
 }
 
+/// A Block Scope.
+pub struct BlockScope<'a, 'g, 'local>
+    where 'g: 'a
+{
+    source: &'a [u8],
+    parent: &'a Scope<'g>,
+    elements: mem::Array<'local, (ValueIdentifier, Type)>,
+}
+
+impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
+    /// Create a new instance of BlockScope.
+    pub fn new(
+        source: &'a [u8],
+        parent: &'a Scope<'g>,
+        arena: &'local mem::Arena
+    )
+        -> BlockScope<'a, 'g, 'local>
+    {
+        BlockScope {
+            source: source,
+            parent: parent,
+            elements: mem::Array::new(arena),
+        }
+    }
+
+    /// Adds a new identifier to the scope.
+    pub fn add(&mut self, id: ValueIdentifier, type_: Type) {
+        self.elements.push((id, type_))
+    }
+}
+
 impl<'g> Scope<'g> for () {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
         self.unresolved(name)
@@ -60,18 +91,7 @@ impl<'g> Scope<'g> for () {
 
 impl<'a, 'g> Scope<'g> for FunctionScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        use basic::com::Slice;
-
-        println!("{} {:?}", Slice(self.source), self);
-
         for &(identifier, type_) in self.arguments {
-            println!(
-                "'{}' ({}) == '{}' ({}) ?",
-                Slice(&self.source[identifier.0]),
-                identifier.0,
-                Slice(&self.source[name.0]),
-                name.0
-            );
             if &self.source[identifier.0] == &self.source[name.0] {
                 return Value {
                     type_: type_,
@@ -82,6 +102,22 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a> {
         }
 
         self.unresolved(name)
+    }
+}
+
+impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
+    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
+        for &(identifier, type_) in &*self.elements {
+            if &self.source[identifier.0] == &self.source[name.0] {
+                return Value {
+                    type_: type_,
+                    range: name.0,
+                    expr: Expr::VarRef(identifier)
+                }
+            }
+        }
+
+        self.parent.lookup_binding(name)
     }
 }
 

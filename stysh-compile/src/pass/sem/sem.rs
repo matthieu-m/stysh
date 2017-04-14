@@ -218,6 +218,8 @@ mod tests {
             proto: Proto::Fun(function_proto),
         };
 
+        let arg = resolved_argument;
+
         assert_eq!(
             itemit(
                 &global_arena,
@@ -265,13 +267,16 @@ mod tests {
                 prototype: &function_proto,
                 body: Value {
                     type_: int,
-                    range: range(34, 5),
-                    expr: Expr::BuiltinCall(
-                        BuiltinFunction::Add,
-                        &[
-                            resolved_argument(value(9, 1), range(34, 1), int),
-                            resolved_argument(value(17, 1), range(38, 1), int),
-                        ]
+                    range: range(32, 9),
+                    expr: Expr::Block(
+                        &[],
+                        &Expr::BuiltinCall(
+                            BuiltinFunction::Add,
+                            &[
+                                arg(value(9, 1), range(34, 1), int),
+                                arg(value(17, 1), range(38, 1), int),
+                            ]
+                        ),
                     ),
                 }
             })

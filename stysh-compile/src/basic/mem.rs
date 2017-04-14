@@ -11,7 +11,7 @@
 //! for; recycling is simply about wiping it out (in Debug mode) and reusing it.
 
 use std;
-use std::{cell, mem, ops, ptr, slice};
+use std::{cell, cmp, fmt, hash, mem, ops, ptr, slice};
 
 /// The Arena structure
 ///
@@ -178,6 +178,50 @@ impl<'a, T: 'a> Array<'a, T> {
     /// Extracts the mutable slice containing the array elements.
     pub fn into_slice(self) -> &'a mut [T] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
+}
+
+impl<'a, T: 'a + Clone> Clone for Array<'a, T> {
+    fn clone(&self) -> Self {
+        let mut new = Array::with_capacity(self.length, self.arena);
+        new.extend(self.as_slice());
+        new
+    }
+}
+
+impl<'a, T: 'a + cmp::PartialEq> cmp::PartialEq for Array<'a, T> {
+    fn eq(&self, other: &Self) -> bool { self.as_slice().eq(other.as_slice()) }
+    fn ne(&self, other: &Self) -> bool { self.as_slice().ne(other.as_slice()) }
+}
+
+impl<'a, T: 'a + cmp::Eq> cmp::Eq for Array<'a, T> {}
+
+impl<'a, T: 'a + cmp::PartialOrd> cmp::PartialOrd for Array<'a, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.as_slice().partial_cmp(other.as_slice())
+    }
+
+    fn lt(&self, other: &Self) -> bool { self.as_slice().lt(other.as_slice()) }
+    fn le(&self, other: &Self) -> bool { self.as_slice().le(other.as_slice()) }
+    fn gt(&self, other: &Self) -> bool { self.as_slice().gt(other.as_slice()) }
+    fn ge(&self, other: &Self) -> bool { self.as_slice().ge(other.as_slice()) }
+}
+
+impl<'a, T: 'a + cmp::Ord> cmp::Ord for Array<'a, T> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for Array<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{:?}", self.as_slice())
+    }
+}
+
+impl<'a, T: 'a + hash::Hash> hash::Hash for Array<'a, T> {
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher {
+        self.as_slice().hash(state)
     }
 }
 

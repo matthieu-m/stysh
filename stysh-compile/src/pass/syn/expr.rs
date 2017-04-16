@@ -57,37 +57,26 @@ struct ExprParser<'a, 'g, 'local> {
 }
 
 impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
-    pub fn new(raw: RawParser<'a, 'g, 'local>) -> ExprParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> ExprParser<'a, 'g, 'local> {
         ExprParser { raw: raw }
     }
 
-    pub fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
-    pub fn parse(&mut self) -> Expression<'g> {
+    fn parse(&mut self) -> Expression<'g> {
         let tokens = {
             let node = self.raw.peek().expect("WAT?");
 
             match node {
                 tt::Node::Run(tokens) => tokens,
-                tt::Node::Braced(_, n, _) => {
+                tt::Node::Braced(o, n, c) => {
                     self.raw.pop_node();
 
-                    let mut raw = self.raw.spawn(n);
-                    let mut stmts = raw.local_array();
-
-                    while let Some(tok) = raw.peek().map(|n| n.front()) {
-                        if tok.kind() != tt::Kind::KeywordVar {
-                            break;
-                        }
-                        stmts.push(Statement::Var(parse_variable(&mut raw)));
-                    }
-
-                    let stmts = self.raw.intern_slice(&stmts);
-
-                    let inner = ExprParser::new(raw).parse();
-                    let inner = self.raw.intern(inner);
-
-                    return Expression::Block(stmts, inner, node.range());
+                    return match o.kind() {
+                        tt::Kind::BraceOpen => self.parse_braces(n, o, c),
+                        tt::Kind::ParenthesisOpen => self.parse_parens(n, o, c),
+                        _ => unimplemented!(),
+                    };
                 },
                 tt::Node::Bytes(_, f, _) => {
                     self.raw.pop_node();
@@ -111,7 +100,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let expr = tokens[0].into_expr().expect("Expression");
         self.raw.pop_tokens(1);
 
-        if tokens.len() == 1 || tokens[1].kind() == tt::Kind::SignSemiColon {
+        if tokens.len() == 1 ||
+            tokens[1].kind() == tt::Kind::SignComma ||
+            tokens[1].kind() == tt::Kind::SignSemiColon
+        {
             expr
         } else {
             let left_operand: &Expression = self.raw.intern(expr);
@@ -131,6 +123,56 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                 right_operand
             )
         }
+    }
+
+    fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
+        -> Expression<'g>
+    {
+        let mut raw = self.raw.spawn(ns);
+        let mut stmts = raw.local_array();
+
+        while let Some(tok) = raw.peek().map(|n| n.front()) {
+            if tok.kind() != tt::Kind::KeywordVar {
+                break;
+            }
+            stmts.push(Statement::Var(parse_variable(&mut raw)));
+        }
+
+        let stmts = self.raw.intern_slice(&stmts);
+
+        let inner = ExprParser::new(raw).parse();
+        let inner = self.raw.intern(inner);
+
+        Expression::Block(stmts, inner, o.range().extend(c.range()))
+    }
+
+    fn parse_parens(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
+        -> Expression<'g>
+    {
+        let mut inner = ExprParser::new(self.raw.spawn(ns));
+
+        let mut fields = self.raw.local_array();
+        let mut commas = self.raw.local_array();
+
+        while let Some(_) = inner.raw.peek() {
+            let e = inner.parse();
+            fields.push(e);
+
+            if let Some(c) = inner.raw.pop_kind(tt::Kind::SignComma) {
+                commas.push(c.range().offset() as u32)
+            } else {
+                commas.push(e.range().end_offset() as u32 - 1)
+            };
+        }
+
+        assert!(inner.into_raw().peek().is_none());
+
+        Expression::Tuple(Tuple {
+            fields: self.raw.intern_slice(fields.into_slice()),
+            commas: self.raw.intern_slice(commas.into_slice()),
+            open: o.offset() as u32,
+            close: c.offset() as u32,
+        })
     }
 }
 
@@ -168,14 +210,8 @@ mod tests {
             exprit(&global_arena, b"1 + 2"),
             Expression::BinOp(
                 BinaryOperator::Plus,
-                &Expression::Lit(
-                    Literal::Integral,
-                    range(0, 1)
-                ),
-                &Expression::Lit(
-                    Literal::Integral,
-                    range(4, 1)
-                ),
+                &int(0, 1),
+                &int(4, 1),
             )
         );
     }
@@ -189,10 +225,7 @@ mod tests {
             VariableBinding {
                 name: VariableIdentifier(range(6, 4)),
                 type_: None,
-                expr: Expression::Lit(
-                    Literal::Integral,
-                    range(14, 4)
-                ),
+                expr: int(14, 4),
                 var: 1,
                 colon: 0,
                 bind: 11,
@@ -210,10 +243,7 @@ mod tests {
             VariableBinding {
                 name: VariableIdentifier(range(6, 4)),
                 type_: None,
-                expr: Expression::Lit(
-                    Literal::Integral,
-                    range(11, 4)
-                ),
+                expr: int(11, 4),
                 var: 1,
                 colon: 0,
                 bind: 0,
@@ -233,10 +263,7 @@ mod tests {
                     Statement::Var(VariableBinding {
                         name: VariableIdentifier(range(11, 4)),
                         type_: None,
-                        expr: Expression::Lit(
-                            Literal::Integral,
-                            range(19, 4)
-                        ),
+                        expr: int(19, 4),
                         var: 6,
                         colon: 0,
                         bind: 16,
@@ -285,6 +312,55 @@ mod tests {
                 range(0, 7)
             )
         );
+    }
+
+    #[test]
+    fn tuple_basic() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"(1)"),
+            Expression::Tuple(
+                Tuple {
+                    fields: &[int(1, 1)],
+                    commas: &[1],
+                    open: 0,
+                    close: 2,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn tuple_nested() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"(1, (2, 3), 4)"),
+            Expression::Tuple(
+                Tuple {
+                    fields: &[
+                        int(1, 1),
+                        Expression::Tuple(
+                            Tuple {
+                                fields: &[int(5, 1), int(8, 1)],
+                                commas: &[6, 8],
+                                open: 4,
+                                close: 9,
+                            }
+                        ),
+                        int(12, 1),
+                    ],
+                    commas: &[2, 10, 12],
+                    open: 0,
+                    close: 13,
+                }
+            )
+        );
+    }
+
+    fn int(offset: usize, length: usize) -> Expression<'static> {
+        Expression::Lit(Literal::Integral, range(offset, length))
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

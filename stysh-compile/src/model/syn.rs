@@ -34,6 +34,8 @@ pub enum Expression<'a> {
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A literal.
     Lit(Literal<'a>, com::Range),
+    /// A tuple.
+    Tuple(Tuple<'a, Expression<'a>>),
     /// A variable identifier.
     Var(VariableIdentifier),
 }
@@ -181,6 +183,7 @@ impl<'a> Expression<'a> {
             BinOp(_, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
             Lit(_, range) => range,
+            Tuple(t) => t.range(),
             Var(VariableIdentifier(range)) => range,
         }
     }

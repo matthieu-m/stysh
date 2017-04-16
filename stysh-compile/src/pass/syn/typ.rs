@@ -48,6 +48,8 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                     Type::Simple(TypeIdentifier(t.range()))
                 },
                 Node::Braced(o, ns, c) => {
+                    self.raw.pop_node();
+
                     assert_eq!(o.kind(), Kind::ParenthesisOpen);
                     let mut inner = TypeParser { raw: self.raw.spawn(ns) };
 
@@ -64,8 +66,6 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                     }
 
                     assert!(inner.into_raw().peek().is_none());
-
-                    self.raw.pop_node();
 
                     Type::Tuple(Tuple {
                         fields: self.raw.intern_slice(fields.into_slice()),

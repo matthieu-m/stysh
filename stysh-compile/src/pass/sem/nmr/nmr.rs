@@ -63,6 +63,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
+            Expression::Tuple(_) => unimplemented!(),
             Expression::Var(id) => self.value_of_variable(id),
         }
     }

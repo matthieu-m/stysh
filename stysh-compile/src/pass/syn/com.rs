@@ -79,11 +79,11 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
     pub fn pop_tokens(&mut self, nb: usize) { self.state.pop_tokens(nb); }
 
-    pub fn intern<T: 'g>(&mut self, t: T) -> &'g T {
+    pub fn intern<T: 'g>(&self, t: T) -> &'g T {
         self.global_arena.insert(t)
     }
 
-    pub fn intern_slice<T: 'g>(&mut self, ts: &[T]) -> &'g [T] {
+    pub fn intern_slice<T: 'g>(&self, ts: &[T]) -> &'g [T] {
         self.global_arena.insert_slice(ts)
     }
 }

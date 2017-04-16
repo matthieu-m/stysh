@@ -4,7 +4,7 @@
 
 use basic::com;
 
-use model::syn::{Type, TypeIdentifier, TypeTuple};
+use model::syn::{Type, TypeIdentifier, Tuple};
 
 use super::com::RawParser;
 
@@ -67,7 +67,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 
                     self.raw.pop_node();
 
-                    Type::Tuple(TypeTuple {
+                    Type::Tuple(Tuple {
                         fields: self.raw.intern_slice(fields.into_slice()),
                         commas: self.raw.intern_slice(commas.into_slice()),
                         open: o.offset() as u32,
@@ -94,7 +94,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"()"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[],
                 commas: &[],
                 open: 0,
@@ -104,7 +104,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"( )"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[],
                 commas: &[],
                 open: 0,
@@ -119,7 +119,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"(Int)"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[simple_type(1, 3)],
                 commas: &[3],
                 open: 0,
@@ -129,7 +129,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"(Int,)"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[simple_type(1, 3)],
                 commas: &[4],
                 open: 0,
@@ -144,7 +144,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"(Int,Int ,Int)"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[
                     simple_type(1, 3),
                     simple_type(5, 3),
@@ -158,7 +158,7 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b" ( Int , Int, Int , )"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[
                     simple_type(3, 3),
                     simple_type(9, 3),
@@ -177,9 +177,9 @@ mod tests {
 
         assert_eq!(
             typeit(&global, b"((Int, Int), Int, )"),
-            Type::Tuple(TypeTuple {
+            Type::Tuple(Tuple {
                 fields: &[
-                    Type::Tuple(TypeTuple {
+                    Type::Tuple(Tuple {
                         fields: &[simple_type(2, 3), simple_type(7, 3)],
                         commas: &[5, 9],
                         open: 1,

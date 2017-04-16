@@ -133,18 +133,18 @@ pub enum Type<'a> {
     /// A simple nominal type.
     Simple(TypeIdentifier),
     /// A tuple.
-    Tuple(TypeTuple<'a>),
+    Tuple(Tuple<'a, Type<'a>>),
 }
 
 /// A Type Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TypeIdentifier(pub com::Range);
 
-/// A TupleType.
+/// A Tuple, either type or value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct TypeTuple<'a> {
+pub struct Tuple<'a, T: 'a> {
     /// Fields of the tuple.
-    pub fields: &'a [Type<'a>],
+    pub fields: &'a [T],
     /// Offsets of the commas separating the fields, an absent comma is placed
     /// at the offset of the last character of the field it would have followed.
     pub commas: &'a [u32],
@@ -253,7 +253,7 @@ impl<'a> Type<'a> {
     }
 }
 
-impl<'a> TypeTuple<'a> {
+impl<'a, T: 'a + Clone> Tuple<'a, T> {
     /// Returns whether the tuple is empty.
     pub fn is_empty(&self) -> bool { self.fields.is_empty() }
 
@@ -261,7 +261,7 @@ impl<'a> TypeTuple<'a> {
     pub fn len(&self) -> usize { self.fields.len() }
 
     /// Returns the field at index i.
-    pub fn field(&self, i: usize) -> Option<Type<'a>> {
+    pub fn field(&self, i: usize) -> Option<T> {
         self.fields.get(i).cloned()
     }
 
@@ -270,9 +270,7 @@ impl<'a> TypeTuple<'a> {
     pub fn comma(&self, i: usize) -> Option<tt::Token> {
         self.commas
             .get(i)
-            .map(|&i| i as usize)
-            .or_else(|| self.fields.get(i).map(|f| f.range().end_offset() - 1))
-            .map(|o| tt::Token::new(tt::Kind::SignComma, o, 1))
+            .map(|&o| tt::Token::new(tt::Kind::SignComma, o as usize, 1))
     }
 
     /// Returns the token of the opening parenthesis.

@@ -15,14 +15,17 @@
 use std;
 
 use basic::{com, mem};
+use basic::mem::CloneInto;
 
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Type {
+pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
+    /// A tuple type.
+    Tuple(Tuple<'a, Type<'a>>),
     /// An unresolved type.
-    Unresolved,
+    Unresolved(ItemIdentifier),
 }
 
 /// A built-in Type.
@@ -38,7 +41,7 @@ pub enum BuiltinType {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Value<'a> {
     /// Type of the value.
-    pub type_: Type,
+    pub type_: Type<'a>,
     /// Range of the expression evaluating to the value.
     pub range: com::Range,
     /// Expression evaluating to the value.
@@ -49,7 +52,7 @@ pub struct Value<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Binding<'a> {
     /// A function argument.
-    Argument(ValueIdentifier, Type, com::Range),
+    Argument(ValueIdentifier, Type<'a>, com::Range),
     /// A variable declaration.
     Variable(ValueIdentifier, Value<'a>, com::Range),
 }
@@ -65,6 +68,8 @@ pub enum Expr<'a> {
     BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
+    /// A tuple.
+    Tuple(Tuple<'a, Expr<'a>>),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
@@ -95,6 +100,13 @@ pub enum BuiltinFunction {
     Add,
 }
 
+/// A tuple.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Tuple<'a, T: 'a> {
+    /// The tuple fields.
+    pub fields: &'a [T],
+}
+
 /// An annotated prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Prototype<'a> {
@@ -119,7 +131,7 @@ pub struct FunctionProto<'a> {
     /// The function's arguments (always arguments).
     pub arguments: &'a [Binding<'a>],
     /// The return type of the function.
-    pub result: Type,
+    pub result: Type<'a>,
 }
 
 /// A function.
@@ -146,25 +158,69 @@ pub struct ItemIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub com::Range);
 
-impl<'a, 'target> Value<'a> {
-    /// Duplicates the value into the target arena.
-    pub fn duplicate(&self, arena: &'target mem::Arena) -> Value<'target> {
-        let e = match self.expr {
-            Expr::BuiltinVal(v) => Expr::BuiltinVal(v.duplicate(arena)),
-            _ => unimplemented!(),
-        };
+impl ItemIdentifier {
+    /// Returns a sentinel instance of ItemIdentifier.
+    pub fn unresolved() -> ItemIdentifier {
+        ItemIdentifier(com::Range::new(0, 0))
+    }
+}
 
-        Value {
-            type_: self.type_,
-            range: self.range,
-            expr: e,
+//
+//  CloneInto implementations
+//
+impl<'a, 'target> CloneInto<'target> for Type<'a> {
+    type Output = Type<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        match *self {
+            Type::Tuple(t) => Type::Tuple(t.clone_into(arena)),
+            Type::Builtin(t) => Type::Builtin(t),
+            Type::Unresolved(n) => Type::Unresolved(n),
         }
     }
 }
 
-impl<'a, 'target> BuiltinValue<'a> {
-    /// Duplicates the built-in value into the target arena.
-    pub fn duplicate(&self, arena: &'target mem::Arena) -> BuiltinValue<'target> {
+impl<'a, 'target> CloneInto<'target> for Value<'a> {
+    type Output = Value<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Value {
+            type_: self.type_.clone_into(arena),
+            range: self.range,
+            expr: self.expr.clone_into(arena),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Expr<'a> {
+    type Output = Expr<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        match *self {
+            Expr::BuiltinVal(v) => Expr::BuiltinVal(v.clone_into(arena)),
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
+    where T: CloneInto<'target> + 'a
+{
+    type Output = Tuple<'target, <T as CloneInto<'target>>::Output>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        let mut fields = mem::Array::with_capacity(self.fields.len(), arena);
+        for f in self.fields {
+            fields.push(f.clone_into(arena));
+        }
+        Tuple { fields: fields.into_slice() }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
+    type Output = BuiltinValue<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
             BuiltinValue::Int(i) => BuiltinValue::Int(i),
             BuiltinValue::String(s) =>

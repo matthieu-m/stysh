@@ -48,7 +48,7 @@ pub struct ControlFlowGraph<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BasicBlock<'a> {
     /// The list of arguments of this basic block.
-    pub arguments: &'a [sem::Type],
+    pub arguments: &'a [sem::Type<'a>],
     /// The list of instructions of this basic block.
     pub instructions: &'a [Instruction<'a>],
     /// The last instruction of this basic block.

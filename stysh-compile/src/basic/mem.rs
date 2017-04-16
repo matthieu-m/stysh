@@ -34,6 +34,19 @@ pub struct Array<'a, T: 'a> {
     ptr: *mut T
 }
 
+/// The CloneInto trait.
+///
+/// Clones a type into a target Arena.
+pub trait CloneInto<'a> {
+    /// Result of the clone.
+    ///
+    /// Generally equals to `Self`, with new extended lifetime specifiers.
+    type Output: 'a;
+
+    /// Clones self into the target Arena.
+    fn clone_into(&self, arena: &'a Arena) -> Self::Output;
+}
+
 impl Arena {
     /// Creates a fresh `Arena`.
     pub fn new() -> Arena { Arena(cell::UnsafeCell::new(ArenaImpl::new())) }

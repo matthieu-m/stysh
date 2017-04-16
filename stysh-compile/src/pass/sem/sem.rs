@@ -6,6 +6,8 @@ use basic::{com, mem};
 
 use model::{syn, sem};
 
+use super::nmr::{self, scp};
+
 /// The Stysh ASG builder.
 ///
 /// Builds the Abstract Semantic Graph.
@@ -43,18 +45,9 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 
     /// Translates a stand-alone expression.
     pub fn expression(&mut self, e: &syn::Expression) -> sem::Value<'g> {
-        use super::nmr::NameResolver;
-
         let scope = ();
 
-        let mut resolver = NameResolver::new(
-            &*self.code_fragment,
-            &scope,
-            self.global_arena,
-            self.local_arena
-        );
-
-        resolver.value(e)
+        self.resolver(&scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
@@ -79,12 +72,14 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 //
 impl<'g, 'local> GraphBuilder<'g, 'local> {
     fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
+        let builtin = self.builtin_scope();
+
         let mut buffer = mem::Array::new(self.local_arena);
 
         for a in fun.arguments {
             buffer.push(sem::Binding::Argument(
                 sem::ValueIdentifier(a.name.0),
-                sem::Type::Builtin(sem::BuiltinType::Int),
+                self.resolver(&builtin).type_of(&a.type_),
                 a.range()
             ));
         }
@@ -100,7 +95,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
             proto: sem::Proto::Fun(
                 sem::FunctionProto {
                     arguments: arguments,
-                    result: sem::Type::Builtin(sem::BuiltinType::Int),
+                    result: self.resolver(&builtin).type_of(&fun.result),
                 }
             ),
         }
@@ -109,23 +104,44 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
     fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
         -> sem::Item<'g>
     {
-        use super::nmr::NameResolver;
-        use super::nmr::scp::FunctionScope;
-
-        let scope =
-            FunctionScope::new(&*self.code_fragment, p, self.local_arena);
-
-        let mut resolver = NameResolver::new(
-            &*self.code_fragment,
-            &scope,
-            self.global_arena,
-            self.local_arena
-        );
+        let builtin = self.builtin_scope();
+        let scope = self.function_scope(&builtin, p);
 
         sem::Item::Fun(sem::Function {
             prototype: p,
-            body: resolver.value(&fun.body)
+            body: self.resolver(&scope).value_of(&fun.body)
         })
+    }
+
+    fn builtin_scope(&self) -> scp::BuiltinScope {
+        scp::BuiltinScope::new(&*self.code_fragment)
+    }
+
+    fn function_scope<'a>(
+        &'a self,
+        parent: &'a scp::Scope<'g>,
+        p: &'a sem::FunctionProto<'a>
+    )
+        -> scp::FunctionScope<'a, 'g>
+    {
+        scp::FunctionScope::new(
+            &*self.code_fragment,
+            parent,
+            p,
+            self.global_arena,
+            self.local_arena,
+        )
+    }
+
+    fn resolver<'a>(&'a self, scope: &'a scp::Scope<'g>)
+        -> nmr::NameResolver<'a, 'g, 'local>
+    {
+        nmr::NameResolver::new(
+            &*self.code_fragment,
+            scope,
+            self.global_arena,
+            self.local_arena
+        )
     }
 }
 
@@ -283,6 +299,81 @@ mod tests {
         );
     }
 
+    #[test]
+    fn item_fun_tuple() {
+        let global_arena = mem::Arena::new();
+
+        fn lit_int(offset: usize, length: usize) -> syn::Expression<'static> {
+            syn::Expression::Lit(syn::Literal::Integral, range(offset, length))
+        }
+
+        fn expr_int(value: i64) -> Expr<'static> {
+            Expr::BuiltinVal(BuiltinValue::Int(value))
+        }
+
+        let int = Type::Builtin(BuiltinType::Int);
+
+        let tuple_type = Tuple { fields: &[int, int] };
+
+        let function_proto = FunctionProto {
+            arguments: &[],
+            result: Type::Tuple(tuple_type),
+        };
+
+        let prototype = Prototype {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 24),
+            proto: Proto::Fun(function_proto),
+        };
+
+        assert_eq!(
+            itemit(
+                &global_arena,
+                b":fun add() -> (Int, Int) { (1, 2) }",
+                &prototype,
+                &syn::Item::Fun(
+                    syn::Function {
+                        name: syn::VariableIdentifier(range(5, 3)),
+                        arguments: &[],
+                        result: syn::Type::Tuple(syn::Tuple {
+                            fields: &[type_simple(15, 3), type_simple(20, 3)],
+                            commas: &[],
+                            open: 0,
+                            close: 0,
+                        }),
+                        body: syn::Expression::Block(
+                            &[],
+                            &syn::Expression::Tuple(syn::Tuple {
+                                fields: &[lit_int(28, 1), lit_int(31, 1)],
+                                commas: &[],
+                                open: 0,
+                                close: 0,
+                            }),
+                            range(25, 10),
+                        ),
+                        keyword: 0,
+                        open: 0,
+                        close: 0,
+                        arrow: 0,
+                    }
+                )
+            ),
+            Item::Fun(Function {
+                prototype: &function_proto,
+                body: Value {
+                    type_: Type::Tuple(Tuple { fields: &[int, int] }),
+                    range: range(25, 10),
+                    expr: Expr::Block(
+                        &[],
+                        &Expr::Tuple(Tuple {
+                            fields: &[expr_int(1), expr_int(2)]
+                        }),
+                    ),
+                }
+            })
+        );
+    }
+
     fn protoit<'g>(
         global_arena: &'g mem::Arena,
         fragment: &[u8],
@@ -326,8 +417,12 @@ mod tests {
         result
     }
 
-    fn resolved_argument(value: ValueIdentifier, range: com::Range, type_: Type)
-        -> Value<'static>
+    fn resolved_argument<'a>(
+        value: ValueIdentifier,
+        range: com::Range,
+        type_: Type<'a>
+    )
+        -> Value<'a>
     {
         Value {
             type_: type_,

@@ -43,8 +43,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    /// Translates a type into... a type!
+    pub fn type_of(&mut self, t: &syn::Type) -> sem::Type<'g> {
+        use model::syn::Type;
+
+        match *t {
+            Type::Missing(_) => unimplemented!(),
+            Type::Simple(t) => self.type_of_simple(t),
+            Type::Tuple(ref t) => self.type_of_tuple(t),
+        }
+    }
+
     /// Translates an expression into a value.
-    pub fn value(&mut self, e: &syn::Expression) -> sem::Value<'g> {
+    pub fn value_of(&mut self, e: &syn::Expression) -> sem::Value<'g> {
         self.value_of_expr(e)
     }
 }
@@ -55,6 +66,21 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn type_of_simple(&mut self, t: syn::TypeIdentifier) -> sem::Type<'g> {
+        self.scope.lookup_type(sem::ItemIdentifier(t.0))
+    }
+
+    fn type_of_tuple(&mut self, t: &syn::Tuple<syn::Type>) -> sem::Type<'g> {
+        let mut fields =
+            mem::Array::with_capacity(t.fields.len(), self.global_arena);
+
+        for f in t.fields {
+            fields.push(self.type_of(f));
+        }
+
+        sem::Type::Tuple(sem::Tuple { fields: fields.into_slice() })
+    }
+
     fn value_of_expr(&mut self, expr: &syn::Expression) -> sem::Value<'g> {
         use model::syn::Expression;
 
@@ -63,7 +89,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
-            Expression::Tuple(_) => unimplemented!(),
+            Expression::Tuple(t) => self.value_of_tuple(&t),
             Expression::Var(id) => self.value_of_variable(id),
         }
     }
@@ -77,7 +103,12 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         -> sem::Value<'g>
     {
         let mut scope =
-            BlockScope::new(self.code_fragment, self.scope, self.local_arena);
+            BlockScope::new(
+                self.code_fragment,
+                self.scope,
+                self.global_arena,
+                self.local_arena
+            );
         let mut statements = mem::Array::new(self.local_arena);
 
         for &s in stmts {
@@ -202,6 +233,27 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    fn value_of_tuple(&mut self, tup: &syn::Tuple<syn::Expression>)
+        -> sem::Value<'g>
+    {
+        let mut types =
+            mem::Array::with_capacity(tup.fields.len(), self.global_arena);
+        let mut exprs =
+            mem::Array::with_capacity(tup.fields.len(), self.global_arena);
+
+        for e in tup.fields {
+            let v = self.value_of(e);
+            types.push(v.type_);
+            exprs.push(v.expr);
+        }
+
+        sem::Value {
+            type_: sem::Type::Tuple(sem::Tuple { fields: types.into_slice() }),
+            range: tup.range(),
+            expr: sem::Expr::Tuple(sem::Tuple { fields: exprs.into_slice() }),
+        }
+    }
+
     fn value_of_variable(&mut self, var: syn::VariableIdentifier)
         -> sem::Value<'g>
     {
@@ -211,7 +263,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn catenate_fragments(&self, f: &[syn::StringFragment]) -> &'g [u8] {
         use model::syn::StringFragment::*;
 
-        let mut buffer = mem::Array::new(self.global_arena);
+        let mut buffer = mem::Array::new(self.local_arena);
         for &fragment in f {
             match fragment {
                 Text(tok) => buffer.extend(self.source(tok.range())),
@@ -223,7 +275,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             }
         }
 
-        buffer.into_slice()
+        self.global_arena.insert_slice(buffer.into_slice())
     }
 
     fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
@@ -383,14 +435,15 @@ mod tests {
         -> Value<'g>
     {
         use super::NameResolver;
+        use super::super::scp;
 
         let mut local_arena = mem::Arena::new();
 
-        let scope = ();
+        let builtin = scp::BuiltinScope::new(fragment);
 
         let result =
-            NameResolver::new(fragment, &scope, global_arena, &local_arena)
-                .value(expr);
+            NameResolver::new(fragment, &builtin, global_arena, &local_arena)
+                .value_of(expr);
         local_arena.recycle();
 
         result

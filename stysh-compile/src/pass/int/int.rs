@@ -3,6 +3,7 @@
 //! This module defines the entry point of the interpreter.
 
 use basic::{com, mem};
+use basic::mem::CloneInto;
 use model::{sem, sir};
 
 /// Stysh Interpreter.
@@ -42,7 +43,7 @@ impl<'g, 'local> Interpreter<'g, 'local> {
 //
 impl<'g, 'local> Interpreter<'g, 'local> {
     fn duplicate(&self, value: sem::Value<'local>) -> sem::Value<'g> {
-        value.duplicate(self.global_arena)
+        value.clone_into(self.global_arena)
     }
 }
 
@@ -157,7 +158,7 @@ impl<'a> BlockInterpreter<'a> {
             expr: sem::Expr::BuiltinVal(v),
         };
 
-        value.duplicate(self.arena)
+        value.clone_into(self.arena)
     }
 
     fn get_value(&self, id: sir::ValueId) -> sem::Value<'a> {

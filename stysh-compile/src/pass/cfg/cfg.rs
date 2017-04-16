@@ -3,7 +3,8 @@
 //! This module is in charge of transforming the Abstract Semantic Graph (often
 //! confusingly dubbed AST) into a CFG in a variant of the SSA form.
 
-use basic::{com, mem};
+use basic::com;
+use basic::mem::{self, CloneInto};
 use model::{sem, sir};
 
 /// Stysh CFG builder.
@@ -84,7 +85,7 @@ struct GraphBuilderImpl<'g, 'local>
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    arguments: &'local [(com::Range, sem::Type)],
+    arguments: &'local [(com::Range, sem::Type<'local>)],
     blocks: mem::Array<'local, sir::BasicBlock<'g>>,
 }
 
@@ -93,7 +94,7 @@ struct BlockBuilderImpl<'g, 'local>
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    arguments: &'local [(com::Range, sem::Type)],
+    arguments: &'local [(com::Range, sem::Type<'local>)],
     variables: mem::Array<'local, (com::Range, sir::ValueId)>,
     instrs: mem::Array<'local, sir::Instruction<'g>>,
 }
@@ -132,7 +133,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             mem::Array::with_capacity(self.arguments.len(), self.global_arena);
 
         for &(_, type_) in self.arguments {
-            arguments.push(type_);
+            arguments.push(type_.clone_into(self.global_arena));
         }
 
         self.blocks.push(sir::BasicBlock {
@@ -377,8 +378,8 @@ mod tests {
         result
     }
 
-    fn argument(value: sem::ValueIdentifier, type_: sem::Type)
-        -> sem::Binding<'static>
+    fn argument<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
+        -> sem::Binding<'a>
     {
         sem::Binding::Argument(value, type_, range(0, 0))
     }
@@ -397,8 +398,8 @@ mod tests {
         com::Range::new(offset, length)
     }
 
-    fn resolved_argument(value: sem::ValueIdentifier, type_: sem::Type)
-        -> sem::Value<'static>
+    fn resolved_argument<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
+        -> sem::Value<'a>
     {
         sem::Value {
             type_: type_,
@@ -407,8 +408,8 @@ mod tests {
         }
     }
 
-    fn resolved_variable(value: sem::ValueIdentifier, type_: sem::Type)
-        -> sem::Value<'static>
+    fn resolved_variable<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
+        -> sem::Value<'a>
     {
         sem::Value {
             type_: type_,

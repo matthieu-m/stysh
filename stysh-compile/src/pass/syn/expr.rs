@@ -186,6 +186,8 @@ impl<'g> IntoExpr<'g> for tt::Token {
         use self::Literal::*;
 
         match self.kind() {
+            tt::Kind::LitBoolFalse => Some(Lit(Bool(false), self.range())),
+            tt::Kind::LitBoolTrue => Some(Lit(Bool(true), self.range())),
             tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
             tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
@@ -315,6 +317,24 @@ mod tests {
     }
 
     #[test]
+    fn boolean_basic() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            varit(&global_arena, b":var x := true;"),
+            VariableBinding {
+                name: VariableIdentifier(range(5, 1)),
+                type_: None,
+                expr: boolean(true, 10, 4),
+                var: 0,
+                colon: 0,
+                bind: 7,
+                semi: 14,
+            }
+        );
+    }
+
+    #[test]
     fn tuple_basic() {
         let global_arena = mem::Arena::new();
 
@@ -359,6 +379,12 @@ mod tests {
         );
     }
 
+    fn boolean(value: bool, offset: usize, length: usize)
+        -> Expression<'static>
+    {
+        Expression::Lit(Literal::Bool(value), range(offset, length))
+    }
+    
     fn int(offset: usize, length: usize) -> Expression<'static> {
         Expression::Lit(Literal::Integral, range(offset, length))
     }

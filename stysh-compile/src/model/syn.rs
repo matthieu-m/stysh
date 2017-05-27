@@ -99,6 +99,8 @@ pub enum BinaryOperator {
 /// A Literal value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Literal<'a> {
+    /// A boolean value.
+    Bool(bool),
     /// A bytes value.
     Bytes(&'a [StringFragment]),
     /// An integral value.

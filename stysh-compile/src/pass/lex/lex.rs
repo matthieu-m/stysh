@@ -261,7 +261,13 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
 
         let kind = match tok.raw[0] {
             b'A'...b'Z' => Kind::NameType,
-            b'a'...b'z' => Kind::NameValue,
+            b'a'...b'z' => if tok.raw == b"false" {
+                Kind::LitBoolFalse
+            } else if tok.raw == b"true" {
+                Kind::LitBoolTrue
+            } else {
+                Kind::NameValue
+            },
             _ => unreachable!("parse_name - {}", tok),
         };
 
@@ -542,6 +548,40 @@ mod tests {
                     ],
                     Token::new(Kind::BraceClose, 40, 1),
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_boolean() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b"false true"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::LitBoolFalse, 0, 5),
+                    Token::new(Kind::LitBoolTrue, 6, 4),
+                ])
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_boolean_negative() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b"False fals alse True tru rue"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::NameType, 0, 5),
+                    Token::new(Kind::NameValue, 6, 4),
+                    Token::new(Kind::NameValue, 11, 4),
+                    Token::new(Kind::NameType, 16, 4),
+                    Token::new(Kind::NameValue, 21, 3),
+                    Token::new(Kind::NameValue, 25, 3),
+                ])
             ]
         );
     }

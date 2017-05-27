@@ -175,9 +175,24 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         -> sem::Value<'g>
     {
         match lit {
+            syn::Literal::Bool(b) => self.value_of_literal_bool(b, range),
             syn::Literal::Bytes(b) => self.value_of_literal_bytes(b, range),
             syn::Literal::Integral => self.value_of_literal_integral(range),
             syn::Literal::String(s) => self.value_of_literal_string(s, range),
+        }
+    }
+
+    fn value_of_literal_bool(
+        &mut self,
+        value: bool,
+        range: com::Range
+    )
+        -> sem::Value<'g>
+    {
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Bool),
+            range: range,
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
         }
     }
 
@@ -332,6 +347,23 @@ mod tests {
     }
 
     #[test]
+    fn value_basic_boolean() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                b"true",
+                &syn::Expression::Lit(
+                    syn::Literal::Bool(true),
+                    range(0, 4)
+                )
+            ),
+            boolean(true, range(0, 4))
+        );
+    }
+
+    #[test]
     fn value_basic_helloworld() {
         use model::tt;
 
@@ -455,6 +487,14 @@ mod tests {
 
     fn var(range: com::Range) -> syn::Expression<'static> {
         syn::Expression::Var(syn::VariableIdentifier(range))
+    }
+
+    fn boolean(value: bool, range: com::Range) -> Value<'static> {
+        Value {
+            type_: Type::Builtin(BuiltinType::Bool),
+            range: range,
+            expr: Expr::BuiltinVal(BuiltinValue::Bool(value)),
+        }
     }
 
     fn int(value: i64, range: com::Range) -> Value<'static> {

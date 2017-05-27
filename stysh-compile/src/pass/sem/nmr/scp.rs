@@ -135,6 +135,7 @@ impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
         use model::sem::BuiltinType::*;
 
         let builtin = match &self.source[name.0] {
+            b"Bool" => Some(Bool),
             b"Int" => Some(Int),
             b"String" => Some(String),
             _ => None,

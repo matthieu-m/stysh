@@ -170,6 +170,7 @@ impl<'a> BlockInterpreter<'a> {
 
     fn load(&self, v: sem::BuiltinValue, range: com::Range) -> sem::Value<'a> {
         let type_ = match v {
+            sem::BuiltinValue::Bool(_) => sem::BuiltinType::Bool,
             sem::BuiltinValue::Int(_) => sem::BuiltinType::Int,
             sem::BuiltinValue::String(_) => sem::BuiltinType::String,
         };

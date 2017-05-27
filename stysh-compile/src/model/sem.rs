@@ -31,6 +31,8 @@ pub enum Type<'a> {
 /// A built-in Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BuiltinType {
+    /// A boolean.
+    Bool,
     /// A 64-bits signed integer.
     Int,
     /// A String.
@@ -79,6 +81,8 @@ pub enum Expr<'a> {
 /// A built-in value, the type is implicit.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BuiltinValue<'a> {
+    /// A boolean.
+    Bool(bool),
     /// An integral.
     Int(i64),
     /// A String.
@@ -223,6 +227,7 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
+            BuiltinValue::Bool(b) => BuiltinValue::Bool(b),
             BuiltinValue::Int(i) => BuiltinValue::Int(i),
             BuiltinValue::String(s) =>
                 BuiltinValue::String(arena.insert_slice(s)),
@@ -242,6 +247,8 @@ impl std::fmt::Display for BuiltinType {
 impl<'a> std::fmt::Display for BuiltinValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
+            BuiltinValue::Bool(b) =>
+                write!(f, "{}", if b { "true" } else { "false" }),
             BuiltinValue::Int(i) => write!(f, "{:x}", i),
             BuiltinValue::String(s) => write!(f, "{}", com::Slice(s)),
         }

@@ -52,6 +52,10 @@ pub enum Kind {
     KeywordFun,
     /// The :var keyword.
     KeywordVar,
+    /// A 'false' literal.
+    LitBoolFalse,
+    /// A 'true' literal.
+    LitBoolTrue,
     /// An integral.
     LitIntegral,
     /// The name of a type.

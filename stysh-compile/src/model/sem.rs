@@ -69,7 +69,7 @@ pub enum Expr<'a> {
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
     /// A tuple.
-    Tuple(Tuple<'a, Expr<'a>>),
+    Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
@@ -232,6 +232,12 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
 //
 //  Implementation Details
 //
+impl std::fmt::Display for BuiltinType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl<'a> std::fmt::Display for BuiltinValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
@@ -245,6 +251,30 @@ impl std::fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
             BuiltinFunction::Add => write!(f, "add"),
+        }
+    }
+}
+
+impl<'a, T> std::fmt::Display for Tuple<'a, T>
+    where
+        T: std::fmt::Display
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "(")?;
+        for (i, e) in self.fields.iter().enumerate() {
+            if i != 0 { write!(f, ", ")? }
+            write!(f, "{}", e)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl<'a> std::fmt::Display for Type<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        match *self {
+            Type::Builtin(t) => write!(f, "{}", t),
+            Type::Tuple(t) => write!(f, "{}", t),
+            Type::Unresolved(i) => write!(f, "<{}>", i.0),
         }
     }
 }

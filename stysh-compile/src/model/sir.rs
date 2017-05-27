@@ -70,6 +70,8 @@ pub enum Instruction<'a> {
     CallFunction(sem::BuiltinFunction, &'a [ValueId], com::Range),
     /// A value load.
     Load(sem::BuiltinValue<'a>, com::Range),
+    /// A composite creation.
+    New(sem::Type<'a>, &'a [ValueId], com::Range),
 }
 
 /// An instruction.
@@ -105,6 +107,7 @@ impl<'a> Instruction<'a> {
         match *self {
             Instruction::CallFunction(_, _, r) => r,
             Instruction::Load(_, r) => r,
+            Instruction::New(_, _, r) => r,
         }
     }
 }
@@ -188,6 +191,14 @@ impl<'a> std::fmt::Display for Instruction<'a> {
             },
             Instruction::Load(val, r) => {
                 write!(f, "load {} ; {}", val, r)
+            },
+            Instruction::New(type_, vals, r) => {
+                write!(f, "new {} (", type_)?;
+                for (i, v) in vals.iter().enumerate() {
+                    if i != 0 { write!(f, ", ")?; }
+                    write!(f, "{}", v)?;
+                }
+                write!(f, ") ; {}", r)
             },
         }
     }

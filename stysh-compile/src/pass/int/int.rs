@@ -113,6 +113,7 @@ impl<'a> BlockInterpreter<'a> {
         match *instr {
             CallFunction(fun, args, _) => self.eval_fun(fun, args),
             Load(value, range) => self.load(value, range),
+            New(_, _, _) => unimplemented!(),
         }
     }
 

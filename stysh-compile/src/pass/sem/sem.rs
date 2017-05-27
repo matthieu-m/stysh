@@ -307,8 +307,14 @@ mod tests {
             syn::Expression::Lit(syn::Literal::Integral, range(offset, length))
         }
 
-        fn expr_int(value: i64) -> Expr<'static> {
-            Expr::BuiltinVal(BuiltinValue::Int(value))
+        fn value_int(value: i64, offset: usize, length: usize)
+            -> Value<'static>
+        {
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: range(offset, length),
+                expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
+            }
         }
 
         let int = Type::Builtin(BuiltinType::Int);
@@ -366,7 +372,7 @@ mod tests {
                     expr: Expr::Block(
                         &[],
                         &Expr::Tuple(Tuple {
-                            fields: &[expr_int(1), expr_int(2)]
+                            fields: &[value_int(1, 28, 1), value_int(2, 31, 1)]
                         }),
                     ),
                 }

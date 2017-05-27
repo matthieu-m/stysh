@@ -238,19 +238,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     {
         let mut types =
             mem::Array::with_capacity(tup.fields.len(), self.global_arena);
-        let mut exprs =
+        let mut values =
             mem::Array::with_capacity(tup.fields.len(), self.global_arena);
 
         for e in tup.fields {
             let v = self.value_of(e);
             types.push(v.type_);
-            exprs.push(v.expr);
+            values.push(v);
         }
 
         sem::Value {
             type_: sem::Type::Tuple(sem::Tuple { fields: types.into_slice() }),
             range: tup.range(),
-            expr: sem::Expr::Tuple(sem::Tuple { fields: exprs.into_slice() }),
+            expr: sem::Expr::Tuple(sem::Tuple { fields: values.into_slice() }),
         }
     }
 

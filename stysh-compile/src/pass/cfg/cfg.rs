@@ -203,8 +203,25 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
                     sir::Instruction::CallFunction(fun, arguments, value.range)
                 );
             },
-            sem::Expr::BuiltinVal(val) =>
-                self.instrs.push(sir::Instruction::Load(val, value.range)),
+            sem::Expr::BuiltinVal(val) => {
+                self.instrs.push(sir::Instruction::Load(val, value.range))
+            },
+            sem::Expr::Tuple(tuple) => {
+                let mut arguments = mem::Array::with_capacity(
+                    tuple.fields.len(),
+                    self.global_arena
+                );
+                for a in tuple.fields {
+                    arguments.push(self.from_value(a));
+                }
+                self.instrs.push(
+                    sir::Instruction::New(
+                        value.type_,
+                        arguments.into_slice(),
+                        value.range
+                    )
+                );
+            }
             sem::Expr::VariableRef(id) => {
                 for &(range, value_id) in &self.variables {
                     if range == id.0 {
@@ -254,6 +271,34 @@ mod tests {
                 "    $0 := load 1 ; 1@0",
                 "    $1 := load 2 ; 1@4",
                 "    $2 := add($0, $1) ; 5@0",
+                "    return $2",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn tuple_simple() {
+        let global_arena = mem::Arena::new();
+
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &sem::Value {
+                    type_: sem::Type::Tuple(sem::Tuple { fields: &[int, int] }),
+                    range: range(0, 5),
+                    expr: sem::Expr::Tuple(sem::Tuple {
+                        fields: &[lit_integral(1, 0, 1), lit_integral(2, 4, 1)]
+                    }),
+                }
+            ).to_string(),
+            cat(&[
+                "0:",
+                "    $0 := load 1 ; 1@0",
+                "    $1 := load 2 ; 1@4",
+                "    $2 := new (Int, Int) ($0, $1) ; 5@0",
                 "    return $2",
                 ""
             ])

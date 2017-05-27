@@ -88,10 +88,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Expression::BinOp(op, left, right) =>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
+            Expression::If(if_else) => self.value_of_if_else(if_else),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Tuple(t) => self.value_of_tuple(&t),
             Expression::Var(id) => self.value_of_variable(id),
-            _ => unimplemented!(),
         }
     }
 
@@ -169,6 +169,22 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::Int),
             range: range,
             expr: sem::Expr::BuiltinCall(op, arguments),
+        }
+    }
+
+    fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
+        let condition = self.value_of_expr(if_else.condition);
+        let true_branch = self.value_of_expr(if_else.true_expr);
+        let false_branch = self.value_of_expr(if_else.false_expr);
+
+        sem::Value {
+            type_: true_branch.type_,
+            range: if_else.range(),
+            expr: sem::Expr::If(
+                self.global_arena.insert(condition),
+                self.global_arena.insert(true_branch),
+                self.global_arena.insert(false_branch),
+            ),
         }
     }
 
@@ -355,13 +371,50 @@ mod tests {
             valueit(
                 &global_arena,
                 b"true",
-                &syn::Expression::Lit(
-                    syn::Literal::Bool(true),
-                    range(0, 4)
-                )
+                &syn::Expression::Lit(syn::Literal::Bool(true), range(0, 4))
             ),
             boolean(true, range(0, 4))
         );
+    }
+
+    #[test]
+    fn value_basic_if_else() {
+        let global_arena = mem::Arena::new();
+
+        let condition_range = range(0, 4);
+        let true_branch_range = range(9, 5);
+        let false_branch_range = range(21, 5);
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                b":if true { 1 } :else { 0 }",
+                &syn::Expression::If(syn::IfElse {
+                    condition: &lit_boolean(true, condition_range),
+                    true_expr: &syn::Expression::Block(
+                        &[],
+                        &lit_integral(range(11, 1)),
+                        true_branch_range
+                    ),
+                    false_expr: &syn::Expression::Block(
+                        &[],
+                        &lit_integral(range(23, 1)),
+                        false_branch_range
+                    ),
+                    if_: 0,
+                    else_: 15,
+                })
+            ),
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: range(0, 26),
+                expr: Expr::If(
+                    &boolean(true, condition_range),
+                    &block(&int(1, true_branch_range), true_branch_range),
+                    &block(&int(0, false_branch_range), false_branch_range),
+                )
+            }
+        )
     }
 
     #[test]
@@ -482,12 +535,24 @@ mod tests {
         result
     }
 
+    fn lit_boolean(value: bool, range: com::Range) -> syn::Expression<'static> {
+        syn::Expression::Lit(syn::Literal::Bool(value), range)
+    }
+
     fn lit_integral(range: com::Range) -> syn::Expression<'static> {
         syn::Expression::Lit(syn::Literal::Integral, range)
     }
 
     fn var(range: com::Range) -> syn::Expression<'static> {
         syn::Expression::Var(syn::VariableIdentifier(range))
+    }
+
+    fn block<'a>(value: &'a Value<'a>, range: com::Range) -> Value<'a> {
+        Value {
+            type_: value.type_,
+            range: range,
+            expr: Expr::Block(&[], &value.expr),
+        }
     }
 
     fn boolean(value: bool, range: com::Range) -> Value<'static> {

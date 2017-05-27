@@ -70,6 +70,8 @@ pub enum Expr<'a> {
     BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
+    /// A if expression (condition, true-branch, false-branch).
+    If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved reference.

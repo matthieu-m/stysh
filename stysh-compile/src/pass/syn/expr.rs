@@ -183,12 +183,12 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let if_ = self.raw.pop_kind(tt::Kind::KeywordIf).expect(":if");
 
         let condition = self.parse();
-        let true_expr = self.parse();
+        let true_expr = self.parse();   //  FIXME(matthieum): possibly missing.
 
         println!("{:?}", self.raw);
 
         if let Some(else_) = self.raw.pop_kind(tt::Kind::KeywordElse) {
-            // FIXME(matthieum): only ":if" and "{ ... }" are legal.
+            //  FIXME(matthieum): only ":if" and "{ ... }" are legal.
 
             let false_expr = self.parse();
 
@@ -201,6 +201,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             });
         }
 
+        //  FIXME(matthieum): ";" is legal.
         unimplemented!()
     }
 }

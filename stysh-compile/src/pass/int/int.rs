@@ -113,7 +113,7 @@ impl<'a> BlockInterpreter<'a> {
         match *instr {
             CallFunction(fun, args, _) => self.eval_fun(fun, args),
             Load(value, range) => self.load(value, range),
-            New(_, _, _) => unimplemented!(),
+            New(type_, fields, range) => self.eval_new(type_, fields, range),
         }
     }
 
@@ -144,6 +144,27 @@ impl<'a> BlockInterpreter<'a> {
                 expr:
                     sem::Expr::BuiltinVal(sem::BuiltinValue::Int(left + right)),
             }
+        }
+    }
+
+    fn eval_new(
+        &self,
+        type_: sem::Type<'a>,
+        fields: &[sir::ValueId],
+        range: com::Range
+    )
+        -> sem::Value<'a>
+    {
+        let mut elements = mem::Array::with_capacity(fields.len(), self.arena);
+
+        for id in fields {
+            elements.push(self.get_value(*id))
+        }
+
+        sem::Value {
+            type_: type_,
+            range: range,
+            expr: sem::Expr::Tuple(sem::Tuple{ fields: elements.into_slice() }),
         }
     }
 
@@ -235,6 +256,42 @@ mod tests {
     }
 
     #[test]
+    fn new_tuple() {
+        let global_arena = mem::Arena::new();
+
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let inner_type = [int, int];
+        let type_ = sem::Type::Tuple(sem::Tuple { fields: &inner_type });
+
+        assert_eq!(
+            eval(
+                &global_arena,
+                &[],
+                &sir::ControlFlowGraph {
+                    blocks: &[block_return(
+                        &[],
+                        &[
+                            instr_load_int(1),
+                            instr_load_int(2),
+                            instr_new(
+                                type_,
+                                &[val_instr(0), val_instr(1)]
+                            ),
+                        ]
+                    )]
+                }
+            ),
+            sem::Value {
+                type_: type_,
+                range: range(0, 0),
+                expr: sem::Expr::Tuple(sem::Tuple {
+                    fields: &[sem_int(1), sem_int(2)],
+                })
+            }
+        );
+    }
+
+    #[test]
     fn return_helloworld() {
         let global_arena = mem::Arena::new();
 
@@ -312,6 +369,12 @@ mod tests {
 
     fn instr_load_string<'a>(s: &'a [u8]) -> sir::Instruction<'a> {
         sir::Instruction::Load(sem::BuiltinValue::String(s), range(0, 0))
+    }
+
+    fn instr_new<'a>(type_: sem::Type<'a>, values: &'a [sir::ValueId])
+        -> sir::Instruction<'a>
+    {
+        sir::Instruction::New(type_, values, range(0, 0))
     }
 
     fn block_return<'a>(

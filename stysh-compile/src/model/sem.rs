@@ -198,6 +198,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
             Expr::BuiltinVal(v) => Expr::BuiltinVal(v.clone_into(arena)),
+            Expr::Tuple(t) => Expr::Tuple(t.clone_into(arena)),
             _ => unimplemented!(),
         }
     }

@@ -249,7 +249,9 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         let kind = match tok.raw {
             b":" => Kind::SignColon,
             b":=" => Kind::SignBind,
+            b":else" => Kind::KeywordElse,
             b":fun" => Kind::KeywordFun,
+            b":if" => Kind::KeywordIf,
             b":var" => Kind::KeywordVar,
             _ => unimplemented!(),
         };

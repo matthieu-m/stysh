@@ -91,6 +91,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Tuple(t) => self.value_of_tuple(&t),
             Expression::Var(id) => self.value_of_variable(id),
+            _ => unimplemented!(),
         }
     }
 

@@ -32,6 +32,8 @@ pub enum Expression<'a> {
     BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
+    /// A if expression.
+    If(IfElse<'a>),
     /// A literal.
     Lit(Literal<'a>, com::Range),
     /// A tuple.
@@ -94,6 +96,21 @@ pub struct Argument<'a> {
 pub enum BinaryOperator {
     /// The `+` operator.
     Plus,
+}
+
+/// A if-else expression.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct IfElse<'a> {
+    /// Condition.
+    pub condition: &'a Expression<'a>,
+    /// Expression evaluated if condition evaluates to true.
+    pub true_expr: &'a Expression<'a>,
+    /// Expression evaluated if condition evaluates to false.
+    pub false_expr: &'a Expression<'a>,
+    /// Offset of :if.
+    pub if_: u32,
+    /// Offset of :else.
+    pub else_: u32,
 }
 
 /// A Literal value.
@@ -184,6 +201,7 @@ impl<'a> Expression<'a> {
         match *self {
             BinOp(_, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
+            If(if_else) => if_else.range(),
             Lit(_, range) => range,
             Tuple(t) => t.range(),
             Var(VariableIdentifier(range)) => range,
@@ -218,6 +236,15 @@ impl<'a> Argument<'a> {
         } else {
             self.type_.range().end_offset()
         };
+        com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> IfElse<'a> {
+    /// Returns the range spanned by the argument.
+    pub fn range(&self) -> com::Range {
+        let offset = self.if_ as usize;
+        let end_offset = self.false_expr.range().end_offset();
         com::Range::new(offset, end_offset - offset)
     }
 }

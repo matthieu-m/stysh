@@ -97,6 +97,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             }
         };
 
+        if tokens[0].kind() == tt::Kind::KeywordIf {
+            return self.parse_if_else();
+        }
+
         let expr = tokens[0].into_expr().expect("Expression");
         self.raw.pop_tokens(1);
 
@@ -173,6 +177,31 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             open: o.offset() as u32,
             close: c.offset() as u32,
         })
+    }
+
+    fn parse_if_else(&mut self) -> Expression<'g> {
+        let if_ = self.raw.pop_kind(tt::Kind::KeywordIf).expect(":if");
+
+        let condition = self.parse();
+        let true_expr = self.parse();
+
+        println!("{:?}", self.raw);
+
+        if let Some(else_) = self.raw.pop_kind(tt::Kind::KeywordElse) {
+            // FIXME(matthieum): only ":if" and "{ ... }" are legal.
+
+            let false_expr = self.parse();
+
+            return Expression::If(IfElse {
+                condition: self.raw.intern(condition),
+                true_expr: self.raw.intern(true_expr),
+                false_expr: self.raw.intern(false_expr),
+                if_: if_.offset() as u32,
+                else_: else_.offset() as u32,
+            });
+        }
+
+        unimplemented!()
     }
 }
 
@@ -295,6 +324,22 @@ mod tests {
                 range(0, 8)
             )
         );
+    }
+
+    #[test]
+    fn basic_if_else() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b":if true { 1 } :else { 0 }"),
+            Expression::If(IfElse {
+                condition: &boolean(true, 4, 4),
+                true_expr: &Expression::Block(&[], &int(11, 1), range(9, 5)),
+                false_expr: &Expression::Block(&[], &int(23, 1), range(21, 5)),
+                if_: 0,
+                else_: 15,
+            })
+        )
     }
 
     #[test]

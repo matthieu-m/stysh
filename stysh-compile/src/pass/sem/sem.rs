@@ -286,13 +286,17 @@ mod tests {
                     range: range(32, 9),
                     expr: Expr::Block(
                         &[],
-                        &Expr::BuiltinCall(
-                            BuiltinFunction::Add,
-                            &[
-                                arg(value(9, 1), range(34, 1), int),
-                                arg(value(17, 1), range(38, 1), int),
-                            ]
-                        ),
+                        &Value {
+                            type_: int,
+                            range: range(34, 5),
+                            expr: Expr::BuiltinCall(
+                                BuiltinFunction::Add,
+                                &[
+                                    arg(value(9, 1), range(34, 1), int),
+                                    arg(value(17, 1), range(38, 1), int),
+                                ]
+                            ),
+                        },
                     ),
                 }
             })
@@ -352,8 +356,8 @@ mod tests {
                             &syn::Expression::Tuple(syn::Tuple {
                                 fields: &[lit_int(28, 1), lit_int(31, 1)],
                                 commas: &[],
-                                open: 0,
-                                close: 0,
+                                open: 27,
+                                close: 32,
                             }),
                             range(25, 10),
                         ),
@@ -371,9 +375,16 @@ mod tests {
                     range: range(25, 10),
                     expr: Expr::Block(
                         &[],
-                        &Expr::Tuple(Tuple {
-                            fields: &[value_int(1, 28, 1), value_int(2, 31, 1)]
-                        }),
+                        &Value {
+                            type_: Type::Tuple(Tuple { fields: &[int, int] }),
+                            range: range(27, 6),
+                            expr: Expr::Tuple(Tuple {
+                                fields: &[
+                                    value_int(1, 28, 1),
+                                    value_int(2, 31, 1)
+                                ]
+                            }),
+                        },
                     ),
                 }
             })

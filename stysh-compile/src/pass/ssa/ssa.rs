@@ -175,7 +175,7 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
                 }
                 panic!("Unresolved argument: {}", id.0);
             },
-            sem::Expr::Block(stmts, &expr) => {
+            sem::Expr::Block(stmts, v) => {
                 for &s in stmts {
                     match s {
                         sem::Stmt::Var(sem::Binding::Variable(var, value, _))
@@ -190,7 +190,7 @@ impl<'g, 'local> BlockBuilderImpl<'g, 'local>
                 self.from_value(&sem::Value {
                     type_: value.type_, 
                     range: value.range,
-                    expr: expr
+                    expr: v.expr
                 });
             },
             sem::Expr::BuiltinCall(fun, args) => {
@@ -332,13 +332,17 @@ mod tests {
                                 range(15, 12)
                             )),
                         ],
-                        &sem::Expr::BuiltinCall(
-                            sem::BuiltinFunction::Add,
-                            &[
-                                resolved_variable(a, int),
-                                resolved_variable(b, int),
-                            ]
-                        )
+                        &sem::Value {
+                            type_: int,
+                            range: range(28, 5),
+                            expr: sem::Expr::BuiltinCall(
+                                sem::BuiltinFunction::Add,
+                                &[
+                                    resolved_variable(a, int),
+                                    resolved_variable(b, int),
+                                ]
+                            ),
+                        },
                     )
                 }
             ).to_string(),

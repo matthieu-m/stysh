@@ -137,7 +137,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             range: range,
             expr: sem::Expr::Block(
                 self.global_arena.insert_slice(statements.into_slice()),
-                self.global_arena.insert(value.expr),
+                self.global_arena.insert(value),
             ),
         }
     }
@@ -410,8 +410,8 @@ mod tests {
                 range: range(0, 26),
                 expr: Expr::If(
                     &boolean(true, condition_range),
-                    &block(&int(1, true_branch_range), true_branch_range),
-                    &block(&int(0, false_branch_range), false_branch_range),
+                    &block(&int(1, range(11, 1)), true_branch_range),
+                    &block(&int(0, range(23, 1)), false_branch_range),
                 )
             }
         )
@@ -504,10 +504,14 @@ mod tests {
                             range(15, 12)
                         )),
                     ],
-                    &Expr::BuiltinCall(
-                        BuiltinFunction::Add,
-                        &[ int_ref(a, a_ref), int_ref(b, b_ref) ]
-                    )
+                    &Value {
+                        type_: Type::Builtin(BuiltinType::Int),
+                        range: range(28, 5),
+                        expr: Expr::BuiltinCall(
+                            BuiltinFunction::Add,
+                            &[ int_ref(a, a_ref), int_ref(b, b_ref) ]
+                        ),
+                    }
                 )
             }
         );
@@ -551,7 +555,7 @@ mod tests {
         Value {
             type_: value.type_,
             range: range,
-            expr: Expr::Block(&[], &value.expr),
+            expr: Expr::Block(&[], &value),
         }
     }
 

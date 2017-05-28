@@ -65,7 +65,7 @@ pub enum Expr<'a> {
     /// A reference to an existing argument binding.
     ArgumentRef(ValueIdentifier),
     /// A block expression.
-    Block(&'a [Stmt<'a>], &'a Expr<'a>),
+    Block(&'a [Stmt<'a>], &'a Value<'a>),
     /// A built-in value.
     BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.

@@ -396,7 +396,7 @@ mod tests {
     fn valueit<'g>(global_arena: &'g mem::Arena, expr: &sem::Value<'g>)
         -> ControlFlowGraph<'g>
     {
-        use pass::cfg::GraphBuilder;
+        use pass::ssa::GraphBuilder;
 
         let mut local_arena = mem::Arena::new();
 
@@ -411,7 +411,7 @@ mod tests {
     fn funit<'g>(global_arena: &'g mem::Arena, fun: &sem::Function<'g>)
         -> ControlFlowGraph<'g>
     {
-        use pass::cfg::GraphBuilder;
+        use pass::ssa::GraphBuilder;
 
         let mut local_arena = mem::Arena::new();
 

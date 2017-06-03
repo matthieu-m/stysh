@@ -103,7 +103,7 @@ impl<'a> BlockInterpreter<'a> {
 
         match block.exit {
             Return(index) => BlockResult::Return(self.get_value(index)),
-            Unreachable => unimplemented!(),
+            _ => unimplemented!(),
         }
     }
 

@@ -3,9 +3,12 @@
 //! This module is in charge of transforming the Abstract Semantic Graph (often
 //! confusingly dubbed AST) into a CFG in a variant of the SSA form.
 
-use basic::com;
-use basic::mem::{self, CloneInto};
+use std::cell::RefCell;
+
+use basic::{com, mem};
 use model::{sem, sir};
+
+use super::proto::*;
 
 /// Stysh CFG builder.
 ///
@@ -34,46 +37,50 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
     pub fn from_value(&self, expr: &sem::Value<'g>)
         -> sir::ControlFlowGraph<'g>
     {
-        let mut imp =
-            GraphBuilderImpl::new(self.global_arena, self.local_arena, &[]);
+        let mut imp = GraphBuilderImpl::new(
+            self.global_arena,
+            self.local_arena
+        );
 
-        imp.from_value(expr);
+        imp.from_value(
+            ProtoBlock::new(expr.range.into(), self.local_arena),
+            expr
+        );
 
-        sir::ControlFlowGraph {
-            blocks: self.global_arena.insert_slice(imp.blocks.into_slice())
-        }
+        sir::ControlFlowGraph { blocks: imp.into_blocks() }
     }
 
     /// Translates a semantic function into its control-flow graph.
     pub fn from_function(&self, fun: &sem::Function<'g>)
         -> sir::ControlFlowGraph<'g>
     {
-        let mut bindings =
-            mem::Array::with_capacity(
-                fun.prototype.arguments.len(),
-                self.local_arena
-            );
+        let mut arguments = mem::Array::with_capacity(
+            fun.prototype.arguments.len(),
+            self.local_arena
+        );
 
         for &a in fun.prototype.arguments {
             if let sem::Binding::Argument(value, type_, _) = a {
-                bindings.push((value.0, type_));
+                arguments.push((value.0.into(), type_));
                 continue;
             }
             panic!("All arguments should be of type Binding::Argument");
         }
 
-        let mut imp =
-            GraphBuilderImpl::new(
-                self.global_arena,
-                self.local_arena,
-                bindings.into_slice()
-            );
+        let mut first = ProtoBlock::new(
+            fun.body.range.into(),
+            self.local_arena
+        );
+        first.arguments = arguments;
 
-        imp.from_value(&fun.body);
+        let mut imp = GraphBuilderImpl::new(
+            self.global_arena,
+            self.local_arena
+        );
 
-        sir::ControlFlowGraph {
-            blocks: self.global_arena.insert_slice(imp.blocks.into_slice())
-        }
+        imp.from_value(first, &fun.body);
+
+        sir::ControlFlowGraph { blocks: imp.into_blocks() }
     }
 }
 
@@ -85,155 +92,222 @@ struct GraphBuilderImpl<'g, 'local>
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    arguments: &'local [(com::Range, sem::Type<'local>)],
-    blocks: mem::Array<'local, sir::BasicBlock<'g>>,
-}
-
-struct BlockBuilderImpl<'g, 'local>
-    where 'g: 'local
-{
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
-    arguments: &'local [(com::Range, sem::Type<'local>)],
-    variables: mem::Array<'local, (com::Range, sir::ValueId)>,
-    instrs: mem::Array<'local, sir::Instruction<'g>>,
+    blocks: mem::Array<'local, RefCell<ProtoBlock<'g, 'local>>>,
 }
 
 impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     where 'g: 'local
 {
+    //
+    //  High-level methods
+    //
     fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
-        arguments: &'local [(com::Range, sem::Type)],
     )
         -> GraphBuilderImpl<'g, 'local>
     {
         GraphBuilderImpl {
             global_arena: global_arena,
             local_arena: local_arena,
-            arguments: arguments,
-            blocks: mem::Array::new(local_arena),
+            blocks: mem::Array::with_capacity(1, local_arena),
         }
     }
 
-    fn from_value(&mut self, value: &sem::Value<'g>) {
-        let mut imp =
-            BlockBuilderImpl::new(
-                self.global_arena,
-                self.local_arena,
-                self.arguments
-            );
-
-        imp.from_value(value);
-
-        let return_value = sir::ValueId::new_instruction(imp.instrs.len() - 1);
-
-        let mut arguments =
-            mem::Array::with_capacity(self.arguments.len(), self.global_arena);
-
-        for &(_, type_) in self.arguments {
-            arguments.push(type_.clone_into(self.global_arena));
-        }
-
-        self.blocks.push(sir::BasicBlock {
-            arguments: arguments.into_slice(),
-            instructions: self.global_arena.insert_slice(&imp.instrs),
-            exit: sir::TerminatorInstruction::Return(return_value),
-        });
-    }
-}
-
-impl<'g, 'local> BlockBuilderImpl<'g, 'local>
-    where 'g: 'local
-{
-    fn new(
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena,
-        arguments: &'local [(com::Range, sem::Type)]
+    fn from_value(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        value: &sem::Value<'g>
     )
-        -> BlockBuilderImpl<'g, 'local>
     {
-        BlockBuilderImpl {
-            global_arena: global_arena,
-            local_arena: local_arena,
-            arguments: arguments,
-            variables: mem::Array::new(local_arena),
-            instrs: mem::Array::new(local_arena),
-        }
+        current = self.convert_value(current, value);
+
+        let return_value =
+            sir::ValueId::new_instruction(current.instructions.len() - 1);
+        current.exit = ProtoTerminator::Return(return_value);
+
+        self.blocks.push(RefCell::new(current));
     }
 
-    fn from_value(&mut self, value: &sem::Value<'g>) -> sir::ValueId {
-        let index = self.instrs.len();
+    fn into_blocks(&self) -> &'g [sir::BasicBlock<'g>] {
+        let map = self.resolve_arguments();
+
+        let mut result =
+            mem::Array::with_capacity(self.blocks.len(), self.global_arena);
+
+        for b in &self.blocks {
+            result.push(b.borrow().into_block(&map, self.global_arena));
+        }
+
+        result.into_slice()
+    }
+
+    //
+    //  Low-level methods
+    //
+    fn convert_value(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        value: &sem::Value<'g>
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let range = value.range;
 
         match value.expr {
-            sem::Expr::ArgumentRef(id) => {
-                for (index, &arg) in self.arguments.iter().enumerate() {
-                    if arg.0 == id.0 {
-                        return sir::ValueId::new_argument(index);
-                    }
-                }
-                panic!("Unresolved argument: {}", id.0);
-            },
-            sem::Expr::Block(stmts, v) => {
-                for &s in stmts {
-                    match s {
-                        sem::Stmt::Var(sem::Binding::Variable(var, value, _))
-                            =>
-                        {
-                            let id = self.from_value(&value);
-                            self.variables.push((var.0, id));
-                        },
-                        _ => unimplemented!(),
-                    }
-                }
-                self.from_value(&sem::Value {
-                    type_: value.type_, 
-                    range: value.range,
-                    expr: v.expr
-                });
-            },
-            sem::Expr::BuiltinCall(fun, args) => {
-                let mut arguments = mem::Array::new(self.local_arena);
-                for a in args {
-                    arguments.push(self.from_value(a));
-                }
-                let arguments = self.global_arena.insert_slice(&arguments);
-                self.instrs.push(
-                    sir::Instruction::CallFunction(fun, arguments, value.range)
-                );
-            },
-            sem::Expr::BuiltinVal(val) => {
-                self.instrs.push(sir::Instruction::Load(val, value.range))
-            },
-            sem::Expr::Tuple(tuple) => {
-                let mut arguments = mem::Array::with_capacity(
-                    tuple.fields.len(),
-                    self.global_arena
-                );
-                for a in tuple.fields {
-                    arguments.push(self.from_value(a));
-                }
-                self.instrs.push(
-                    sir::Instruction::New(
-                        value.type_,
-                        arguments.into_slice(),
-                        value.range
-                    )
-                );
-            }
-            sem::Expr::VariableRef(id) => {
-                for &(range, value_id) in &self.variables {
-                    if range == id.0 {
-                        return value_id;
-                    }
-                }
-                panic!("Unresolved variable: {}", id.0);
-            }
+            sem::Expr::ArgumentRef(id)
+                => self.convert_identifier(current, id),
+            sem::Expr::Block(stmts, v)
+                => self.convert_block(current, stmts, v, range),
+            sem::Expr::BuiltinCall(fun, args)
+                => self.convert_call(current, fun, args, range),
+            sem::Expr::BuiltinVal(val)
+                => self.convert_literal(current, val, range),
+            sem::Expr::Tuple(tuple)
+                => self.convert_tuple(current, value.type_, tuple, range),
+            sem::Expr::VariableRef(id)
+                => self.convert_identifier(current, id),
             _ => unimplemented!(),
-        };
+        }
+    }
 
-        sir::ValueId::new_instruction(index)
+    fn convert_block(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        stmts: &[sem::Stmt<'g>],
+        value: &sem::Value<'g>,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        for &s in stmts {
+            match s {
+                sem::Stmt::Var(sem::Binding::Variable(var, value, _))
+                    =>
+                {
+                    current = self.convert_value(current, &value);
+                    let id = sir::ValueId::new_instruction(
+                        current.instructions.len() - 1
+                    );
+                    current.bindings.push((var.0.into(), id));
+                },
+                _ => unimplemented!(),
+            }
+        }
+
+        self.convert_value(
+            current,
+            &sem::Value {
+                type_: value.type_, 
+                range: range,
+                expr: value.expr
+            }
+        )
+    }
+
+    fn convert_call(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        fun: sem::BuiltinFunction,
+        args: &[sem::Value<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let (mut current, arguments) =
+            self.convert_array_of_values(current, args);
+
+        current.push_instr(
+            sir::Instruction::CallFunction(fun, arguments, range)
+        );
+
+        current
+    }
+
+    fn convert_identifier(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        value: sem::ValueIdentifier,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        current.bind(value.into());
+        current
+    }
+
+    fn convert_literal(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        val: sem::BuiltinValue<'g>,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        current.push_instr(sir::Instruction::Load(val, range));
+        current
+    }
+
+    fn convert_tuple(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        type_: sem::Type<'g>,
+        tuple: sem::Tuple<'g, sem::Value<'g>>,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let (mut current, arguments) =
+            self.convert_array_of_values(current, tuple.fields);
+
+        current.push_instr(sir::Instruction::New(type_, arguments, range));
+
+        current
+    }
+
+    fn convert_array_of_values(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        values: &[sem::Value<'g>],
+    )
+        -> (ProtoBlock<'g, 'local>, &'g [sir::ValueId])
+    {
+        for v in values {
+            current = self.convert_value(current, v);
+        }
+
+        let mut arguments =
+            mem::Array::with_capacity(values.len(), self.global_arena);
+        for a in values {
+            arguments.push(current.bind(Self::binding_of(a)));
+        }
+
+        (current, arguments.into_slice())
+    }
+
+    fn binding_of(value: &sem::Value) -> BindingId {
+        match value.expr {
+            sem::Expr::ArgumentRef(a) => a.into(),
+            sem::Expr::VariableRef(v) => v.into(),
+            _ => value.range.into()
+        }
+    }
+
+    fn resolve_arguments(&self)
+        -> mem::ArrayMap<'local, BlockId, sir::BlockId>
+    {
+        //  TODO(matthieum): Ensure that each predecessor correctly fill in the
+        //  arguments of its successors.
+        let map = {
+            let mut map = mem::ArrayMap::with_capacity(
+                self.blocks.len(),
+                self.local_arena
+            );
+            for (index, block) in self.blocks.iter().enumerate() {
+                map.insert(block.borrow().id, sir::BlockId::new(index));
+            }
+            map
+        };
+        map
     }
 }
 

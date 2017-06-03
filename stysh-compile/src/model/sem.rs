@@ -164,6 +164,13 @@ pub struct ItemIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub com::Range);
 
+impl<'a> Type<'a> {
+    /// Returns an unresolved type.
+    pub fn unresolved() -> Type<'a> {
+        Type::Unresolved(ItemIdentifier::unresolved())
+    }
+}
+
 impl ItemIdentifier {
     /// Returns a sentinel instance of ItemIdentifier.
     pub fn unresolved() -> ItemIdentifier {

@@ -34,6 +34,12 @@ pub struct Array<'a, T: 'a> {
     ptr: *mut T
 }
 
+/// The ArrayMap structure
+///
+/// An ordered map interface laid out in an Array.
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ArrayMap<'a, K: 'a + cmp::Ord, V: 'a>(Array<'a, K>, Array<'a, V>);
+
 /// The CloneInto trait.
 ///
 /// Clones a type into a target Arena.
@@ -133,6 +139,29 @@ impl<'a, T: 'a> Array<'a, T> {
     /// Note: does NOT call `Drop` on any element.
     pub fn clear(&mut self) { self.length = 0; }
 
+    /// Inserts a new item at the designated index.
+    ///
+    /// Note: in the case where the array does not have enough capacity, it
+    /// reallocates the underlying storage.
+    ///
+    /// Panics: if the index is invalid, which is not within [0..len()] in this
+    /// specific case.
+    pub fn insert(&mut self, index: usize, t: T) {
+        assert!(index <= self.length);
+
+        self.reserve(1);
+
+        unsafe {
+            if index < self.length {
+                let src = self.ptr.offset(index as isize);
+                ptr::copy(src, src.offset(1), self.length - index);
+            }
+
+            ptr::write(self.ptr.offset(index as isize), t);
+        }
+        self.length += 1;
+    }
+
     /// Pushes a new item at the back of the array.
     ///
     /// Note: in the case where the array does not have enough capacity, it
@@ -191,6 +220,73 @@ impl<'a, T: 'a> Array<'a, T> {
     /// Extracts the mutable slice containing the array elements.
     pub fn into_slice(self) -> &'a mut [T] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
+}
+
+impl<'a, K: 'a + cmp::Ord, V: 'a> ArrayMap<'a, K, V> {
+    /// Creates a new, empty, instance.
+    pub fn new(arena: &'a Arena) -> ArrayMap<'a, K, V> {
+        ArrayMap(Array::new(arena), Array::new(arena))
+    }
+
+    /// Creates a new, empty, instance with at least the specified capacity.
+    pub fn with_capacity(cap: usize, arena: &'a Arena) -> ArrayMap<'a, K, V> {
+        ArrayMap(
+            Array::with_capacity(cap, arena),
+            Array::with_capacity(cap, arena)
+        )
+    }
+
+    /// Returns the current capacity of the array.
+    pub fn capacity(&self) -> usize { self.0.capacity() }
+
+    /// Clears the array, removing all elements.
+    ///
+    /// Note: does NOT call `Drop` on any element.
+    pub fn clear(&mut self) {
+        self.0.clear();
+        self.1.clear();
+    }
+
+    /// Gets the value associated to a specific key.
+    pub fn get(&self, key: &K) -> Option<&V> {
+        match self.0.binary_search(&key) {
+            Ok(index) => Some(&self.1[index]),
+            Err(_) => None,
+        }
+    }
+
+    /// Gets the value associated to a specific key.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        match self.0.binary_search(&key) {
+            Ok(index) => Some(&mut self.1[index]),
+            Err(_) => None,
+        }
+    }
+
+    /// Inserts a key and value in the array-map.
+    ///
+    /// Note: in case the key is already present, no insertion occurs, and the
+    ///       arguments are returned instead.
+    pub fn insert(&mut self, key: K, value: V) -> Option<(K, V)> {
+        match self.0.binary_search(&key) {
+            Ok(_) => Some((key, value)),
+            Err(index) => {
+                self.0.insert(index, key);
+                self.1.insert(index, value);
+                None
+            },
+        }
+    }
+
+    /// Reserves the necessary spaces for `n` more items.
+    ///
+    /// Note: if the capacity is already sufficient, has no effect, otherwise
+    /// increases the capacity to at least be enough for `n` more items. This
+    /// reallocates the underlying storage.
+    pub fn reserve(&mut self, n: usize) {
+        self.0.reserve(n);
+        self.1.reserve(n);
     }
 }
 

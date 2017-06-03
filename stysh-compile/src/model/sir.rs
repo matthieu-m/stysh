@@ -52,7 +52,7 @@ pub struct BasicBlock<'a> {
     /// The list of instructions of this basic block.
     pub instructions: &'a [Instruction<'a>],
     /// The last instruction of this basic block.
-    pub exit: TerminatorInstruction,
+    pub exit: TerminatorInstruction<'a>,
 }
 
 /// A unique identifier for a basic block in a control flow graph.
@@ -76,11 +76,29 @@ pub enum Instruction<'a> {
 
 /// An instruction.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum TerminatorInstruction {
+pub enum TerminatorInstruction<'a> {
+    /// Branch instruction, the destination of which is determined by the value
+    /// of its ValueId which MUST represent a valid index into the array.
+    ///
+    /// Note:   the array should contain at least two elements:
+    ///         -   no element would make the index necessarily invalid,
+    ///         -   a single element is better represent by the "Jump" case.
+    Branch(ValueId, &'a [Jump<'a>]),
+    /// Unconditional jump to another block.
+    Jump(Jump<'a>),
     /// Return the control to the caller.
     Return(ValueId),
     /// Unreachable, this may occur as a result of optimizations.
     Unreachable
+}
+
+/// A jump to another block.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Jump<'a> {
+    /// ID of the block to jump to.
+    pub dest: BlockId,
+    /// Arguments to pass to the block.
+    pub arguments: &'a [ValueId],
 }
 
 impl<'a> ControlFlowGraph<'a> {
@@ -204,12 +222,34 @@ impl<'a> std::fmt::Display for Instruction<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for TerminatorInstruction {
+impl<'a> std::fmt::Display for TerminatorInstruction<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        use self::TerminatorInstruction::*;
+
         match *self {
-            TerminatorInstruction::Return(v) => write!(f, "return {}", v),
-            TerminatorInstruction::Unreachable => write!(f, "unreachable"),
+            Branch(value, jumps) => {
+                write!(f, "branch {} in [", value)?;
+                for (i, j) in jumps.iter().enumerate() {
+                    if i != 0 { write!(f, ", ")?; }
+                    write!(f, "{} => {}", i, j)?;
+                }
+                write!(f, "]")
+            },
+            Jump(jump) => write!(f, "jump {}", jump),
+            Return(v) => write!(f, "return {}", v),
+            Unreachable => write!(f, "unreachable"),
         }
+    }
+}
+
+impl<'a> std::fmt::Display for Jump<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "<{}> (", self.dest.0)?;
+        for (i, a) in self.arguments.iter().enumerate() {
+            if i != 0 { write!(f, ", ")?; }
+            write!(f, "{}", a)?;
+        }
+        write!(f, ")")
     }
 }
 

@@ -63,20 +63,46 @@ impl<'a> FrameInterpreter<'a> {
     )
         -> sem::Value<'a>
     {
-        let mut interpreter = BlockInterpreter::new(self.arena, arguments);
+        use self::BlockResult::*;
 
-        match interpreter.evaluate(&cfg.blocks[0]) {
-            BlockResult::Return(v) => sem::Value {
-                type_: v.type_,
-                range: cfg.range(),
-                expr: v.expr,
-            }
+        fn interpret_block<'a>(
+            arena: &'a mem::Arena,
+            block: &'a sir::BasicBlock<'a>,
+            arguments: &'a [sem::Value<'a>],
+        )
+            -> BlockResult<'a>
+        {
+            let mut interpreter = BlockInterpreter::new(arena, arguments);
+            interpreter.evaluate(block)
         }
+
+        let mut index = 0;
+        let mut arguments = arguments;
+
+        //  TODO(matthieum): add way to parameterize fuel.
+        for _ in 0..1000 {
+            let (i, args) = match interpret_block(
+                self.arena,
+                &cfg.blocks[index],
+                arguments
+            ) 
+            {
+                Jump(index, args) => (index, args),
+                Return(v) => return sem::Value {
+                    type_: v.type_,
+                    range: com::Range::new(0, 0),
+                    expr: v.expr,
+                },
+            };
+            index = i.index();
+            arguments = args;
+        }
+
+        unreachable!()
     }
 }
 
 struct BlockInterpreter<'a> {
-    #[allow(dead_code)]
     arena: &'a mem::Arena,
     arguments: &'a [sem::Value<'a>],
     bindings: mem::Array<'a, sem::Value<'a>>,
@@ -102,6 +128,8 @@ impl<'a> BlockInterpreter<'a> {
         }
 
         match block.exit {
+            Branch(index, jumps) => self.jump(&jumps[self.get_branch(index)]),
+            Jump(jump) => self.jump(&jump),
             Return(index) => BlockResult::Return(self.get_value(index)),
             _ => unimplemented!(),
         }
@@ -195,12 +223,33 @@ impl<'a> BlockInterpreter<'a> {
     fn get_integral(&self, id: sir::ValueId) -> i64 {
         match self.get_value(id).expr {
             sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)) => i,
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
+    }
+
+    fn get_branch(&self, index: sir::ValueId) -> usize {
+        match self.get_value(index).expr {
+            sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)) => i as usize,
+            sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(cond))
+                => if cond { 0 } else { 1 },
+            _ => unreachable!(),
+        }
+    }
+
+    fn jump(&self, jump: &sir::Jump) -> BlockResult<'a> {
+        let mut arguments =
+            mem::Array::with_capacity(jump.arguments.len(), self.arena);
+
+        for &a in jump.arguments {
+            arguments.push(self.get_value(a));
+        }
+
+        BlockResult::Jump(jump.dest, arguments.into_slice())
     }
 }
 
 enum BlockResult<'a> {
+    Jump(sir::BlockId, &'a [sem::Value<'a>]),
     Return(sem::Value<'a>),
 }
 
@@ -254,6 +303,47 @@ mod tests {
             ),
             sem_int(3)
         );
+    }
+
+    #[test]
+    fn branch_if() {
+        use model::sir::TerminatorInstruction::*;
+
+        let global_arena = mem::Arena::new();
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+
+        for &(condition, result) in &[(true, sem_int(1)), (false, sem_int(2))] {
+            assert_eq!(
+                eval(
+                    &global_arena,
+                    &[],
+                    &sir::ControlFlowGraph {
+                        blocks: &[
+                            sir::BasicBlock {
+                                arguments: &[],
+                                instructions: &[instr_load_bool(condition)],
+                                exit: Branch(val_instr(0), &[
+                                    exit_jump(1, &[]),
+                                    exit_jump(2, &[]),
+                                ]),
+                            },
+                            sir::BasicBlock {
+                                arguments: &[],
+                                instructions: &[instr_load_int(1)],
+                                exit: Jump(exit_jump(3, &[val_instr(0)])),
+                            },
+                            sir::BasicBlock {
+                                arguments: &[],
+                                instructions: &[instr_load_int(2)],
+                                exit: Jump(exit_jump(3, &[val_instr(0)])),
+                            },
+                            block_return(&[int], &[]),
+                        ]
+                    }
+                ),
+                result
+            )
+        }
     }
 
     #[test]
@@ -364,6 +454,10 @@ mod tests {
         sir::Instruction::CallFunction(fun, args, range(0, 0))
     }
 
+    fn instr_load_bool(value: bool) -> sir::Instruction<'static> {
+        sir::Instruction::Load(sem::BuiltinValue::Bool(value), range(0, 0))
+    }
+
     fn instr_load_int(i: i64) -> sir::Instruction<'static> {
         sir::Instruction::Load(sem::BuiltinValue::Int(i), range(0, 0))
     }
@@ -378,16 +472,29 @@ mod tests {
         sir::Instruction::New(type_, values, range(0, 0))
     }
 
+    fn exit_jump<'a>(index: usize, args: &'a [sir::ValueId]) -> sir::Jump<'a> {
+        sir::Jump {
+            dest: sir::BlockId::new(index),
+            arguments: args,
+        }
+    }
+
     fn block_return<'a>(
         args: &'a [sem::Type],
         code: &'a [sir::Instruction<'a>]
     )
         -> sir::BasicBlock<'a>
     {
+        let result = if code.len() > 0 {
+            val_instr(code.len() - 1)
+        } else {
+            val_arg(0)
+        };
+
         sir::BasicBlock {
             arguments: args,
             instructions: code,
-            exit: sir::TerminatorInstruction::Return(val_instr(code.len() - 1)),
+            exit: sir::TerminatorInstruction::Return(result),
         }
     }
 

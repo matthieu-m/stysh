@@ -83,6 +83,9 @@ pub enum TerminatorInstruction<'a> {
     /// Note:   the array should contain at least two elements:
     ///         -   no element would make the index necessarily invalid,
     ///         -   a single element is better represent by the "Jump" case.
+    ///
+    /// Note:   for ease of use, a boolean can be used to index a 2 elements
+    ///         array, in which case "true" maps to 0 and "false" to 1.
     Branch(ValueId, &'a [Jump<'a>]),
     /// Unconditional jump to another block.
     Jump(Jump<'a>),
@@ -180,7 +183,14 @@ const VALUE_ID_ARGUMENT_MASK: u16 = 1u16 << 15;
 impl<'a> std::fmt::Display for ControlFlowGraph<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         for (index, block) in self.blocks.iter().enumerate() {
-            write!(f, "{}:{}\n", index, block)?;
+            write!(f, "{} (", index)?;
+
+            for (i, type_) in block.arguments.iter().enumerate() {
+                if i != 0 { write!(f, ", ")?; }
+                write!(f, "{}", type_)?;
+            }
+
+            write!(f, "):{}\n", block)?;
         }
         Ok(())
     }

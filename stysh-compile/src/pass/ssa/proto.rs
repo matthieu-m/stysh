@@ -56,6 +56,15 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         }
     }
 
+    pub fn last_value(&self) -> sir::ValueId {
+        if !self.instructions.is_empty() {
+            sir::ValueId::new_instruction(self.instructions.len() - 1)
+        } else {
+            assert!(self.arguments.len() == 1, "{:?}", self.arguments);
+            sir::ValueId::new_argument(0)
+        }
+    }
+
     pub fn into_block(
         &self,
         map: &mem::ArrayMap<BlockId, sir::BlockId>,
@@ -91,6 +100,20 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         self.arguments.push((binding, sem::Type::unresolved()));
 
         sir::ValueId::new_argument(self.arguments.len() - 1)
+    }
+
+    pub fn bind_successor(&mut self, id: BlockId, bindings: &[BindingId]) {
+        let mut arguments =
+            mem::Array::with_capacity(bindings.len(), self.arguments.arena());
+
+        for b in bindings {
+            arguments.push(self.bind(*b));
+        }
+
+        let jump = self.get_jump_mut(id);
+
+        assert_eq!(jump.dest, id);
+        jump.arguments = arguments;
     }
 
     pub fn push_instr(&mut self, instr: sir::Instruction<'g>) {
@@ -169,6 +192,22 @@ impl convert::From<sem::ValueIdentifier> for BindingId {
 //
 //  Implementation Details
 //
+impl<'g, 'local> ProtoBlock<'g, 'local> {
+    fn get_jump_mut(&mut self, id: BlockId) -> &mut ProtoJump<'local> {
+        match self.exit {
+            ProtoTerminator::Branch(_, ref mut jumps) => {
+                for j in jumps.as_slice_mut() {
+                    if j.dest == id {
+                        return j;
+                    }
+                }
+                unreachable!()
+            },
+            ProtoTerminator::Jump(ref mut jump) => jump,
+            _ => unreachable!(),
+        }
+    }
+}
 
 //
 //  Tests

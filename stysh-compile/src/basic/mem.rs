@@ -131,6 +131,18 @@ impl<'a, T: 'a> Array<'a, T> {
         result
     }
 
+    /// Creates a new instance from a slice.
+    pub fn from_slice(slice: &[T], arena: &'a Arena) -> Array<'a, T>
+        where T: Clone
+    {
+        let mut result = Array::with_capacity(slice.len(), arena);
+        result.extend(slice);
+        result
+    }
+
+    /// Returns the arena in use by the array.
+    pub fn arena(&self) -> &'a Arena { self.arena }
+
     /// Returns the current capacity of the array.
     pub fn capacity(&self) -> usize { self.capacity }
 
@@ -178,13 +190,16 @@ impl<'a, T: 'a> Array<'a, T> {
     ///
     /// Note: in the case where the array does not have enough capacity, it
     /// reallocates the underlying storage.
-    pub fn extend(&mut self, t: &[T]) {
-        self.reserve(t.len());
-        unsafe {
-            let dst = self.ptr.offset(self.length as isize);
-            ptr::copy(t.as_ptr(), dst, t.len());
+    pub fn extend(&mut self, slice: &[T]) where T: Clone {
+        self.reserve(slice.len());
+
+        for (offset, item) in slice.iter().enumerate() {
+            unsafe {
+                let dst = self.ptr.offset((self.length + offset) as isize);
+                ptr::write(dst, item.clone());
+            }
         }
-        self.length += t.len();
+        self.length += slice.len();
     }
 
     /// Reserves the necessary spaces for `n` more items.
@@ -213,7 +228,7 @@ impl<'a, T: 'a> Array<'a, T> {
     }
 
     /// Extracts a mutable slice containing the entire array.
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub fn as_slice_mut(&mut self) -> &mut [T] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
     }
 
@@ -350,7 +365,7 @@ impl<'a, T: 'a> ops::Deref for Array<'a, T> {
 }
 
 impl<'a, T: 'a> ops::DerefMut for Array<'a, T> {
-    fn deref_mut(&mut self) -> &mut [T] { self.as_mut_slice() }
+    fn deref_mut(&mut self) -> &mut [T] { self.as_slice_mut() }
 }
 
 //

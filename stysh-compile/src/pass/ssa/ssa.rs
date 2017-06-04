@@ -122,8 +122,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     {
         current = self.convert_value(current, value);
 
-        let return_value =
-            sir::ValueId::new_instruction(current.instructions.len() - 1);
+        let return_value = current.last_value();
         current.exit = ProtoTerminator::Return(return_value);
 
         self.blocks.push(RefCell::new(current));
@@ -158,11 +157,13 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             sem::Expr::ArgumentRef(id)
                 => self.convert_identifier(current, id),
             sem::Expr::Block(stmts, v)
-                => self.convert_block(current, stmts, v, range),
+                => self.convert_block(current, stmts, v),
             sem::Expr::BuiltinCall(fun, args)
                 => self.convert_call(current, fun, args, range),
             sem::Expr::BuiltinVal(val)
                 => self.convert_literal(current, val, range),
+            sem::Expr::If(cond, true_, false_)
+                => self.convert_if(current, cond, true_, false_, range),
             sem::Expr::Tuple(tuple)
                 => self.convert_tuple(current, value.type_, tuple, range),
             sem::Expr::VariableRef(id)
@@ -176,7 +177,6 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         mut current: ProtoBlock<'g, 'local>,
         stmts: &[sem::Stmt<'g>],
         value: &sem::Value<'g>,
-        range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -186,23 +186,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                     =>
                 {
                     current = self.convert_value(current, &value);
-                    let id = sir::ValueId::new_instruction(
-                        current.instructions.len() - 1
-                    );
+                    let id = current.last_value();
                     current.bindings.push((var.0.into(), id));
                 },
                 _ => unimplemented!(),
             }
         }
 
-        self.convert_value(
-            current,
-            &sem::Value {
-                type_: value.type_, 
-                range: range,
-                expr: value.expr
-            }
-        )
+        self.convert_value(current, value)
     }
 
     fn convert_call(
@@ -233,6 +224,64 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     {
         current.bind(value.into());
         current
+    }
+
+    fn convert_if(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        condition: &sem::Value<'g>,
+        true_: &sem::Value<'g>,
+        false_: &sem::Value<'g>,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        fn create_branch<'g, 'local>(
+            imp: &mut GraphBuilderImpl<'g, 'local>,
+            if_id: BlockId,
+            branch_id: BlockId,
+            value: &sem::Value<'g>,
+        )
+        {
+            let mut block = ProtoBlock::new(branch_id, imp.local_arena);
+
+            block = imp.convert_value(block, value);
+            let last_value = block.last_value();
+            block.bindings.push((BindingId(if_id.0), last_value));
+
+            block.exit = ProtoTerminator::Jump(
+                ProtoJump::new(if_id, imp.local_arena)
+            );
+
+            imp.blocks.push(RefCell::new(block));
+        }
+
+        let if_id: BlockId = range.into();
+        let true_id: BlockId = true_.range.into();
+        let false_id: BlockId = false_.range.into();
+
+        current = self.convert_value(current, condition);
+
+        current.exit = ProtoTerminator::Branch(
+            current.last_value(),
+            mem::Array::from_slice(
+                &[
+                    ProtoJump::new(true_id, self.local_arena),
+                    ProtoJump::new(false_id, self.local_arena),
+                ],
+                self.local_arena
+            ),
+        );
+
+        self.blocks.push(RefCell::new(current));
+
+        create_branch(self, if_id, true_id, true_);
+        create_branch(self, if_id, false_id, false_);
+
+        let mut result = ProtoBlock::new(if_id, self.local_arena);
+        result.arguments.push((BindingId(if_id.0), true_.type_));
+        result.predecessors.extend(&[true_id, false_id]);
+        result
     }
 
     fn convert_literal(
@@ -307,6 +356,24 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             }
             map
         };
+
+        let mut bindings = mem::Array::new(self.local_arena);
+
+        for block in self.blocks.iter().rev() {
+            let block = block.borrow();
+
+            bindings.clear();
+            for &(argument, _) in block.arguments.as_slice() {
+                bindings.push(argument);
+            }
+
+            for id in block.predecessors.as_slice() {
+                let id = map.get(id).expect("Known block!");
+                let mut pred = self.blocks[id.index()].borrow_mut();
+                pred.bind_successor(block.id, &*bindings);
+            }
+        }
+
         map
     }
 }
@@ -341,7 +408,7 @@ mod tests {
         assert_eq!(
             valueit(&global_arena, &val).to_string(),
             cat(&[
-                "0:",
+                "0 ():",
                 "    $0 := load 1 ; 1@0",
                 "    $1 := load 2 ; 1@4",
                 "    $2 := add($0, $1) ; 5@0",
@@ -369,7 +436,7 @@ mod tests {
                 }
             ).to_string(),
             cat(&[
-                "0:",
+                "0 ():",
                 "    $0 := load 1 ; 1@0",
                 "    $1 := load 2 ; 1@4",
                 "    $2 := new (Int, Int) ($0, $1) ; 5@0",
@@ -421,10 +488,10 @@ mod tests {
                 }
             ).to_string(),
             cat(&[
-                "0:",
+                "0 ():",
                 "    $0 := load 1 ; 1@12",
                 "    $1 := load 2 ; 1@25",
-                "    $2 := add($0, $1) ; 35@0",
+                "    $2 := add($0, $1) ; 5@28",
                 "    return $2",
                 ""
             ])
@@ -463,9 +530,63 @@ mod tests {
                 }
             ).to_string(),
             cat(&[
-                "0:",
+                "0 (Int, Int):",
                 "    $0 := add(@0, @1) ; 5@34",
                 "    return $0",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn if_simple() {
+        let global_arena = mem::Arena::new();
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+
+        //  "if true { 1 } else { 2 }"
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &sem::Value {
+                    type_: int,
+                    range: range(0, 24),
+                    expr: sem::Expr::If(
+                        &bool_literal(true, 3, 4),
+                        &sem::Value {
+                            type_: int,
+                            range: range(8, 5),
+                            expr: sem::Expr::Block(
+                                &[],
+                                &lit_integral(1, 10, 1),
+                            ),
+                        },
+                        &sem::Value {
+                            type_: int,
+                            range: range(19, 5),
+                            expr: sem::Expr::Block(
+                                &[],
+                                &lit_integral(2, 21, 1),
+                            ),
+                        }
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load true ; 4@3",
+                "    branch $0 in [0 => <1> (), 1 => <2> ()]",
+                "",
+                "1 ():",
+                "    $0 := load 1 ; 1@10",
+                "    jump <0> ($0)",
+                "",
+                "2 ():",
+                "    $0 := load 2 ; 1@21",
+                "    jump <0> ($0)",
+                "",
+                "3 (Int):",
+                "    return @0",
                 ""
             ])
         );
@@ -505,6 +626,16 @@ mod tests {
         -> sem::Binding<'a>
     {
         sem::Binding::Argument(value, type_, range(0, 0))
+    }
+
+    fn bool_literal(value: bool, offset: usize, length: usize)
+        -> sem::Value<'static>
+    {
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Bool),
+            range: range(offset, length),
+            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
+        }
     }
 
     fn lit_integral(value: i64, offset: usize, length: usize)

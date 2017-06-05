@@ -148,9 +148,7 @@ impl<'a> BlockInterpreter<'a> {
     fn eval_fun(&self, fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
         -> sem::Value<'a>
     {
-        match fun {
-            sem::BuiltinFunction::Add => self.eval_binary_fun(fun, args),
-        }
+        self.eval_binary_fun(fun, args)
     }
 
     fn eval_binary_fun(
@@ -160,18 +158,43 @@ impl<'a> BlockInterpreter<'a> {
     )
         -> sem::Value<'a>
     {
+        use model::sem::BuiltinFunction::*;
+        use model::sem::BuiltinValue::{Bool, Int};
+
         assert_eq!(args.len(), 2);
 
-        let left = self.get_integral(args[0]);
-        let right = self.get_integral(args[1]);
-
-        match fun {
-            sem::BuiltinFunction::Add => sem::Value {
-                type_: sem::Type::Builtin(sem::BuiltinType::Int),
-                range: com::Range::new(0, 0),
-                expr:
-                    sem::Expr::BuiltinVal(sem::BuiltinValue::Int(left + right)),
+        fn get_builtin<'a>(value: sem::Value<'a>) -> sem::BuiltinValue<'a> {
+            match value.expr {
+                sem::Expr::BuiltinVal(b) => b,
+                _ => unreachable!(),
             }
+        }
+
+        fn to_int(value: sem::BuiltinValue) -> i64 {
+            use std::convert::Into;
+            Into::<i64>::into(value)
+        }
+
+        let left = get_builtin(self.get_value(args[0]));
+        let right = get_builtin(self.get_value(args[1]));
+
+        let value = match fun {
+            Add => Int(to_int(left) + to_int(right)),
+            Differ => Bool(left != right),
+            Equal => Bool(left == right),
+            FloorDivide => Int(to_int(left) / to_int(right)),
+            GreaterThan => Bool(left > right),
+            GreaterThanOrEqual => Bool(left >= right),
+            LessThan => Bool(left < right),
+            LessThanOrEqual => Bool(left <= right),
+            Multiply => Int(to_int(left) * to_int(right)),
+            Substract => Int(to_int(left) - to_int(right)),
+        };
+
+        sem::Value {
+            type_: fun.result_type(),
+            range: com::Range::new(0, 0),
+            expr: sem::Expr::BuiltinVal(value),
         }
     }
 
@@ -217,13 +240,6 @@ impl<'a> BlockInterpreter<'a> {
             self.bindings[i]
         } else {
             self.arguments[id.as_argument().expect("Either instr or arg!")]
-        }
-    }
-
-    fn get_integral(&self, id: sir::ValueId) -> i64 {
-        match self.get_value(id).expr {
-            sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)) => i,
-            _ => unreachable!(),
         }
     }
 

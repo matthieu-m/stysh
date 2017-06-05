@@ -104,6 +104,24 @@ pub enum Stmt<'a> {
 pub enum BuiltinFunction {
     /// An addition.
     Add,
+    /// An non-equality comparison.
+    Differ,
+    /// An equality comparison.
+    Equal,
+    /// A floor division.
+    FloorDivide,
+    /// A greater than comparison.
+    GreaterThan,
+    /// A greater than or equal comparison.
+    GreaterThanOrEqual,
+    /// A less than comparison.
+    LessThan,
+    /// A less than or equal comparison.
+    LessThanOrEqual,
+    /// A multiplication.
+    Multiply,
+    /// A substraction.
+    Substract,
 }
 
 /// A tuple.
@@ -168,6 +186,20 @@ impl<'a> Type<'a> {
     /// Returns an unresolved type.
     pub fn unresolved() -> Type<'a> {
         Type::Unresolved(ItemIdentifier::unresolved())
+    }
+}
+
+impl BuiltinFunction {
+    /// Returns the type of the result of the function.
+    pub fn result_type(&self) -> Type<'static> {
+        use self::BuiltinFunction::*;
+
+        let type_ = match *self {
+            Add | FloorDivide | Multiply | Substract => BuiltinType::Int,
+            Differ | Equal | GreaterThan | GreaterThanOrEqual |
+            LessThan | LessThanOrEqual => BuiltinType::Bool,
+        };
+        Type::Builtin(type_)
     }
 }
 
@@ -244,6 +276,25 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
     }
 }
 
+impl<'a> std::convert::From<BuiltinValue<'a>> for bool {
+    fn from(value: BuiltinValue<'a>) -> bool {
+        match value {
+            BuiltinValue::Bool(b) => b,
+            _ => panic!("{} is not a boolean", value),
+        }
+    }
+}
+
+impl<'a> std::convert::From<BuiltinValue<'a>> for i64 {
+    fn from(value: BuiltinValue<'a>) -> i64 {
+        match value {
+            BuiltinValue::Int(i) => i,
+            _ => panic!("{} is not an integer", value),
+        }
+    }
+}
+
+
 //
 //  Implementation Details
 //
@@ -266,8 +317,19 @@ impl<'a> std::fmt::Display for BuiltinValue<'a> {
 
 impl std::fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        use self::BuiltinFunction::*;
+
         match *self {
-            BuiltinFunction::Add => write!(f, "add"),
+            Add => write!(f, "add"),
+            Differ => write!(f, "ne"),
+            Equal => write!(f, "eq"),
+            FloorDivide => write!(f, "fdiv"),
+            GreaterThan => write!(f, "gt"),
+            GreaterThanOrEqual => write!(f, "gte"),
+            LessThan => write!(f, "lt"),
+            LessThanOrEqual => write!(f, "lte"),
+            Multiply => write!(f, "mul"),
+            Substract => write!(f, "sub"),
         }
     }
 }

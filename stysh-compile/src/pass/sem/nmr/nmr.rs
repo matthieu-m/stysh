@@ -150,14 +150,25 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     )
         -> sem::Value<'g>
     {
+        use model::syn::BinaryOperator as O;
+        use model::sem::BuiltinFunction as F;
+
         let range = left.range().extend(right.range());
 
         let left = self.value_of_expr(left);
         let right = self.value_of_expr(right);
 
         let op = match op {
-            syn::BinaryOperator::Plus => sem::BuiltinFunction::Add,
-            _ => unimplemented!(),
+            O::Different => F::Differ,
+            O::Equal => F::Equal,
+            O::FloorBy => F::FloorDivide,
+            O::GreaterThan => F::GreaterThan,
+            O::GreaterThanOrEqual => F::GreaterThanOrEqual,
+            O::LessThan => F::LessThan,
+            O::LessThanOrEqual => F::LessThanOrEqual,
+            O::Minus => F::Substract,
+            O::Plus => F::Add,
+            O::Times => F::Multiply,
         };
 
         let mut buffer = mem::Array::with_capacity(2, self.local_arena);
@@ -167,7 +178,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let arguments = self.global_arena.insert_slice(buffer.into_slice());
 
         sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+            type_: op.result_type(),
             range: range,
             expr: sem::Expr::BuiltinCall(op, arguments),
         }

@@ -49,6 +49,9 @@ pub enum RawKind {
     StringMultiLines,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct AsciiSet(pub u64, pub u64);
+
 impl<'a> RawStream<'a> {
     pub fn new(raw: &'a [u8]) -> RawStream<'a> {
         let mut result = RawStream {
@@ -89,12 +92,28 @@ impl<'a> iter::Iterator for RawStream<'a> {
     }
 }
 
+impl AsciiSet {
+    pub fn contains(&self, byte: u8) -> bool {
+        if byte >= 128 {
+            false
+        } else if byte >= 64 {
+            self.1 & (1u64 << (byte - 64)) != 0
+        } else {
+            self.0 & (1u64 << byte) != 0
+        }
+    }
+
+    pub fn contains_opt(&self, byte: Option<u8>) -> bool {
+        match byte {
+            Some(b) => self.contains(b),
+            None => false,
+        }
+    }
+}
+
 //
 //  Implementation Details
 //
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-struct AsciiSet(u64, u64);
-
 //  ()[]{};,
 const ASCII_SINGLETONS: AsciiSet =
     AsciiSet(0x800130000000000, 0x2800000028000000);
@@ -436,25 +455,6 @@ impl<'a> fmt::Display for RawToken<'a> {
             self.line_offset,
             self.line_indent
         )
-    }
-}
-
-impl AsciiSet {
-    fn contains(&self, byte: u8) -> bool {
-        if byte >= 128 {
-            false
-        } else if byte >= 64 {
-            self.1 & (1u64 << (byte - 64)) != 0
-        } else {
-            self.0 & (1u64 << byte) != 0
-        }
-    }
-
-    fn contains_opt(&self, byte: Option<u8>) -> bool {
-        match byte {
-            Some(b) => self.contains(b),
-            None => false,
-        }
     }
 }
 

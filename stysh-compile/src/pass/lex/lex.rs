@@ -9,7 +9,7 @@ use basic::mem;
 
 use model::tt::*;
 use super::str;
-use super::raw::{RawStream, RawToken};
+use super::raw::{AsciiSet, RawStream, RawToken};
 
 /// The Stysh lexer.
 ///
@@ -233,13 +233,16 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     }
 
     fn parse_token(&mut self) -> Option<Token> {
+        //  +-*/<>=!,;
+        const SIMPLE_SIGNS: AsciiSet = AsciiSet(0x7800bc0200000000, 0x0);
+
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
                 b'0'...b'9' => self.parse_number(tok),
                 b'A'...b'Z' => self.parse_name(tok),
                 b'a'...b'z' => self.parse_name(tok),
                 b':' => self.parse_colon(tok),
-                b'-' | b'+' | b',' | b';' => self.parse_sign(tok),
+                b if SIMPLE_SIGNS.contains(b) => self.parse_sign(tok),
                 _ => { println!("parse_token - {}", tok); unimplemented!() },
             }
         })
@@ -286,6 +289,15 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         //  If starting with a colon, already dealt with.
         let kind = match tok.raw {
             b"+" => Kind::SignPlus,
+            b"-" => Kind::SignDash,
+            b"*" => Kind::SignStar,
+            b"//" => Kind::SignDoubleSlash,
+            b"<" => Kind::SignLeft,
+            b"<=" => Kind::SignLeftEqual,
+            b">" => Kind::SignRight,
+            b">=" => Kind::SignRightEqual,
+            b"==" => Kind::SignDoubleEqual,
+            b"!=" => Kind::SignBangEqual,
             b"->" => Kind::SignArrowSingle,
             b"," => Kind::SignComma,
             b";" => Kind::SignSemiColon,
@@ -630,6 +642,34 @@ mod tests {
                 ])
             ]
         );
+    }
+
+    #[test]
+    fn lex_signs_farandole() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b"-> != := : , - == // < <= + > >= ; *"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::SignArrowSingle, 0, 2),
+                    Token::new(Kind::SignBangEqual, 3, 2),
+                    Token::new(Kind::SignBind, 6, 2),
+                    Token::new(Kind::SignColon, 9, 1),
+                    Token::new(Kind::SignComma, 11, 1),
+                    Token::new(Kind::SignDash, 13, 1),
+                    Token::new(Kind::SignDoubleEqual, 15, 2),
+                    Token::new(Kind::SignDoubleSlash, 18, 2),
+                    Token::new(Kind::SignLeft, 21, 1),
+                    Token::new(Kind::SignLeftEqual, 23, 2),
+                    Token::new(Kind::SignPlus, 26, 1),
+                    Token::new(Kind::SignRight, 28, 1),
+                    Token::new(Kind::SignRightEqual, 30, 2),
+                    Token::new(Kind::SignSemiColon, 33, 1),
+                    Token::new(Kind::SignStar, 35, 1),
+                ]),
+            ]
+        )
     }
 
     fn lexit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> List<'g> {

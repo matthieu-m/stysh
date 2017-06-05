@@ -76,16 +76,34 @@ pub enum Kind {
     QuoteSingle,
     /// A '->' sign.
     SignArrowSingle,
+    /// A '!=' sign.
+    SignBangEqual,
     /// A ':=' sign.
     SignBind,
     /// A ':' sign.
     SignColon,
     /// A ',' sign.
     SignComma,
+    /// A '-' sign.
+    SignDash,
+    /// A '==' sign.
+    SignDoubleEqual,
+    /// A '//' sign.
+    SignDoubleSlash,
+    /// A '<' sign.
+    SignLeft,
+    /// A '<=' sign.
+    SignLeftEqual,
     /// A '+' sign.
     SignPlus,
+    /// A '>' sign.
+    SignRight,
+    /// A '>=' sign.
+    SignRightEqual,
     /// A ';' sign.
     SignSemiColon,
+    /// A '*' sign.
+    SignStar,
     /// A format for an argument or interpolated identifier.
     StringFormat,
     /// An identifier in scope, to be interpolated.

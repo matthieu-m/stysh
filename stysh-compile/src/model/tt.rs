@@ -66,8 +66,6 @@ pub enum Kind {
     NameType,
     /// The name of a value.
     NameValue,
-    /// A '+' sign.
-    OperatorPlus,
     /// A ')' brace,
     ParenthesisClose,
     /// A '(' brace,
@@ -84,6 +82,8 @@ pub enum Kind {
     SignColon,
     /// A ',' sign.
     SignComma,
+    /// A '+' sign.
+    SignPlus,
     /// A ';' sign.
     SignSemiColon,
     /// A format for an argument or interpolated identifier.

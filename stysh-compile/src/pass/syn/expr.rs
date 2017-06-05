@@ -113,7 +113,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             let left_operand: &Expression = self.raw.intern(expr);
 
             let operator = tokens[1];
-            assert_eq!(operator.kind(), tt::Kind::OperatorPlus);
+            assert_eq!(operator.kind(), tt::Kind::SignPlus);
 
             let right_operand: &Expression = self.raw.intern(
                 tokens[2].into_expr().expect("Operand")

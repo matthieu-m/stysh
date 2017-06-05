@@ -285,7 +285,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     fn parse_sign(&self, tok: RawToken) -> Option<Token> {
         //  If starting with a colon, already dealt with.
         let kind = match tok.raw {
-            b"+" => Kind::OperatorPlus,
+            b"+" => Kind::SignPlus,
             b"->" => Kind::SignArrowSingle,
             b"," => Kind::SignComma,
             b";" => Kind::SignSemiColon,
@@ -426,7 +426,7 @@ mod tests {
                     &[
                         Node::Run(&[
                             Token::new(Kind::LitIntegral, 1, 1),
-                            Token::new(Kind::OperatorPlus, 3, 1),
+                            Token::new(Kind::SignPlus, 3, 1),
                             Token::new(Kind::LitIntegral, 5, 1),
                         ])
                     ],
@@ -448,7 +448,7 @@ mod tests {
                     &[
                         Node::Run(&[
                             Token::new(Kind::LitIntegral, 1, 1),
-                            Token::new(Kind::OperatorPlus, 3, 1),
+                            Token::new(Kind::SignPlus, 3, 1),
                             Token::new(Kind::LitIntegral, 5, 1),
                         ])
                     ],
@@ -465,7 +465,7 @@ mod tests {
                     &[
                         Node::Run(&[
                             Token::new(Kind::LitIntegral, 6, 1),
-                            Token::new(Kind::OperatorPlus, 8, 1),
+                            Token::new(Kind::SignPlus, 8, 1),
                             Token::new(Kind::LitIntegral, 10, 1),
                         ])
                     ],
@@ -473,7 +473,7 @@ mod tests {
                 ),
                 Node::Run(&[
                     Token::new(Kind::LitIntegral, 12, 1),
-                    Token::new(Kind::OperatorPlus, 14, 1),
+                    Token::new(Kind::SignPlus, 14, 1),
                     Token::new(Kind::LitIntegral, 16, 1),
                 ])
             ]
@@ -544,7 +544,7 @@ mod tests {
                     &[
                         Node::Run(&[
                             Token::new(Kind::NameValue, 34, 1),
-                            Token::new(Kind::OperatorPlus, 36, 1),
+                            Token::new(Kind::SignPlus, 36, 1),
                             Token::new(Kind::NameValue, 38, 1),
                         ]),
                     ],
@@ -625,7 +625,7 @@ mod tests {
             &[
                 Node::Run(&[
                     Token::new(Kind::LitIntegral, 1, 2),
-                    Token::new(Kind::OperatorPlus, 4, 1),
+                    Token::new(Kind::SignPlus, 4, 1),
                     Token::new(Kind::LitIntegral, 6, 2),
                 ])
             ]

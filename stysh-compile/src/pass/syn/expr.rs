@@ -123,6 +123,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
             Expression::BinOp(
                 BinaryOperator::Plus,
+                operator.range().offset() as u32,
                 left_operand,
                 right_operand
             )
@@ -242,6 +243,7 @@ mod tests {
             exprit(&global_arena, b"1 + 2"),
             Expression::BinOp(
                 BinaryOperator::Plus,
+                2,
                 &int(0, 1),
                 &int(4, 1),
             )

@@ -263,6 +263,7 @@ mod tests {
                             &[],
                             &syn::Expression::BinOp(
                                 syn::BinaryOperator::Plus,
+                                36,
                                 &syn::Expression::Var(
                                     syn::VariableIdentifier(range(34, 1))
                                 ),

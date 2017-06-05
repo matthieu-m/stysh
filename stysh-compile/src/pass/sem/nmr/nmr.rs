@@ -85,7 +85,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Expression;
 
         match *expr {
-            Expression::BinOp(op, left, right) =>
+            Expression::BinOp(op, _, left, right) =>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
             Expression::If(if_else) => self.value_of_if_else(if_else),
@@ -346,6 +346,7 @@ mod tests {
 
         let expr = syn::Expression::BinOp(
             syn::BinaryOperator::Plus,
+            2,
             &left_hand,
             &right_hand,
         );
@@ -482,6 +483,7 @@ mod tests {
                     ],
                     &syn::Expression::BinOp(
                         syn::BinaryOperator::Plus,
+                        30,
                         &var(a_ref),
                         &var(b_ref),
                     ),

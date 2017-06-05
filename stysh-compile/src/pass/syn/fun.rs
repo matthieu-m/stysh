@@ -139,6 +139,7 @@ mod tests {
                     &[],
                     &Expression::BinOp(
                         BinaryOperator::Plus,
+                        22,
                         &Expression::Lit(
                             Literal::Integral,
                             range(20, 1)
@@ -185,6 +186,7 @@ mod tests {
                     &[],
                     &Expression::BinOp(
                         BinaryOperator::Plus,
+                        36,
                         &Expression::Var( VariableIdentifier(range(34, 1)) ),
                         &Expression::Var( VariableIdentifier(range(38, 1)) ),
                     ),

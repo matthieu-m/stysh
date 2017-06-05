@@ -29,7 +29,7 @@ pub enum Node<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expression<'a> {
     /// A binary operation.
-    BinOp(BinaryOperator, &'a Expression<'a>, &'a Expression<'a>),
+    BinOp(BinaryOperator, u32, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A if expression.
@@ -199,7 +199,7 @@ impl<'a> Expression<'a> {
         use self::Expression::*;
 
         match *self {
-            BinOp(_, left, right) => left.range().extend(right.range()),
+            BinOp(_, _, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
             If(if_else) => if_else.range(),
             Lit(_, range) => range,
@@ -341,7 +341,7 @@ mod tests {
     fn range_expression_binary_operator() {
         let left = expr_lit_integral(3, 1);
         let right = expr_lit_integral(7, 1);
-        let expr = Expression::BinOp(BinaryOperator::Plus, &left, &right);
+        let expr = Expression::BinOp(BinaryOperator::Plus, 5, &left, &right);
 
         assert_eq!(expr.range(), range(3, 5));
     }
@@ -354,7 +354,7 @@ mod tests {
             name: VariableIdentifier(range(8, 3)),
             arguments: &[],
             result: type_simple(16, 3),
-            body: Expression::BinOp(BinaryOperator::Plus, &left, &right),
+            body: Expression::BinOp(BinaryOperator::Plus, 22, &left, &right),
             keyword: 3,
             open: 11,
             close: 12,
@@ -368,7 +368,7 @@ mod tests {
     fn range_node_binary_operator() {
         let left = expr_lit_integral(3, 1);
         let right = expr_lit_integral(7, 1);
-        let expr = Expression::BinOp(BinaryOperator::Plus, &left, &right);
+        let expr = Expression::BinOp(BinaryOperator::Plus, 5, &left, &right);
         let node = Node::Expr(expr);
 
         assert_eq!(node.range(), range(3, 5));

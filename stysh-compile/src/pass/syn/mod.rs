@@ -7,7 +7,6 @@ mod com;
 mod expr;
 mod fun;
 mod syn;
-mod tok;
 mod typ;
 
 pub use self::syn::Parser;

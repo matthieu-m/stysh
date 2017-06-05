@@ -111,7 +111,7 @@ impl<'a> ParserState<'a> {
     fn peek(&self) -> Option<tt::Node<'a>> {
         match self.nodes.first().cloned() {
             Some(tt::Node::Run(run)) =>
-                Some(tt::Node::Run(&run[self.run_start..])),
+                Some(tt::Node::Run(&run[self.run_start..self.run_start+1])),
             other => other,
         }
     }

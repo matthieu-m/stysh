@@ -174,6 +174,25 @@ impl<'a, T: 'a> Array<'a, T> {
         self.length += 1;
     }
 
+    /// Returns a reference to the item at the back of the array, if any.
+    pub fn peek(&self) -> Option<&T> {
+        if self.length > 0 {
+            Some(unsafe { &*self.ptr.offset((self.length - 1) as isize) })
+        } else {
+            None
+        }
+    }
+
+    /// Pop an item off the back of the array, if any.
+    pub fn pop(&mut self) -> Option<T> {
+        if self.length > 0 {
+            self.length -= 1;
+            Some(unsafe { ptr::read(self.ptr.offset(self.length as isize)) })
+        } else {
+            None
+        }
+    }
+
     /// Pushes a new item at the back of the array.
     ///
     /// Note: in the case where the array does not have enough capacity, it

@@ -2,6 +2,9 @@
 //!
 //! Expression parser.
 
+use std;
+
+use basic::mem;
 use model::tt;
 use model::syn::*;
 
@@ -56,6 +59,17 @@ struct ExprParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+struct Precedence(u8);
+
+struct ShuntingYard<'g, 'local>
+    where 'g: 'local
+{
+    global_arena: &'g mem::Arena,
+    op_stack: mem::Array<'local, (BinaryOperator, u32, Precedence)>,
+    expr_stack: mem::Array<'local, Expression<'g>>,
+}
+
 impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn new(raw: RawParser<'a, 'g, 'local>) -> ExprParser<'a, 'g, 'local> {
         ExprParser { raw: raw }
@@ -64,70 +78,90 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
     fn parse(&mut self) -> Expression<'g> {
-        let tokens = {
-            let node = self.raw.peek().expect("WAT?");
+        use model::tt::Kind as K;
 
-            match node {
-                tt::Node::Run(tokens) => tokens,
+        fn binop(kind: tt::Kind) -> Option<(BinaryOperator, Precedence)> {
+            use model::syn::BinaryOperator as B;
+
+            //  Ordered from higher precedence to lower; higher binding tigther.
+            match kind {
+                K::SignDoubleSlash => Some((B::FloorBy, 4)),
+                K::SignStar => Some((B::Times, 4)),
+
+                K::SignDash => Some((B::Minus, 3)),
+                K::SignPlus => Some((B::Plus, 3)),
+
+                K::SignLeft => Some((B::LessThan, 2)),
+                K::SignLeftEqual => Some((B::LessThanOrEqual, 2)),
+                K::SignRight => Some((B::GreaterThan, 2)),
+                K::SignRightEqual => Some((B::GreaterThanOrEqual, 2)),
+
+                K::SignBangEqual => Some((B::Different, 1)),
+                K::SignDoubleEqual => Some((B::Equal, 1)),
+
+                _ => None
+            }.map(|(b, p)| (b, Precedence(p)))
+        }
+
+        //  An expression is an expression, optionally followed by a binary 
+        //  operator and another expression.
+
+        //  Use the Shunting Yard algorithm to parse this "expr [op expr]" into
+        //  an expression tree.
+        let mut yard = ShuntingYard::new(self.raw.global(), self.raw.local());
+
+        while let Some(node) = self.raw.peek() {
+            //  An expression.
+            let expr = match node {
+                tt::Node::Run(tokens) => {
+                    let kind = tokens[0].kind();
+
+                    if kind == K::KeywordIf {
+                        self.parse_if_else()
+                    } else {
+                        self.raw.pop_tokens(1);
+                        tokens[0].into_expr().expect("FIXME...")
+                    }
+                },
                 tt::Node::Braced(o, n, c) => {
                     self.raw.pop_node();
 
-                    return match o.kind() {
-                        tt::Kind::BraceOpen => self.parse_braces(n, o, c),
-                        tt::Kind::ParenthesisOpen => self.parse_parens(n, o, c),
+                    match o.kind() {
+                        K::BraceOpen => self.parse_braces(n, o, c),
+                        K::ParenthesisOpen => self.parse_parens(n, o, c),
                         _ => unimplemented!(),
-                    };
+                    }
                 },
                 tt::Node::Bytes(_, f, _) => {
                     self.raw.pop_node();
 
                     let bytes = self.raw.global().insert_slice(f);
-                    return Expression::Lit(Literal::Bytes(bytes), node.range());
+                    Expression::Lit(Literal::Bytes(bytes), node.range())
                 },
                 tt::Node::String(_, f, _) => {
                     self.raw.pop_node();
 
                     let string = self.raw.global().insert_slice(f);
-                    return Expression::Lit(
-                        Literal::String(string),
-                        node.range()
-                    );
+                    Expression::Lit(Literal::String(string), node.range())
                 },
-                _ => unimplemented!(),
+                tt::Node::UnexpectedBrace(_) => unimplemented!(),
+            };
+
+            yard.push_expression(expr);
+
+            //  Optionally followed by a binary operator and another expression.
+            if let Some(tt::Node::Run(tokens)) = self.raw.peek() {
+                if let Some((op, prec)) = binop(tokens[0].kind()) {
+                    self.raw.pop_tokens(1);
+                    yard.push_operator(op, tokens[0].offset() as u32, prec);
+                    continue;   // go get right hand side!
+                }
             }
-        };
 
-        if tokens[0].kind() == tt::Kind::KeywordIf {
-            return self.parse_if_else();
+            break;
         }
 
-        let expr = tokens[0].into_expr().expect("Expression");
-        self.raw.pop_tokens(1);
-
-        if tokens.len() == 1 ||
-            tokens[1].kind() == tt::Kind::SignComma ||
-            tokens[1].kind() == tt::Kind::SignSemiColon
-        {
-            expr
-        } else {
-            let left_operand: &Expression = self.raw.intern(expr);
-
-            let operator = tokens[1];
-            assert_eq!(operator.kind(), tt::Kind::SignPlus);
-
-            let right_operand: &Expression = self.raw.intern(
-                tokens[2].into_expr().expect("Operand")
-            );
-
-            self.raw.pop_tokens(2);
-
-            Expression::BinOp(
-                BinaryOperator::Plus,
-                operator.range().offset() as u32,
-                left_operand,
-                right_operand
-            )
-        }
+        yard.pop_expression()
     }
 
     fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
@@ -186,8 +220,6 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let condition = self.parse();
         let true_expr = self.parse();   //  FIXME(matthieum): possibly missing.
 
-        println!("{:?}", self.raw);
-
         if let Some(else_) = self.raw.pop_kind(tt::Kind::KeywordElse) {
             //  FIXME(matthieum): only ":if" and "{ ... }" are legal.
 
@@ -207,6 +239,68 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     }
 }
 
+impl<'g, 'local> ShuntingYard<'g, 'local>
+    where 'g: 'local
+{
+    fn new(global_arena: &'g mem::Arena, local_arena: &'local mem::Arena)
+        -> ShuntingYard<'g, 'local>
+    {
+        ShuntingYard {
+            global_arena: global_arena,
+            op_stack: mem::Array::new(local_arena),
+            expr_stack: mem::Array::new(local_arena),
+        }
+    }
+
+    fn push_expression(&mut self, expr: Expression<'g>) {
+        self.expr_stack.push(expr);
+    }
+
+    fn push_operator(
+        &mut self,
+        op: BinaryOperator,
+        pos: u32,
+        prec: Precedence)
+    {
+        self.pop_operators(prec);
+        self.op_stack.push((op, pos, prec));
+    }
+
+    fn pop_expression(&mut self) -> Expression<'g> {
+        self.pop_operators(Precedence(0));
+
+        assert!(self.expr_stack.len() == 1, "{:?}", self);
+
+        self.expr_stack.pop().expect("Asserted")
+    }
+
+    fn pop_operators(&mut self, threshold: Precedence) {
+        while let Some((op, pos)) = self.pop_operator_impl(threshold) {
+            let right_hand = self.expr_stack.pop().expect("Right");
+            let left_hand = self.expr_stack.pop().expect("Left");
+
+            self.expr_stack.push(Expression::BinOp(
+                op,
+                pos,
+                self.global_arena.insert(left_hand),
+                self.global_arena.insert(right_hand),
+            ));
+        }
+    }
+
+    fn pop_operator_impl(&mut self, threshold: Precedence)
+        -> Option<(BinaryOperator, u32)>
+    {
+        if let Some((op, pos, prec)) = self.op_stack.peek().cloned() {
+            if threshold <= prec {
+                self.op_stack.pop();
+                return Some((op, pos));
+            }
+        }
+        None
+    }
+}
+
 trait IntoExpr<'g> {
     fn into_expr(self) -> Option<Expression<'g>>;
 }
@@ -223,6 +317,17 @@ impl<'g> IntoExpr<'g> for tt::Token {
             tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
+    }
+}
+
+impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "expr_stack: {:?}, op_stack: {:?}",
+            self.expr_stack,
+            self.op_stack
+        )
     }
 }
 
@@ -380,6 +485,36 @@ mod tests {
                 semi: 14,
             }
         );
+    }
+
+    #[test]
+    fn shunting_yard_simple() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"1 + 2 * 3 < 4 // 5"),
+            Expression::BinOp(
+                BinaryOperator::LessThan,
+                10,
+                &Expression::BinOp(
+                    BinaryOperator::Plus,
+                    2,
+                    &int(0, 1),
+                    &Expression::BinOp(
+                        BinaryOperator::Times,
+                        6,
+                        &int(4, 1),
+                        &int(8, 1),
+                    ),
+                ),
+                &Expression::BinOp(
+                    BinaryOperator::FloorBy,
+                    14,
+                    &int(12, 1),
+                    &int(17, 1),
+                ),
+            )
+        )
     }
 
     #[test]

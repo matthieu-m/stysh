@@ -6,7 +6,7 @@ use model::syn::*;
 use model::tt;
 
 use super::com::RawParser;
-use super::{expr, tok, typ};
+use super::{expr, typ};
 
 pub struct FunParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>
@@ -91,14 +91,14 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
         let mut buffer = raw.local_array();
 
         while raw.peek().is_some() {
-            let name = tok::pop_token(NameValue, &mut raw).expect("Name");
+            let name = raw.pop_kind(NameValue).expect("Name");
 
-            let colon = tok::pop_token(SignColon, &mut raw)
+            let colon = raw.pop_kind(SignColon)
                 .map(|t| t.offset() as u32).unwrap_or(0);
 
             let type_ = typ::parse_type(&mut raw);
 
-            let comma = tok::pop_token(SignComma, &mut raw)
+            let comma = raw.pop_kind(SignComma)
                 .map(|t| t.offset() as u32).unwrap_or(0);
 
             buffer.push(Argument {
@@ -113,7 +113,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
     }
 
     fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
-        tok::pop_token(kind, &mut self.raw)
+        self.raw.pop_kind(kind)
     }
 }
 

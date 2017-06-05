@@ -94,8 +94,26 @@ pub struct Argument<'a> {
 /// A Binary Operator such as `+` or `*`.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BinaryOperator {
+    /// The `!=` operator.
+    Different,
+    /// The `==` operator.
+    Equal,
+    /// The `//` operator.
+    FloorBy,
+    /// The `>` operator.
+    GreaterThan,
+    /// The `>=` operator.
+    GreaterThanOrEqual,
+    /// The `<` operator.
+    LessThan,
+    /// The `<=` operator.
+    LessThanOrEqual,
+    /// The `-` operator.
+    Minus,
     /// The `+` operator.
     Plus,
+    /// The `*` operator.
+    Times,
 }
 
 /// A if-else expression.

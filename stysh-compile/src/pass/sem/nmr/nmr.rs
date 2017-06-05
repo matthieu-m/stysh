@@ -157,6 +157,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         let op = match op {
             syn::BinaryOperator::Plus => sem::BuiltinFunction::Add,
+            _ => unimplemented!(),
         };
 
         let mut buffer = mem::Array::with_capacity(2, self.local_arena);

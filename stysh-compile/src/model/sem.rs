@@ -218,7 +218,7 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
-            Type::Tuple(t) => Type::Tuple(t.clone_into(arena)),
+            Type::Tuple(t) => Type::Tuple(CloneInto::clone_into(&t, arena)),
             Type::Builtin(t) => Type::Builtin(t),
             Type::Unresolved(n) => Type::Unresolved(n),
         }
@@ -230,9 +230,9 @@ impl<'a, 'target> CloneInto<'target> for Value<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         Value {
-            type_: self.type_.clone_into(arena),
+            type_: CloneInto::clone_into(&self.type_, arena),
             range: self.range,
-            expr: self.expr.clone_into(arena),
+            expr: CloneInto::clone_into(&self.expr, arena),
         }
     }
 }
@@ -242,8 +242,9 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
-            Expr::BuiltinVal(v) => Expr::BuiltinVal(v.clone_into(arena)),
-            Expr::Tuple(t) => Expr::Tuple(t.clone_into(arena)),
+            Expr::BuiltinVal(v) =>
+                Expr::BuiltinVal(CloneInto::clone_into(&v, arena)),
+            Expr::Tuple(t) => Expr::Tuple(CloneInto::clone_into(&t, arena)),
             _ => unimplemented!(),
         }
     }
@@ -257,7 +258,7 @@ impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         let mut fields = mem::Array::with_capacity(self.fields.len(), arena);
         for f in self.fields {
-            fields.push(f.clone_into(arena));
+            fields.push(CloneInto::clone_into(f, arena));
         }
         Tuple { fields: fields.into_slice() }
     }

@@ -150,7 +150,7 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
         for &(identifier, type_) in self.arguments {
             if &self.source[identifier.0] == &self.source[name.0] {
                 return Value {
-                    type_: type_.clone_into(self.global_arena),
+                    type_: CloneInto::clone_into(&type_, self.global_arena),
                     range: name.0,
                     expr: Expr::ArgumentRef(identifier),
                 };
@@ -170,7 +170,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
         for &(identifier, type_) in &*self.elements {
             if &self.source[identifier.0] == &self.source[name.0] {
                 return Value {
-                    type_: type_.clone_into(self.global_arena),
+                    type_: CloneInto::clone_into(&type_, self.global_arena),
                     range: name.0,
                     expr: Expr::VariableRef(identifier)
                 }

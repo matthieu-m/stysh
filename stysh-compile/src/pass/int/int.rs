@@ -43,7 +43,7 @@ impl<'g, 'local> Interpreter<'g, 'local> {
 //
 impl<'g, 'local> Interpreter<'g, 'local> {
     fn duplicate(&self, value: sem::Value<'local>) -> sem::Value<'g> {
-        value.clone_into(self.global_arena)
+        CloneInto::clone_into(&value, self.global_arena)
     }
 }
 
@@ -232,7 +232,7 @@ impl<'a> BlockInterpreter<'a> {
             expr: sem::Expr::BuiltinVal(v),
         };
 
-        value.clone_into(self.arena)
+        CloneInto::clone_into(&value, self.arena)
     }
 
     fn get_value(&self, id: sir::ValueId) -> sem::Value<'a> {

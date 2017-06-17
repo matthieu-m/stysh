@@ -63,6 +63,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 
         match (*item, &proto.proto) {
             (syn::Item::Fun(i), &sem::Proto::Fun(ref p)) => self.fun_item(i, p),
+            _ => unimplemented!(),
         }
     }
 }

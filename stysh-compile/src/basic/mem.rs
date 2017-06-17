@@ -324,6 +324,23 @@ impl<'a, K: 'a + cmp::Ord, V: 'a> ArrayMap<'a, K, V> {
     }
 }
 
+impl<'target, T> CloneInto<'target> for [T]
+    where
+        T: CloneInto<'target>
+{
+    type Output = &'target [<T as CloneInto<'target>>::Output];
+
+    fn clone_into(&self, arena: &'target Arena) -> Self::Output {
+        let mut array = Array::with_capacity(self.len(), arena);
+
+        for e in self {
+            array.push(CloneInto::clone_into(e, arena));
+        }
+
+        array.into_slice()
+    }
+}
+
 impl<'a, T: 'a + Clone> Clone for Array<'a, T> {
     fn clone(&self) -> Self {
         let mut new = Array::with_capacity(self.length, self.arena);

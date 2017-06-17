@@ -104,6 +104,10 @@ impl Range {
     }
 }
 
+impl std::default::Default for Range {
+    fn default() -> Range { Range::new(0, 0) }
+}
+
 impl std::fmt::Display for Range {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "{}@{}", self.length, self.offset)

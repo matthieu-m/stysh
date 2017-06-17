@@ -70,6 +70,8 @@ pub enum Expr<'a> {
     BuiltinVal(BuiltinValue<'a>),
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
+    /// A static function call.
+    FunctionCall(ItemIdentifier, &'a FunctionProto<'a>, &'a [Value<'a>]),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// A tuple.
@@ -147,6 +149,8 @@ pub struct Prototype<'a> {
 pub enum Proto<'a> {
     /// A function prototype.
     Fun(FunctionProto<'a>),
+    /// An unresolved prototype.
+    Unresolved(ItemIdentifier),
 }
 
 /// A function prototype.
@@ -210,6 +214,13 @@ impl ItemIdentifier {
     }
 }
 
+impl ValueIdentifier {
+    /// Returns a sentinel instance of ValueIdentifier.
+    pub fn unresolved() -> ItemIdentifier {
+        ItemIdentifier(com::Range::new(0, 0))
+    }
+}
+
 //
 //  CloneInto implementations
 //
@@ -250,17 +261,62 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Binding<'a> {
+    type Output = Binding<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Binding::*;
+
+        match *self {
+            Argument(id, type_, range)
+                => Argument(id, CloneInto::clone_into(&type_, arena), range),
+            Variable(id, value, range)
+                => Variable(id, CloneInto::clone_into(&value, arena), range),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
+    type Output = Prototype<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Prototype {
+            name: self.name,
+            range: self.range,
+            proto: CloneInto::clone_into(&self.proto, arena),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Proto<'a> {
+    type Output = Proto<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        match *self {
+            Proto::Fun(fun) => Proto::Fun(CloneInto::clone_into(&fun, arena)),
+            Proto::Unresolved(id) => Proto::Unresolved(id),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
+    type Output = FunctionProto<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        FunctionProto {
+            arguments: CloneInto::clone_into(self.arguments, arena),
+            result: CloneInto::clone_into(&self.result, arena),
+        }
+    }
+}
+
 impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
     where T: CloneInto<'target> + 'a
 {
     type Output = Tuple<'target, <T as CloneInto<'target>>::Output>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        let mut fields = mem::Array::with_capacity(self.fields.len(), arena);
-        for f in self.fields {
-            fields.push(CloneInto::clone_into(f, arena));
-        }
-        Tuple { fields: fields.into_slice() }
+        Tuple { fields: CloneInto::clone_into(self.fields, arena) }
     }
 }
 

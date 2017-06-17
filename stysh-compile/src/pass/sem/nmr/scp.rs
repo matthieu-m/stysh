@@ -1,15 +1,20 @@
 //! Lexical scopes for name resolution
 
-use basic::mem::{self, CloneInto};
+use basic::{com, mem};
+use basic::mem::CloneInto;
 
 use model::sem::{
-    Binding, Expr, FunctionProto, ItemIdentifier, Type, Value, ValueIdentifier
+    self, Binding, Expr, FunctionProto, ItemIdentifier, Prototype, Type, Value,
+    ValueIdentifier
 };
 
 /// A Lexical Scope trait.
 pub trait Scope<'g> {
     /// Find the definition of a binding, if known.
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g>;
+
+    /// Find the definition of a function, if known.
+    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g>;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g>;
@@ -20,6 +25,15 @@ pub trait Scope<'g> {
             type_: Type::Unresolved(ItemIdentifier::unresolved()),
             range: name.0,
             expr: Expr::UnresolvedRef(name),
+        }
+    }
+
+    /// Returns an unresolved reference.
+    fn unresolved_prototype(&self, name: ItemIdentifier) -> Prototype<'g> {
+        Prototype {
+            name: ItemIdentifier::unresolved(),
+            range: com::Range::default(),
+            proto: sem::Proto::Unresolved(name),
         }
     }
 
@@ -86,16 +100,17 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
 pub struct BlockScope<'a, 'g, 'local>
     where 'g: 'a
 {
-    source: &'a [u8],
+    source: &'local [u8],
     parent: &'a Scope<'g>,
-    elements: mem::Array<'local, (ValueIdentifier, Type<'local>)>,
+    items: SourceMap<'local, Prototype<'local>>,
+    values: SourceMap<'local, (ValueIdentifier, Type<'local>)>,
     global_arena: &'g mem::Arena,
 }
 
 impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     /// Create a new instance of BlockScope.
     pub fn new(
-        source: &'a [u8],
+        source: &'local [u8],
         parent: &'a Scope<'g>,
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
@@ -105,20 +120,25 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
         BlockScope {
             source: source,
             parent: parent,
-            elements: mem::Array::new(local_arena),
+            items: SourceMap::new(local_arena),
+            values: SourceMap::new(local_arena),
             global_arena: global_arena
         }
     }
 
-    /// Adds a new identifier to the scope.
-    pub fn add(&mut self, id: ValueIdentifier, type_: Type<'local>) {
-        self.elements.push((id, type_))
+    /// Adds a new value identifier to the scope.
+    pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'local>) {
+        self.values.insert(&self.source[id.0], (id, type_));
     }
 }
 
 impl<'g> Scope<'g> for () {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
         self.unresolved_binding(name)
+    }
+
+    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+        self.unresolved_prototype(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -129,6 +149,10 @@ impl<'g> Scope<'g> for () {
 impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
         self.unresolved_binding(name)
+    }
+
+    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+        self.unresolved_prototype(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -160,6 +184,10 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
         self.unresolved_binding(name)
     }
 
+    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+        self.parent.lookup_function(name)
+    }
+
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
         self.parent.lookup_type(name)
     }
@@ -167,23 +195,34 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
 
 impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        for &(identifier, type_) in &*self.elements {
-            if &self.source[identifier.0] == &self.source[name.0] {
-                return Value {
-                    type_: CloneInto::clone_into(&type_, self.global_arena),
-                    range: name.0,
-                    expr: Expr::VariableRef(identifier)
-                }
+        if let Some(&(id, type_)) = self.values.get(&&self.source[name.0]) {
+            return Value {
+                type_: CloneInto::clone_into(&type_, self.global_arena),
+                range: name.0,
+                expr: Expr::VariableRef(id)
             }
         }
 
         self.parent.lookup_binding(name)
     }
 
+    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+        if let Some(proto) = self.items.get(&&self.source[name.0]) {
+            return CloneInto::clone_into(proto, self.global_arena);
+        }
+
+        self.parent.lookup_function(name)
+    }
+
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
         self.parent.lookup_type(name)
     }
 }
+
+//
+//  Implementation Details
+//
+type SourceMap<'a, V> = mem::ArrayMap<'a, &'a [u8], V>;
 
 //
 //  Tests

@@ -88,7 +88,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Expression::BinOp(op, _, left, right) =>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
-            Expression::FunctionCall(_) => unimplemented!(),
+            Expression::FunctionCall(fun) => self.value_of_call(fun),
             Expression::If(if_else) => self.value_of_if_else(if_else),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Tuple(t) => self.value_of_tuple(&t),
@@ -127,7 +127,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                     )
                 },
             };
-            scope.add(binding, type_);
+            scope.add_value(binding, type_);
             statements.push(stmt);
         }
 
@@ -183,6 +183,49 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             range: range,
             expr: sem::Expr::BuiltinCall(op, arguments),
         }
+    }
+
+    fn value_of_call(&mut self, fun: syn::FunctionCall) -> sem::Value<'g> {
+        if let &syn::Expression::Var(id) = fun.function {
+            let mut values = mem::Array::with_capacity(
+                fun.arguments.len(),
+                self.global_arena
+            );
+
+            for e in fun.arguments {
+                values.push(self.value_of(e));
+            }
+
+            let identifier = sem::ItemIdentifier(id.0);
+            let proto = self.scope.lookup_function(identifier);
+
+            return if let sem::Proto::Fun(fun_proto) = proto.proto {
+                sem::Value {
+                    type_: fun_proto.result,
+                    range: fun.range(),
+                    expr: sem::Expr::FunctionCall(
+                        proto.name,
+                        self.global_arena.insert(fun_proto),
+                        values.into_slice(),
+                    ),
+                }
+            } else {
+                sem::Value {
+                    type_: sem::Type::unresolved(),
+                    range: fun.range(),
+                    expr: sem::Expr::FunctionCall(
+                        identifier,
+                        self.global_arena.insert(sem::FunctionProto {
+                            arguments: &[],
+                            result: sem::Type::unresolved(),
+                        }),
+                        values.into_slice(),
+                    )
+                }
+            };
+        }
+
+        unimplemented!()
     }
 
     fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
@@ -347,6 +390,7 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::sem::*;
+    use super::super::scp;
 
     #[test]
     fn value_basic_add() {
@@ -389,6 +433,59 @@ mod tests {
             ),
             boolean(true, range(0, 4))
         );
+    }
+
+    #[test]
+    fn value_basic_call() {
+        let global_arena = mem::Arena::new();
+
+        let fragment = b"basic(1, 2)";
+
+        let fragment_range = range(0, 5);
+        let (arg0, arg1) = (range(6, 1), range(9, 1));
+
+        let basic_fun_prototype = global_arena.insert(
+            FunctionProto {
+                arguments: &[],
+                result: Type::Builtin(BuiltinType::Int),
+            }
+        );
+
+        let registered = ItemIdentifier(range(42, 5));
+
+        let mut scope = MockScope::new(fragment, &global_arena);
+        scope.functions.insert(
+            ItemIdentifier(fragment_range),
+            Prototype {
+                name: registered,
+                range: range(37, 20),
+                proto: Proto::Fun(*basic_fun_prototype),
+            }
+        );
+
+        assert_eq!(
+            valueit_with_scope(
+                &global_arena,
+                fragment,
+                &scope,
+                &syn::Expression::FunctionCall(syn::FunctionCall {
+                    function: &var(fragment_range),
+                    arguments: &[ lit_integral(arg0), lit_integral(arg1), ],
+                    commas: &[7, 9],
+                    open: 5,
+                    close: 10,
+                }),
+            ),
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: range(0, 11),
+                expr: Expr::FunctionCall(
+                    registered,
+                    basic_fun_prototype,
+                    &[ int(1, arg0), int(2, arg1), ]
+                )
+            }
+        )
     }
 
     #[test]
@@ -532,6 +629,50 @@ mod tests {
         );
     }
 
+    struct MockScope<'g> {
+        functions: mem::ArrayMap<'g, ItemIdentifier, Prototype<'g>>,
+        types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
+        values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
+        parent: scp::BuiltinScope<'g>,
+    }
+
+    impl<'g> MockScope<'g> {
+        fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> MockScope<'g> {
+            MockScope {
+                functions: mem::ArrayMap::new(arena),
+                types: mem::ArrayMap::new(arena),
+                values: mem::ArrayMap::new(arena),
+                parent: scp::BuiltinScope::new(fragment),
+            }
+        }
+    }
+
+    impl<'g> scp::Scope<'g> for MockScope<'g> {
+        fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
+            if let Some(&v) = self.values.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_binding(name)
+        }
+
+        fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+            if let Some(&v) = self.functions.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_function(name)
+        }
+
+        fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
+            if let Some(&v) = self.types.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_type(name)
+        }
+    }
+
     fn valueit<'g>(
         global_arena: &'g mem::Arena,
         fragment: &'g [u8],
@@ -539,15 +680,25 @@ mod tests {
     )
         -> Value<'g>
     {
+        let builtin = scp::BuiltinScope::new(fragment);
+
+        valueit_with_scope(global_arena, fragment, &builtin, expr)
+    }
+
+    fn valueit_with_scope<'g>(
+        global_arena: &'g mem::Arena,
+        fragment: &'g [u8],
+        scope: &scp::Scope<'g>,
+        expr: &syn::Expression,
+    )
+        -> Value<'g>
+    {
         use super::NameResolver;
-        use super::super::scp;
 
         let mut local_arena = mem::Arena::new();
 
-        let builtin = scp::BuiltinScope::new(fragment);
-
         let result =
-            NameResolver::new(fragment, &builtin, global_arena, &local_arena)
+            NameResolver::new(fragment, scope, global_arena, &local_arena)
                 .value_of(expr);
         local_arena.recycle();
 

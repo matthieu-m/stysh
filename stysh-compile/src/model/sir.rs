@@ -66,8 +66,8 @@ pub struct ValueId(u16);
 /// An instruction.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Instruction<'a> {
-    /// A function call.
-    CallFunction(sem::BuiltinFunction, &'a [ValueId], com::Range),
+    /// A built-in function call.
+    CallBuiltin(sem::BuiltinFunction, &'a [ValueId], com::Range),
     /// A value load.
     Load(sem::BuiltinValue<'a>, com::Range),
     /// A composite creation.
@@ -126,7 +126,7 @@ impl<'a> Instruction<'a> {
     /// Returns the range spanned by the instruction.
     pub fn range(&self) -> com::Range {
         match *self {
-            Instruction::CallFunction(_, _, r) => r,
+            Instruction::CallBuiltin(_, _, r) => r,
             Instruction::Load(_, r) => r,
             Instruction::New(_, _, r) => r,
         }
@@ -209,7 +209,7 @@ impl<'a> std::fmt::Display for BasicBlock<'a> {
 impl<'a> std::fmt::Display for Instruction<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
-            Instruction::CallFunction(fun, vals, r) => {
+            Instruction::CallBuiltin(fun, vals, r) => {
                 write!(f, "{}(", fun)?;
                 for (i, v) in vals.iter().enumerate() {
                     if i != 0 { write!(f, ", ")?; }

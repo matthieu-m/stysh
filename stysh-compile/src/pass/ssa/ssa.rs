@@ -159,7 +159,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
             sem::Expr::BuiltinCall(fun, args)
-                => self.convert_call(current, fun, args, range),
+                => self.convert_builtin(current, fun, args, range),
             sem::Expr::BuiltinVal(val)
                 => self.convert_literal(current, val, range),
             sem::Expr::If(cond, true_, false_)
@@ -196,7 +196,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         self.convert_value(current, value)
     }
 
-    fn convert_call(
+    fn convert_builtin(
         &mut self,
         current: ProtoBlock<'g, 'local>,
         fun: sem::BuiltinFunction,
@@ -209,7 +209,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             self.convert_array_of_values(current, args);
 
         current.push_instr(
-            sir::Instruction::CallFunction(fun, arguments, range)
+            sir::Instruction::CallBuiltin(fun, arguments, range)
         );
 
         current

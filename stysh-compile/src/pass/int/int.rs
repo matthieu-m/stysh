@@ -139,13 +139,13 @@ impl<'a> BlockInterpreter<'a> {
         use model::sir::Instruction::*;
 
         match *instr {
-            CallFunction(fun, args, _) => self.eval_fun(fun, args),
+            CallBuiltin(fun, args, _) => self.eval_builtin(fun, args),
             Load(value, range) => self.load(value, range),
             New(type_, fields, range) => self.eval_new(type_, fields, range),
         }
     }
 
-    fn eval_fun(&self, fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
+    fn eval_builtin(&self, fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
         -> sem::Value<'a>
     {
         self.eval_binary_fun(fun, args)
@@ -285,7 +285,7 @@ mod tests {
         let instructions = [
             instr_load_int(1),
             instr_load_int(2),
-            instr_call(sem::BuiltinFunction::Add, &arguments),
+            instr_builtin(sem::BuiltinFunction::Add, &arguments),
         ];
         let blocks = [ block_return(&[], &instructions) ];
         let cfg = sir::ControlFlowGraph { blocks: &blocks };
@@ -309,7 +309,7 @@ mod tests {
                     blocks: &[block_return(
                         &[int, int],
                         &[
-                            instr_call(
+                            instr_builtin(
                                 sem::BuiltinFunction::Add,
                                 &[ val_arg(0), val_arg(1) ]
                             ),
@@ -464,10 +464,10 @@ mod tests {
         sir::ValueId::new_instruction(index)
     }
 
-    fn instr_call<'a>(fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
+    fn instr_builtin<'a>(fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
         -> sir::Instruction<'a>
     {
-        sir::Instruction::CallFunction(fun, args, range(0, 0))
+        sir::Instruction::CallBuiltin(fun, args, range(0, 0))
     }
 
     fn instr_load_bool(value: bool) -> sir::Instruction<'static> {

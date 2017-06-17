@@ -32,6 +32,8 @@ pub enum Expression<'a> {
     BinOp(BinaryOperator, u32, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
+    /// A function call expression.
+    FunctionCall(FunctionCall<'a>),
     /// A if expression.
     If(IfElse<'a>),
     /// A literal.
@@ -114,6 +116,24 @@ pub enum BinaryOperator {
     Plus,
     /// The `*` operator.
     Times,
+}
+
+/// A function call expression.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct FunctionCall<'a> {
+    /// Function called.
+    pub function: &'a Expression<'a>,
+    /// Arguments.
+    pub arguments: &'a [Expression<'a>],
+    /// Offsets of the commas separating the arguments, an absent comma is 
+    /// placed at the offset of the last character of the field it would have
+    /// followed.
+    pub commas: &'a [u32],
+    /// Offset of the opening parenthesis.
+    pub open: u32,
+    /// Offset of the closing parenthesis, an absent parenthesis is placed at
+    /// at the offset of the last character of the field it would have followed.
+    pub close: u32,
 }
 
 /// A if-else expression.
@@ -219,6 +239,7 @@ impl<'a> Expression<'a> {
         match *self {
             BinOp(_, _, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
+            FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
             Lit(_, range) => range,
             Tuple(t) => t.range(),
@@ -255,6 +276,31 @@ impl<'a> Argument<'a> {
             self.type_.range().end_offset()
         };
         com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> FunctionCall<'a> {
+    /// Returns the token of the comma following the i-th field, if there is no
+    /// such comma the position it would have been at is faked.
+    pub fn comma(&self, i: usize) -> Option<tt::Token> {
+        self.commas
+            .get(i)
+            .map(|&o| tt::Token::new(tt::Kind::SignComma, o as usize, 1))
+    }
+
+    /// Returns the token of the opening parenthesis.
+    pub fn parenthesis_open(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisOpen, self.open as usize, 1)
+    }
+
+    /// Returns the token of the closing parenthesis.
+    pub fn parenthesis_close(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisClose, self.close as usize, 1)
+    }
+
+    /// Returns the range spanned by the function call.
+    pub fn range(&self) -> com::Range {
+        self.function.range().extend(self.parenthesis_close().range())
     }
 }
 
@@ -335,9 +381,7 @@ impl<'a, T: 'a + Clone> Tuple<'a, T> {
 
     /// Returns the range spanned by the tuple.
     pub fn range(&self) -> com::Range {
-        let open = self.parenthesis_open().offset();
-        let close = self.parenthesis_close().range().end_offset();
-        com::Range::new(open, close - open)
+        self.parenthesis_open().range().extend(self.parenthesis_close().range())
     }
 }
 

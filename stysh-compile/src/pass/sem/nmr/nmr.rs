@@ -88,6 +88,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Expression::BinOp(op, _, left, right) =>
                 self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
+            Expression::FunctionCall(_) => unimplemented!(),
             Expression::If(if_else) => self.value_of_if_else(if_else),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
             Expression::Tuple(t) => self.value_of_tuple(&t),

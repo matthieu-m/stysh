@@ -106,6 +106,9 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         //  An expression is an expression, optionally followed by a binary 
         //  operator and another expression.
 
+        //  Note:   an expression immediatelly followed by a tuple expression is
+        //          a function call expression.
+
         //  Use the Shunting Yard algorithm to parse this "expr [op expr]" into
         //  an expression tree.
         let mut yard = ShuntingYard::new(self.raw.global(), self.raw.local());
@@ -148,6 +151,13 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             };
 
             yard.push_expression(expr);
+
+            //  It might be a function call expression.
+            if let Some(tt::Node::Braced(o, n, c)) = self.raw.peek() {
+                if o.kind() == K::ParenthesisOpen {
+                    yard.push_expression(self.parse_parens(n, o, c));
+                }
+            }
 
             //  Optionally followed by a binary operator and another expression.
             if let Some(tt::Node::Run(tokens)) = self.raw.peek() {
@@ -253,6 +263,25 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     }
 
     fn push_expression(&mut self, expr: Expression<'g>) {
+        //  Function calls are distinguished from regular expression by having
+        //  a normal expression immediately followed by a tuple expression
+        //  without an intervening operator.
+        if let Expression::Tuple(tuple) = expr {
+            if let Some(callee) = self.pop_trailing_expression() {
+                self.expr_stack.push(
+                    Expression::FunctionCall(
+                        FunctionCall {
+                            function: self.global_arena.insert(callee),
+                            arguments: tuple.fields,
+                            commas: tuple.commas,
+                            open: tuple.open,
+                            close: tuple.close,
+                        }
+                    )
+                );
+                return;
+            }
+        }
         self.expr_stack.push(expr);
     }
 
@@ -286,6 +315,17 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
                 self.global_arena.insert(right_hand),
             ));
         }
+    }
+
+    /// Pops the last expression if there was no operator afterwards
+    fn pop_trailing_expression(&mut self) -> Option<Expression<'g>> {
+        let last_op = self.op_stack.peek().map(|&(_, pos, _)| pos).unwrap_or(0);
+        if let Some(expr) = self.expr_stack.peek().cloned() {
+            if last_op as usize <= expr.range().offset() {
+                return self.expr_stack.pop();
+            }
+        }
+        None
     }
 
     fn pop_operator_impl(&mut self, threshold: Precedence)
@@ -432,6 +472,22 @@ mod tests {
                 range(0, 8)
             )
         );
+    }
+
+    #[test]
+    fn basic_function_call() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"basic(1, 2)"),
+            Expression::FunctionCall(FunctionCall {
+                function: &Expression::Var(VariableIdentifier(range(0, 5))),
+                arguments: &[ int(6, 1), int(9, 1) ],
+                commas: &[7, 9],
+                open: 5,
+                close: 10,
+            })
+        )
     }
 
     #[test]

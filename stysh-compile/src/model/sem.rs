@@ -241,9 +241,9 @@ impl<'a, 'target> CloneInto<'target> for Value<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         Value {
-            type_: CloneInto::clone_into(&self.type_, arena),
+            type_: arena.intern(&self.type_),
             range: self.range,
-            expr: CloneInto::clone_into(&self.expr, arena),
+            expr: arena.intern(&self.expr),
         }
     }
 }
@@ -253,9 +253,8 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
-            Expr::BuiltinVal(v) =>
-                Expr::BuiltinVal(CloneInto::clone_into(&v, arena)),
-            Expr::Tuple(t) => Expr::Tuple(CloneInto::clone_into(&t, arena)),
+            Expr::BuiltinVal(v) => Expr::BuiltinVal(arena.intern(&v)),
+            Expr::Tuple(t) => Expr::Tuple(arena.intern(&t)),
             _ => unimplemented!(),
         }
     }
@@ -269,9 +268,9 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
 
         match *self {
             Argument(id, type_, range)
-                => Argument(id, CloneInto::clone_into(&type_, arena), range),
+                => Argument(id, arena.intern(&type_), range),
             Variable(id, value, range)
-                => Variable(id, CloneInto::clone_into(&value, arena), range),
+                => Variable(id, arena.intern(&value), range),
         }
     }
 }
@@ -282,7 +281,7 @@ impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
             Prototype::Fun(fun)
-                => Prototype::Fun(CloneInto::clone_into(&fun, arena)),
+                => Prototype::Fun(arena.intern(&fun)),
         }
     }
 }
@@ -295,13 +294,13 @@ impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
             name: self.name,
             range: self.range,
             arguments: CloneInto::clone_into(self.arguments, arena),
-            result: CloneInto::clone_into(&self.result, arena),
+            result: arena.intern(&self.result),
         }
     }
 }
 
 impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
-    where T: CloneInto<'target> + 'a
+    where T: CloneInto<'target> + Copy + 'a
 {
     type Output = Tuple<'target, <T as CloneInto<'target>>::Output>;
 

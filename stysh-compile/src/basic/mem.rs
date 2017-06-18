@@ -67,6 +67,11 @@ impl Arena {
         self.get().used()
     }
 
+    /// Returns whether the arena contains a given object, or not.
+    pub fn contains<T>(&self, t: &T) -> bool {
+        self.get().contains(t)
+    }
+
     /// Inserts a new value into the `Arena`, and returns a reference to the new
     /// value.
     pub fn insert<'a, T: 'a>(&'a self, t: T) -> &'a mut T {
@@ -77,6 +82,40 @@ impl Arena {
     /// slice.
     pub fn insert_slice<'a, T: 'a>(&'a self, ts: &[T]) -> &'a mut [T] {
         self.get_mut().insert_slice(ts)
+    }
+
+    /// Returns a value semantically equivalent to the input and whose internal
+    /// lifetimes are extended to that of the `Arena`.
+    ///
+    /// Note: if the value is already contained in the arena, then is merely
+    ///       copied.
+    pub fn intern<'a, T: CloneInto<'a> + Copy>(&'a self, t: &T)
+        -> <T as CloneInto<'a>>::Output
+    {
+        debug_assert!(
+            mem::size_of::<T>() ==
+            mem::size_of::<<T as CloneInto<'a>>::Output>()
+        );
+        if self.contains(t) {
+            unsafe { mem::transmute_copy(t) }
+        } else {
+            CloneInto::clone_into(t, self)
+        }
+    }
+
+    /// Returns a reference semantically equivalent to the input, and whose
+    /// lifetime is extended to that of the `Arena`.
+    ///
+    /// Note: if the value is already contained in the arena, then the reference
+    ///       is merely transmuted.
+    pub fn intern_ref<'a, T: CloneInto<'a>>(&'a self, t: &T)
+        -> &'a <T as CloneInto<'a>>::Output
+    {
+        if self.contains(t) {
+            unsafe { mem::transmute(t) }
+        } else {
+            self.insert(CloneInto::clone_into(t, self))
+        }
     }
 
     /// Reserves an area of memory for `nb` items of type `T` laid contiguously.
@@ -326,7 +365,7 @@ impl<'a, K: 'a + cmp::Ord, V: 'a> ArrayMap<'a, K, V> {
 
 impl<'target, T> CloneInto<'target> for [T]
     where
-        T: CloneInto<'target>
+        T: CloneInto<'target> + Copy
 {
     type Output = &'target [<T as CloneInto<'target>>::Output];
 
@@ -334,7 +373,7 @@ impl<'target, T> CloneInto<'target> for [T]
         let mut array = Array::with_capacity(self.len(), arena);
 
         for e in self {
-            array.push(CloneInto::clone_into(e, arena));
+            array.push(arena.intern(e));
         }
 
         array.into_slice()
@@ -430,6 +469,19 @@ impl ArenaImpl {
         let prev_pools_size: usize =
             self.pools[0..self.pool_index].iter().map(|v| v.len()).sum();
         prev_pools_size + self.next_index
+    }
+
+    fn contains<T>(&self, t: &T) -> bool {
+        let address = t as *const _ as usize;
+        for p in &self.pools {
+            let start = p.as_ptr() as usize;
+            let end = unsafe { p.as_ptr().offset(p.len() as isize) } as usize;
+            
+            if start <= address && address < end {
+                return true;
+            }
+        }
+        return false;
     }
 
     fn insert<'a, T: 'a>(&'a mut self, t: T) -> &'a mut T {

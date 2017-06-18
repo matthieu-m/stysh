@@ -1,7 +1,6 @@
 //! Lexical scopes for name resolution
 
 use basic::{com, mem};
-use basic::mem::CloneInto;
 
 use model::sem::{
     Binding, Expr, FunctionProto, ItemIdentifier, Type, Value, ValueIdentifier
@@ -174,7 +173,7 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
         for &(identifier, type_) in self.arguments {
             if &self.source[identifier.0] == &self.source[name.0] {
                 return Value {
-                    type_: CloneInto::clone_into(&type_, self.global_arena),
+                    type_: self.global_arena.intern(&type_),
                     range: name.0,
                     expr: Expr::ArgumentRef(identifier),
                 };
@@ -197,7 +196,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
         if let Some(&(id, type_)) = self.values.get(&&self.source[name.0]) {
             return Value {
-                type_: CloneInto::clone_into(&type_, self.global_arena),
+                type_: self.global_arena.intern(&type_),
                 range: name.0,
                 expr: Expr::VariableRef(id)
             }
@@ -208,7 +207,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
 
     fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
         if let Some(proto) = self.functions.get(&&self.source[name.0]) {
-            return CloneInto::clone_into(proto, self.global_arena);
+            return self.global_arena.intern(proto);
         }
 
         self.parent.lookup_function(name)

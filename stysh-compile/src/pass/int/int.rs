@@ -3,7 +3,6 @@
 //! This module defines the entry point of the interpreter.
 
 use basic::{com, mem};
-use basic::mem::CloneInto;
 use model::{sem, sir};
 
 /// Stysh Interpreter.
@@ -34,19 +33,13 @@ impl<'g, 'local> Interpreter<'g, 'local> {
         -> sem::Value<'g>
     {
         let frame = FrameInterpreter::new(self.local_arena);
-        self.duplicate(frame.evaluate(cfg, arguments))
+        self.global_arena.intern(&frame.evaluate(cfg, arguments))
     }
 }
 
 //
 //  Implementation Details
 //
-impl<'g, 'local> Interpreter<'g, 'local> {
-    fn duplicate(&self, value: sem::Value<'local>) -> sem::Value<'g> {
-        CloneInto::clone_into(&value, self.global_arena)
-    }
-}
-
 struct FrameInterpreter<'a> {
     arena: &'a mem::Arena,
 }
@@ -232,7 +225,7 @@ impl<'a> BlockInterpreter<'a> {
             expr: sem::Expr::BuiltinVal(v),
         };
 
-        CloneInto::clone_into(&value, self.arena)
+        self.arena.intern(&value)
     }
 
     fn get_value(&self, id: sir::ValueId) -> sem::Value<'a> {

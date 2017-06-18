@@ -193,16 +193,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 values.push(self.value_of(e));
             }
 
-            let identifier = sem::ItemIdentifier(id.0);
-            let proto = self.scope.lookup_function(identifier);
+            let callable =
+                self.scope.lookup_callable(sem::ValueIdentifier(id.0));
 
             return sem::Value {
-                type_: proto.result,
+                type_: callable.result_type(),
                 range: fun.range(),
-                expr: sem::Expr::Call(
-                    sem::Callable::Function(proto),
-                    values.into_slice(),
-                ),
+                expr: sem::Expr::Call(callable, values.into_slice()),
             };
         }
 
@@ -434,9 +431,9 @@ mod tests {
         };
 
         let mut scope = MockScope::new(fragment, &global_arena);
-        scope.functions.insert(
-            ItemIdentifier(fragment_range),
-            basic_fun_prototype,
+        scope.callables.insert(
+            ValueIdentifier(fragment_range),
+            Callable::Function(basic_fun_prototype),
         );
 
         assert_eq!(
@@ -605,7 +602,7 @@ mod tests {
     }
 
     struct MockScope<'g> {
-        functions: mem::ArrayMap<'g, ItemIdentifier, FunctionProto<'g>>,
+        callables: mem::ArrayMap<'g, ValueIdentifier, Callable<'g>>,
         types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
         values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
         parent: scp::BuiltinScope<'g>,
@@ -614,7 +611,7 @@ mod tests {
     impl<'g> MockScope<'g> {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> MockScope<'g> {
             MockScope {
-                functions: mem::ArrayMap::new(arena),
+                callables: mem::ArrayMap::new(arena),
                 types: mem::ArrayMap::new(arena),
                 values: mem::ArrayMap::new(arena),
                 parent: scp::BuiltinScope::new(fragment),
@@ -631,12 +628,12 @@ mod tests {
             self.parent.lookup_binding(name)
         }
 
-        fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
-            if let Some(&v) = self.functions.get(&name) {
+        fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+            if let Some(&v) = self.callables.get(&name) {
                 return v;
             }
 
-            self.parent.lookup_function(name)
+            self.parent.lookup_callable(name)
         }
 
         fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {

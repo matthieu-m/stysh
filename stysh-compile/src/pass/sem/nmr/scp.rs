@@ -1,9 +1,10 @@
 //! Lexical scopes for name resolution
 
-use basic::{com, mem};
+use basic::mem;
 
 use model::sem::{
-    Binding, Expr, FunctionProto, ItemIdentifier, Type, Value, ValueIdentifier
+    Binding, Callable, Expr, FunctionProto, ItemIdentifier, Type, Value,
+    ValueIdentifier
 };
 
 /// A Lexical Scope trait.
@@ -12,7 +13,7 @@ pub trait Scope<'g> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g>;
 
     /// Find the definition of a function, if known.
-    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g>;
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g>;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g>;
@@ -27,13 +28,8 @@ pub trait Scope<'g> {
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
-        FunctionProto {
-            name: ItemIdentifier::unresolved(),
-            range: com::Range::default(),
-            arguments: &[],
-            result: Type::Unresolved(name),
-        }
+    fn unresolved_function(&self, name: ValueIdentifier) -> Callable<'g> {
+        Callable::Unknown(name)
     }
 
     /// Returns an unresolved reference.
@@ -97,12 +93,12 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
 
 /// A Block Scope.
 pub struct BlockScope<'a, 'g, 'local>
-    where 'g: 'a
+    where 'g: 'a + 'local
 {
     source: &'local [u8],
     parent: &'a Scope<'g>,
-    functions: SourceMap<'local, FunctionProto<'local>>,
-    values: SourceMap<'local, (ValueIdentifier, Type<'local>)>,
+    functions: SourceMap<'local, Callable<'g>>,
+    values: SourceMap<'local, (ValueIdentifier, Type<'g>)>,
     global_arena: &'g mem::Arena,
 }
 
@@ -126,7 +122,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     }
 
     /// Adds a new value identifier to the scope.
-    pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'local>) {
+    pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
         self.values.insert(&self.source[id.0], (id, type_));
     }
 }
@@ -136,7 +132,7 @@ impl<'g> Scope<'g> for () {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
         self.unresolved_function(name)
     }
 
@@ -150,7 +146,7 @@ impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
         self.unresolved_function(name)
     }
 
@@ -183,8 +179,8 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
-        self.parent.lookup_function(name)
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+        self.parent.lookup_callable(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -205,12 +201,26 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
         self.parent.lookup_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
-        if let Some(proto) = self.functions.get(&&self.source[name.0]) {
-            return self.global_arena.intern(proto);
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+        use model::sem::Callable::*;
+
+        let mut collection = mem::Array::new(self.functions.arena());
+
+        match self.parent.lookup_callable(name) {
+            Builtin(fun) => collection.push(Builtin(fun)),
+            Function(fun) => collection.push(Function(fun)),
+            Unknown(_) => (),
+            Unresolved(slice) => collection.extend(slice),
         }
 
-        self.parent.lookup_function(name)
+        if let Some(&callable) = self.functions.get(&&self.source[name.0]) {
+            if collection.is_empty() {
+                return callable;
+            }
+            collection.push(callable);
+        }
+
+        Unresolved(self.global_arena.insert_slice(&*collection))
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {

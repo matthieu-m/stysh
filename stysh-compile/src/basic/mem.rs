@@ -310,10 +310,13 @@ impl<'a, K: 'a + cmp::Ord, V: 'a> ArrayMap<'a, K, V> {
         )
     }
 
-    /// Returns the current capacity of the array.
+    /// Returns the arena in use by the array map.
+    pub fn arena(&self) -> &'a Arena { self.0.arena() }
+
+    /// Returns the current capacity of the array map.
     pub fn capacity(&self) -> usize { self.0.capacity() }
 
-    /// Clears the array, removing all elements.
+    /// Clears the array map, removing all elements.
     ///
     /// Note: does NOT call `Drop` on any element.
     pub fn clear(&mut self) {

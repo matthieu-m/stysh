@@ -229,6 +229,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => self.convert_builtin(current, fun, args, range),
             sem::Callable::Function(_)
                 => unimplemented!(),
+            _ => unimplemented!(),
         }
     }
 

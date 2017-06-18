@@ -106,6 +106,13 @@ pub enum Callable<'a> {
     Builtin(BuiltinFunction),
     /// A static user-defined function.
     Function(FunctionProto<'a>),
+    /// An unknown callable binding.
+    Unknown(ValueIdentifier),
+    /// An unresolved callable binding.
+    ///
+    /// Note: this variant only contains possible resolutions.
+    /// Note: this variant contains at least two possible resolutions.
+    Unresolved(&'a [Callable<'a>]),
 }
 
 /// A built-in function.
@@ -196,6 +203,19 @@ impl<'a> Prototype<'a> {
     pub fn range(&self) -> com::Range {
         match *self {
             Prototype::Fun(fun) => fun.range,
+        }
+    }
+}
+
+impl<'a> Callable<'a> {
+    /// Returns the type of the result of the function.
+    pub fn result_type(&self) -> Type<'a> {
+        use self::Callable::*;
+
+        match *self {
+            Builtin(fun) => fun.result_type(),
+            Function(fun) => fun.result,
+            Unknown(_) | Unresolved(_) => Type::unresolved(),
         }
     }
 }

@@ -158,10 +158,10 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => self.convert_identifier(current, id),
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
-            sem::Expr::BuiltinCall(fun, args)
-                => self.convert_builtin(current, fun, args, range),
             sem::Expr::BuiltinVal(val)
                 => self.convert_literal(current, val, range),
+            sem::Expr::Call(callable, args)
+                => self.convert_call(current, callable, args, range),
             sem::Expr::If(cond, true_, false_)
                 => self.convert_if(current, cond, true_, false_, range),
             sem::Expr::Tuple(tuple)
@@ -213,6 +213,23 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         );
 
         current
+    }
+
+    fn convert_call(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        callable: sem::Callable<'g>,
+        args: &[sem::Value<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        match callable {
+            sem::Callable::Builtin(fun)
+                => self.convert_builtin(current, fun, args, range),
+            sem::Callable::Function(_)
+                => unimplemented!(),
+        }
     }
 
     fn convert_identifier(
@@ -399,8 +416,8 @@ mod tests {
         let val = sem::Value {
             type_: sem::Type::Builtin(sem::BuiltinType::Int),
             range: expr_range,
-            expr: sem::Expr::BuiltinCall(
-                sem::BuiltinFunction::Add,
+            expr: sem::Expr::Call(
+                sem::Callable::Builtin(sem::BuiltinFunction::Add),
                 arguments,
             )
         };
@@ -476,8 +493,10 @@ mod tests {
                         &sem::Value {
                             type_: int,
                             range: range(28, 5),
-                            expr: sem::Expr::BuiltinCall(
-                                sem::BuiltinFunction::Add,
+                            expr: sem::Expr::Call(
+                                sem::Callable::Builtin(
+                                    sem::BuiltinFunction::Add
+                                ),
                                 &[
                                     resolved_variable(a, int),
                                     resolved_variable(b, int),
@@ -521,8 +540,8 @@ mod tests {
                     body: sem::Value {
                         type_: int,
                         range: range(34, 5),
-                        expr: sem::Expr::BuiltinCall(
-                            sem::BuiltinFunction::Add,
+                        expr: sem::Expr::Call(
+                            sem::Callable::Builtin(sem::BuiltinFunction::Add),
                             &[
                                 resolved_argument(first, int),
                                 resolved_argument(second, int),

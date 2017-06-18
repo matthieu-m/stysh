@@ -68,10 +68,8 @@ pub enum Expr<'a> {
     Block(&'a [Stmt<'a>], &'a Value<'a>),
     /// A built-in value.
     BuiltinVal(BuiltinValue<'a>),
-    /// A built-in function call.
-    BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
-    /// A static function call.
-    FunctionCall(&'a FunctionProto<'a>, &'a [Value<'a>]),
+    /// A function call.
+    Call(Callable<'a>, &'a [Value<'a>]),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// A tuple.
@@ -99,6 +97,15 @@ pub enum Stmt<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A variable binding.
     Var(Binding<'a>),
+}
+
+/// A Callable.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Callable<'a> {
+    /// A built-in function.
+    Builtin(BuiltinFunction),
+    /// A static user-defined function.
+    Function(FunctionProto<'a>),
 }
 
 /// A built-in function.
@@ -229,7 +236,7 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
-            Type::Tuple(t) => Type::Tuple(CloneInto::clone_into(&t, arena)),
+            Type::Tuple(t) => Type::Tuple(arena.intern(&t)),
             Type::Builtin(t) => Type::Builtin(t),
             Type::Unresolved(n) => Type::Unresolved(n),
         }

@@ -284,8 +284,8 @@ mod tests {
                         &Value {
                             type_: int,
                             range: range(34, 5),
-                            expr: Expr::BuiltinCall(
-                                BuiltinFunction::Add,
+                            expr: Expr::Call(
+                                Callable::Builtin(BuiltinFunction::Add),
                                 &[
                                     arg(value(9, 1), range(34, 1), int),
                                     arg(value(17, 1), range(38, 1), int),

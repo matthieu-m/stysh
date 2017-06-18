@@ -172,16 +172,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             O::Times => F::Multiply,
         };
 
-        let mut buffer = mem::Array::with_capacity(2, self.local_arena);
-        buffer.push(left);
-        buffer.push(right);
-
-        let arguments = self.global_arena.insert_slice(buffer.into_slice());
-
         sem::Value {
             type_: op.result_type(),
             range: range,
-            expr: sem::Expr::BuiltinCall(op, arguments),
+            expr: sem::Expr::Call(
+                sem::Callable::Builtin(op),
+                self.global_arena.insert_slice(&[left, right])
+            ),
         }
     }
 
@@ -202,8 +199,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             return sem::Value {
                 type_: proto.result,
                 range: fun.range(),
-                expr: sem::Expr::FunctionCall(
-                    self.global_arena.insert(proto),
+                expr: sem::Expr::Call(
+                    sem::Callable::Function(proto),
                     values.into_slice(),
                 ),
             };
@@ -397,8 +394,8 @@ mod tests {
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 5),
-                expr: Expr::BuiltinCall(
-                    BuiltinFunction::Add,
+                expr: Expr::Call(
+                    Callable::Builtin(BuiltinFunction::Add),
                     &[ int(1, left_range), int(2, right_range) ],
                 )
             }
@@ -429,20 +426,17 @@ mod tests {
         let (arg0, arg1) = (range(6, 1), range(9, 1));
 
         let registered = ItemIdentifier(range(42, 5));
-        let basic_fun_prototype = global_arena.insert(
-            FunctionProto {
-                name: registered,
-                range: range(37, 20),
-                arguments: &[],
-                result: Type::Builtin(BuiltinType::Int),
-            }
-        );
-
+        let basic_fun_prototype = FunctionProto {
+            name: registered,
+            range: range(37, 20),
+            arguments: &[],
+            result: Type::Builtin(BuiltinType::Int),
+        };
 
         let mut scope = MockScope::new(fragment, &global_arena);
         scope.functions.insert(
             ItemIdentifier(fragment_range),
-            *basic_fun_prototype,
+            basic_fun_prototype,
         );
 
         assert_eq!(
@@ -461,8 +455,8 @@ mod tests {
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 11),
-                expr: Expr::FunctionCall(
-                    basic_fun_prototype,
+                expr: Expr::Call(
+                    Callable::Function(basic_fun_prototype),
                     &[ int(1, arg0), int(2, arg1), ]
                 )
             }
@@ -600,8 +594,8 @@ mod tests {
                     &Value {
                         type_: Type::Builtin(BuiltinType::Int),
                         range: range(28, 5),
-                        expr: Expr::BuiltinCall(
-                            BuiltinFunction::Add,
+                        expr: Expr::Call(
+                            Callable::Builtin(BuiltinFunction::Add),
                             &[ int_ref(a, a_ref), int_ref(b, b_ref) ]
                         ),
                     }

@@ -71,7 +71,7 @@ pub enum Expr<'a> {
     /// A built-in function call.
     BuiltinCall(BuiltinFunction, &'a [Value<'a>]),
     /// A static function call.
-    FunctionCall(ItemIdentifier, &'a FunctionProto<'a>, &'a [Value<'a>]),
+    FunctionCall(&'a FunctionProto<'a>, &'a [Value<'a>]),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// A tuple.
@@ -135,27 +135,18 @@ pub struct Tuple<'a, T: 'a> {
 
 /// An annotated prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Prototype<'a> {
-    /// The prototype name.
-    pub name: ItemIdentifier,
-    /// The prototype range.
-    pub range: com::Range,
-    /// The prototype itself.
-    pub proto: Proto<'a>,
-}
-
-/// A generic prototype.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Proto<'a> {
+pub enum Prototype<'a> {
     /// A function prototype.
     Fun(FunctionProto<'a>),
-    /// An unresolved prototype.
-    Unresolved(ItemIdentifier),
 }
 
 /// A function prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionProto<'a> {
+    /// The function's identifier.
+    pub name: ItemIdentifier,
+    /// The function's prototype range.
+    pub range: com::Range,
     /// The function's arguments (always arguments).
     pub arguments: &'a [Binding<'a>],
     /// The return type of the function.
@@ -190,6 +181,15 @@ impl<'a> Type<'a> {
     /// Returns an unresolved type.
     pub fn unresolved() -> Type<'a> {
         Type::Unresolved(ItemIdentifier::unresolved())
+    }
+}
+
+impl<'a> Prototype<'a> {
+    /// Returns the range spanned by the prototype.
+    pub fn range(&self) -> com::Range {
+        match *self {
+            Prototype::Fun(fun) => fun.range,
+        }
     }
 }
 
@@ -280,21 +280,9 @@ impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
     type Output = Prototype<'target>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Prototype {
-            name: self.name,
-            range: self.range,
-            proto: CloneInto::clone_into(&self.proto, arena),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Proto<'a> {
-    type Output = Proto<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         match *self {
-            Proto::Fun(fun) => Proto::Fun(CloneInto::clone_into(&fun, arena)),
-            Proto::Unresolved(id) => Proto::Unresolved(id),
+            Prototype::Fun(fun)
+                => Prototype::Fun(CloneInto::clone_into(&fun, arena)),
         }
     }
 }
@@ -304,6 +292,8 @@ impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         FunctionProto {
+            name: self.name,
+            range: self.range,
             arguments: CloneInto::clone_into(self.arguments, arena),
             result: CloneInto::clone_into(&self.result, arena),
         }

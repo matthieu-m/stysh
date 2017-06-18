@@ -199,29 +199,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             let identifier = sem::ItemIdentifier(id.0);
             let proto = self.scope.lookup_function(identifier);
 
-            return if let sem::Proto::Fun(fun_proto) = proto.proto {
-                sem::Value {
-                    type_: fun_proto.result,
-                    range: fun.range(),
-                    expr: sem::Expr::FunctionCall(
-                        proto.name,
-                        self.global_arena.insert(fun_proto),
-                        values.into_slice(),
-                    ),
-                }
-            } else {
-                sem::Value {
-                    type_: sem::Type::unresolved(),
-                    range: fun.range(),
-                    expr: sem::Expr::FunctionCall(
-                        identifier,
-                        self.global_arena.insert(sem::FunctionProto {
-                            arguments: &[],
-                            result: sem::Type::unresolved(),
-                        }),
-                        values.into_slice(),
-                    )
-                }
+            return sem::Value {
+                type_: proto.result,
+                range: fun.range(),
+                expr: sem::Expr::FunctionCall(
+                    self.global_arena.insert(proto),
+                    values.into_slice(),
+                ),
             };
         }
 
@@ -444,23 +428,21 @@ mod tests {
         let fragment_range = range(0, 5);
         let (arg0, arg1) = (range(6, 1), range(9, 1));
 
+        let registered = ItemIdentifier(range(42, 5));
         let basic_fun_prototype = global_arena.insert(
             FunctionProto {
+                name: registered,
+                range: range(37, 20),
                 arguments: &[],
                 result: Type::Builtin(BuiltinType::Int),
             }
         );
 
-        let registered = ItemIdentifier(range(42, 5));
 
         let mut scope = MockScope::new(fragment, &global_arena);
         scope.functions.insert(
             ItemIdentifier(fragment_range),
-            Prototype {
-                name: registered,
-                range: range(37, 20),
-                proto: Proto::Fun(*basic_fun_prototype),
-            }
+            *basic_fun_prototype,
         );
 
         assert_eq!(
@@ -480,7 +462,6 @@ mod tests {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 11),
                 expr: Expr::FunctionCall(
-                    registered,
                     basic_fun_prototype,
                     &[ int(1, arg0), int(2, arg1), ]
                 )
@@ -630,7 +611,7 @@ mod tests {
     }
 
     struct MockScope<'g> {
-        functions: mem::ArrayMap<'g, ItemIdentifier, Prototype<'g>>,
+        functions: mem::ArrayMap<'g, ItemIdentifier, FunctionProto<'g>>,
         types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
         values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
         parent: scp::BuiltinScope<'g>,
@@ -656,7 +637,7 @@ mod tests {
             self.parent.lookup_binding(name)
         }
 
-        fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+        fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
             if let Some(&v) = self.functions.get(&name) {
                 return v;
             }

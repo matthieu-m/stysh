@@ -510,6 +510,8 @@ mod tests {
                 &global_arena,
                 &sem::Function {
                     prototype: &sem::FunctionProto {
+                        name: sem::ItemIdentifier(range(0, 0)),
+                        range: range(0, 0),
                         arguments: &[
                             argument(first, int),
                             argument(second, int),

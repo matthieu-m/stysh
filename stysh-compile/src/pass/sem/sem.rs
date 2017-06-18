@@ -55,15 +55,15 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         -> sem::Item<'g>
     {
         debug_assert!(
-            item.range().offset() == proto.range.offset(),
+            item.range().offset() == proto.range().offset(),
             "Mismatched item and prototype: {} vs {}",
             item.range(),
-            proto.range
+            proto.range()
         );
 
-        match (*item, &proto.proto) {
-            (syn::Item::Fun(i), &sem::Proto::Fun(ref p)) => self.fun_item(i, p),
-            _ => unimplemented!(),
+        match (*item, proto) {
+            (syn::Item::Fun(i), &sem::Prototype::Fun(ref p))
+                => self.fun_item(i, p),
         }
     }
 }
@@ -75,31 +75,28 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
     fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
         let builtin = self.builtin_scope();
 
-        let mut buffer = mem::Array::new(self.local_arena);
+        let mut arguments =
+            mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
 
         for a in fun.arguments {
-            buffer.push(sem::Binding::Argument(
+            arguments.push(sem::Binding::Argument(
                 sem::ValueIdentifier(a.name.0),
                 self.resolver(&builtin).type_of(&a.type_),
                 a.range()
             ));
         }
 
-        let arguments = self.global_arena.insert_slice(buffer.into_slice());
-
-        sem::Prototype {
-            name: sem::ItemIdentifier(fun.name.0),
-            range: com::Range::new(
-                fun.keyword as usize,
-                fun.result.range().end_offset() - (fun.keyword as usize)
-            ),
-            proto: sem::Proto::Fun(
-                sem::FunctionProto {
-                    arguments: arguments,
-                    result: self.resolver(&builtin).type_of(&fun.result),
-                }
-            ),
-        }
+        sem::Prototype::Fun(
+            sem::FunctionProto {
+                name: sem::ItemIdentifier(fun.name.0),
+                range: com::Range::new(
+                    fun.keyword as usize,
+                    fun.result.range().end_offset() - (fun.keyword as usize)
+                ),
+                arguments: arguments.into_slice(),
+                result: self.resolver(&builtin).type_of(&fun.result),
+            }
+        )
     }
 
     fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
@@ -192,27 +189,25 @@ mod tests {
                     }
                 )
             ),
-            Prototype {
-                name: ItemIdentifier(range(5, 3)),
-                range: range(0, 31),
-                proto: Proto::Fun(
-                    FunctionProto {
-                        arguments: &[
-                            Binding::Argument(
-                                ValueIdentifier(range(9, 1)),
-                                int,
-                                range(9, 7),
-                            ),
-                            Binding::Argument(
-                                ValueIdentifier(range(17, 1)),
-                                int,
-                                range(17, 6),
-                            ),
-                        ],
-                        result: int,
-                    }
-                ),
-            }
+            Prototype::Fun(
+                FunctionProto {
+                    name: ItemIdentifier(range(5, 3)),
+                    range: range(0, 31),
+                    arguments: &[
+                        Binding::Argument(
+                            ValueIdentifier(range(9, 1)),
+                            int,
+                            range(9, 7),
+                        ),
+                        Binding::Argument(
+                            ValueIdentifier(range(17, 1)),
+                            int,
+                            range(17, 6),
+                        ),
+                    ],
+                    result: int,
+                }
+            )
         );
     }
 
@@ -222,6 +217,8 @@ mod tests {
         let int = Type::Builtin(BuiltinType::Int);
 
         let function_proto = FunctionProto {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 31),
             arguments: &[
                 Binding::Argument(value(9, 1), int, range(9, 7)),
                 Binding::Argument(value(17, 1), int, range(17, 6)),
@@ -229,11 +226,7 @@ mod tests {
             result: int,
         };
 
-        let prototype = Prototype {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 31),
-            proto: Proto::Fun(function_proto),
-        };
+        let prototype = Prototype::Fun(function_proto);
 
         let arg = resolved_argument;
 
@@ -328,15 +321,13 @@ mod tests {
         let tuple_type = Tuple { fields: &[int, int] };
 
         let function_proto = FunctionProto {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 24),
             arguments: &[],
             result: Type::Tuple(tuple_type),
         };
 
-        let prototype = Prototype {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 24),
-            proto: Proto::Fun(function_proto),
-        };
+        let prototype = Prototype::Fun(function_proto);
 
         assert_eq!(
             itemit(

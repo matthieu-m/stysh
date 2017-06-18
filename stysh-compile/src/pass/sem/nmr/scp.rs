@@ -4,8 +4,7 @@ use basic::{com, mem};
 use basic::mem::CloneInto;
 
 use model::sem::{
-    self, Binding, Expr, FunctionProto, ItemIdentifier, Prototype, Type, Value,
-    ValueIdentifier
+    Binding, Expr, FunctionProto, ItemIdentifier, Type, Value, ValueIdentifier
 };
 
 /// A Lexical Scope trait.
@@ -14,7 +13,7 @@ pub trait Scope<'g> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g>;
 
     /// Find the definition of a function, if known.
-    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g>;
+    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g>;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g>;
@@ -29,11 +28,12 @@ pub trait Scope<'g> {
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_prototype(&self, name: ItemIdentifier) -> Prototype<'g> {
-        Prototype {
+    fn unresolved_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+        FunctionProto {
             name: ItemIdentifier::unresolved(),
             range: com::Range::default(),
-            proto: sem::Proto::Unresolved(name),
+            arguments: &[],
+            result: Type::Unresolved(name),
         }
     }
 
@@ -102,7 +102,7 @@ pub struct BlockScope<'a, 'g, 'local>
 {
     source: &'local [u8],
     parent: &'a Scope<'g>,
-    items: SourceMap<'local, Prototype<'local>>,
+    functions: SourceMap<'local, FunctionProto<'local>>,
     values: SourceMap<'local, (ValueIdentifier, Type<'local>)>,
     global_arena: &'g mem::Arena,
 }
@@ -120,7 +120,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
         BlockScope {
             source: source,
             parent: parent,
-            items: SourceMap::new(local_arena),
+            functions: SourceMap::new(local_arena),
             values: SourceMap::new(local_arena),
             global_arena: global_arena
         }
@@ -137,8 +137,8 @@ impl<'g> Scope<'g> for () {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
-        self.unresolved_prototype(name)
+    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+        self.unresolved_function(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -151,8 +151,8 @@ impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
-        self.unresolved_prototype(name)
+    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+        self.unresolved_function(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -184,7 +184,7 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
         self.unresolved_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
+    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
         self.parent.lookup_function(name)
     }
 
@@ -206,8 +206,8 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
         self.parent.lookup_binding(name)
     }
 
-    fn lookup_function(&self, name: ItemIdentifier) -> Prototype<'g> {
-        if let Some(proto) = self.items.get(&&self.source[name.0]) {
+    fn lookup_function(&self, name: ItemIdentifier) -> FunctionProto<'g> {
+        if let Some(proto) = self.functions.get(&&self.source[name.0]) {
             return CloneInto::clone_into(proto, self.global_arena);
         }
 
@@ -241,6 +241,8 @@ mod tests {
         let source = b":fun random() -> Int { a }";
 
         let prot = FunctionProto {
+            name: ItemIdentifier(range(5, 6)),
+            range: range(0, 20),
             arguments: &[],
             result: Type::Builtin(BuiltinType::Int),
         };
@@ -262,6 +264,8 @@ mod tests {
         let source = b":fun add(a: Int, b: Int) -> Int { a + b + c }";
 
         let prot = FunctionProto {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 55),
             arguments: &[
                 Binding::Argument(
                     ValueIdentifier(range(9, 1)),

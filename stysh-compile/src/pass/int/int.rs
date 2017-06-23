@@ -4,35 +4,48 @@
 
 use basic::{com, mem};
 use model::{sem, sir};
+use super::reg::Registry;
 
 /// Stysh Interpreter.
 ///
 /// Interprets a SIR control flow graph based on a type dictionary, producing
 /// either a value, or an error if the interpretation cannot succeed (missing
 /// definitions, FFI call, ...).
-pub struct Interpreter<'g, 'local> {
-    #[allow(dead_code)]
+pub struct Interpreter<'g, 'local>
+    where 'g: 'local
+{
+    registry: &'g Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> Interpreter<'g, 'local> {
+impl<'g, 'local> Interpreter<'g, 'local>
+    where 'g: 'local
+{
     /// Creates a new instance of an interpreter.
-    pub fn new(global: &'g mem::Arena, local: &'local mem::Arena)
+    pub fn new(
+        registry: &'g Registry<'g>,
+        global: &'g mem::Arena,
+        local: &'local mem::Arena
+    )
         -> Interpreter<'g, 'local>
     {
-        Interpreter { global_arena: global, local_arena: local }
+        Interpreter {
+            registry: registry,
+            global_arena: global,
+            local_arena: local
+        }
     }
 
     /// Returns the value evaluated from the SIR.
     pub fn evaluate(
         &self,
-        cfg: &'local sir::ControlFlowGraph,
+        cfg: &sir::ControlFlowGraph<'g>,
         arguments: &'local [sem::Value<'local>],
     )
         -> sem::Value<'g>
     {
-        let frame = FrameInterpreter::new(self.local_arena);
+        let frame = FrameInterpreter::new(self.registry, self.local_arena);
         self.global_arena.intern(&frame.evaluate(cfg, arguments))
     }
 }
@@ -40,32 +53,43 @@ impl<'g, 'local> Interpreter<'g, 'local> {
 //
 //  Implementation Details
 //
-struct FrameInterpreter<'a> {
-    arena: &'a mem::Arena,
+struct FrameInterpreter<'g, 'local>
+    where 'g: 'local
+{
+    registry: &'g Registry<'g>,
+    arena: &'local mem::Arena,
 }
 
-impl<'a> FrameInterpreter<'a> {
-    fn new(arena: &'a mem::Arena) -> FrameInterpreter<'a> {
-        FrameInterpreter { arena: arena }
+impl<'g, 'local> FrameInterpreter<'g, 'local>
+    where 'g: 'local
+{
+    fn new(registry: &'g Registry<'g>, arena: &'local mem::Arena)
+        -> FrameInterpreter<'g, 'local>
+    {
+        FrameInterpreter { registry: registry, arena: arena }
     }
 
     fn evaluate(
         &self,
-        cfg: &'a sir::ControlFlowGraph<'a>,
-        arguments: &'a [sem::Value<'a>]
+        cfg: &sir::ControlFlowGraph<'g>,
+        arguments: &'local [sem::Value<'local>]
     )
-        -> sem::Value<'a>
+        -> sem::Value<'local>
     {
         use self::BlockResult::*;
 
-        fn interpret_block<'a>(
-            arena: &'a mem::Arena,
-            block: &'a sir::BasicBlock<'a>,
-            arguments: &'a [sem::Value<'a>],
+        fn interpret_block<'g, 'local>(
+            registry: &'g Registry<'g>,
+            arena: &'local mem::Arena,
+            block: &'g sir::BasicBlock<'g>,
+            arguments: &'local [sem::Value<'local>],
         )
-            -> BlockResult<'a>
+            -> BlockResult<'local>
+        where
+            'g: 'local
         {
-            let mut interpreter = BlockInterpreter::new(arena, arguments);
+            let mut interpreter =
+                BlockInterpreter::new(registry, arena, arguments);
             interpreter.evaluate(block)
         }
 
@@ -75,6 +99,7 @@ impl<'a> FrameInterpreter<'a> {
         //  TODO(matthieum): add way to parameterize fuel.
         for _ in 0..1000 {
             let (i, args) = match interpret_block(
+                self.registry,
                 self.arena,
                 &cfg.blocks[index],
                 arguments
@@ -95,24 +120,36 @@ impl<'a> FrameInterpreter<'a> {
     }
 }
 
-struct BlockInterpreter<'a> {
-    arena: &'a mem::Arena,
-    arguments: &'a [sem::Value<'a>],
-    bindings: mem::Array<'a, sem::Value<'a>>,
+struct BlockInterpreter<'g, 'local>
+    where 'g: 'local
+{
+    registry: &'g Registry<'g>,
+    arena: &'local mem::Arena,
+    arguments: &'local [sem::Value<'local>],
+    bindings: mem::Array<'local, sem::Value<'local>>,
 }
 
-impl<'a> BlockInterpreter<'a> {
-    fn new(arena: &'a mem::Arena, arguments: &'a [sem::Value<'a>])
-        -> BlockInterpreter<'a>
+impl<'g, 'local> BlockInterpreter<'g, 'local>
+    where 'g: 'local
+{
+    fn new(
+        registry: &'g Registry<'g>,
+        arena: &'local mem::Arena,
+        arguments: &'local [sem::Value<'local>]
+    )
+        -> BlockInterpreter<'g, 'local>
     {
         BlockInterpreter {
+            registry: registry,
             arena: arena,
             arguments: arguments,
             bindings: mem::Array::new(arena)
         }
     }
 
-    fn evaluate(&mut self, block: &'a sir::BasicBlock<'a>) -> BlockResult<'a> {
+    fn evaluate(&mut self, block: &sir::BasicBlock<'g>)
+        -> BlockResult<'local>
+    {
         use model::sir::TerminatorInstruction::*;
 
         for i in block.instructions {
@@ -128,7 +165,8 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn eval_instr(&self, instr: &'a sir::Instruction<'a>) -> sem::Value<'a> {
+    fn eval_instr(&self, instr: &sir::Instruction<'g>) -> sem::Value<'local>
+    {
         use model::sir::Instruction::*;
 
         match *instr {
@@ -138,27 +176,46 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn eval_call(&self, fun: sem::Callable<'a>, args: &'a [sir::ValueId])
-        -> sem::Value<'a>
+    fn eval_call(&self, fun: sem::Callable, args: &[sir::ValueId])
+        -> sem::Value<'local>
     {
         match fun {
             sem::Callable::Builtin(b) => self.eval_builtin(b, args),
+            sem::Callable::Function(ref f) => self.eval_function(f, args),
             _ => unimplemented!(),
         }
     }
 
-    fn eval_builtin(&self, fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
-        -> sem::Value<'a>
+    fn eval_builtin(&self, fun: sem::BuiltinFunction, args: &[sir::ValueId])
+        -> sem::Value<'local>
     {
         self.eval_binary_fun(fun, args)
+    }
+
+    fn eval_function(
+        &self,
+        fun: &sem::FunctionProto,
+        args: &[sir::ValueId]
+    )
+        -> sem::Value<'local>
+    {
+        let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
+        let interpreter = FrameInterpreter::new(self.registry, self.arena);
+
+        let mut arguments = mem::Array::with_capacity(args.len(), self.arena);
+        for &a in args {
+            arguments.push(self.get_value(a));
+        }
+
+        self.arena.intern(&interpreter.evaluate(&cfg, arguments.into_slice()))
     }
 
     fn eval_binary_fun(
         &self,
         fun: sem::BuiltinFunction,
-        args: &'a [sir::ValueId]
+        args: &[sir::ValueId]
     )
-        -> sem::Value<'a>
+        -> sem::Value<'local>
     {
         use model::sem::BuiltinFunction::*;
         use model::sem::BuiltinValue::{Bool, Int};
@@ -202,11 +259,11 @@ impl<'a> BlockInterpreter<'a> {
 
     fn eval_new(
         &self,
-        type_: sem::Type<'a>,
+        type_: sem::Type<'local>,
         fields: &[sir::ValueId],
         range: com::Range
     )
-        -> sem::Value<'a>
+        -> sem::Value<'local>
     {
         let mut elements = mem::Array::with_capacity(fields.len(), self.arena);
 
@@ -221,7 +278,9 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn load(&self, v: sem::BuiltinValue, range: com::Range) -> sem::Value<'a> {
+    fn load(&self, v: sem::BuiltinValue, range: com::Range)
+        -> sem::Value<'local>
+    {
         let type_ = match v {
             sem::BuiltinValue::Bool(_) => sem::BuiltinType::Bool,
             sem::BuiltinValue::Int(_) => sem::BuiltinType::Int,
@@ -237,7 +296,7 @@ impl<'a> BlockInterpreter<'a> {
         self.arena.intern(&value)
     }
 
-    fn get_value(&self, id: sir::ValueId) -> sem::Value<'a> {
+    fn get_value(&self, id: sir::ValueId) -> sem::Value<'local> {
         if let Some(i) = id.as_instruction() {
             self.bindings[i]
         } else {
@@ -254,7 +313,7 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn jump(&self, jump: &sir::Jump) -> BlockResult<'a> {
+    fn jump(&self, jump: &sir::Jump) -> BlockResult<'local> {
         let mut arguments =
             mem::Array::with_capacity(jump.arguments.len(), self.arena);
 
@@ -278,6 +337,7 @@ enum BlockResult<'a> {
 mod tests {
     use basic::{com, mem};
     use model::{sem, sir};
+    use super::super::reg::{Registry, SimpleRegistry};
 
     #[test]
     fn add_no_arguments() {
@@ -365,6 +425,59 @@ mod tests {
     }
 
     #[test]
+    fn call_user_defined_function() {
+        let global_arena = mem::Arena::new();
+        let mut registry = SimpleRegistry::new(&global_arena);
+
+        let id = sem::ItemIdentifier(range(42, 5));
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        
+        registry.insert(
+            id,
+            global_arena.intern(&sir::ControlFlowGraph {
+                blocks: &[
+                    block_return(
+                        &[],
+                        &[
+                            instr_load_int(1),
+                        ],
+                    ),
+                ],
+            })
+        );
+
+        let cfg = global_arena.intern(
+            &sir::ControlFlowGraph {
+                blocks: &[block_return(
+                    &[],
+                    &[
+                        sir::Instruction::Call(
+                            sem::Callable::Function(sem::FunctionProto {
+                                name: id,
+                                range: range(0, 0),
+                                arguments: &[],
+                                result: int,
+                            }),
+                            &[],
+                            range(0, 0),
+                        )
+                    ]
+                )],
+            }
+        );
+
+        assert_eq!(
+            eval_with_registry(
+                &global_arena,
+                &registry,
+                &[],
+                &cfg
+            ),
+            sem_int(1)
+        );
+    }
+
+    #[test]
     fn new_tuple() {
         let global_arena = mem::Arena::new();
 
@@ -425,18 +538,30 @@ mod tests {
 
     fn eval<'g>(
         global_arena: &'g mem::Arena,
-        arguments: &[sem::Value],
-        cfg: &sir::ControlFlowGraph
+        arguments: &[sem::Value<'g>],
+        cfg: &sir::ControlFlowGraph<'g>
+    )
+        -> sem::Value<'g>
+    {
+        let registry = SimpleRegistry::new(global_arena);
+        global_arena.intern(
+            &eval_with_registry(global_arena, &registry, arguments, cfg)
+        )
+    }
+
+    fn eval_with_registry<'g>(
+        global_arena: &'g mem::Arena,
+        registry: &'g Registry<'g>,
+        arguments: &[sem::Value<'g>],
+        cfg: &sir::ControlFlowGraph<'g>,
     )
         -> sem::Value<'g>
     {
         use super::Interpreter;
 
         let mut local_arena = mem::Arena::new();
-
-        let result =
-            Interpreter::new(global_arena, &local_arena)
-                .evaluate(cfg, arguments);
+        let result = Interpreter::new(registry, global_arena, &local_arena)
+            .evaluate(cfg, arguments);
         local_arena.recycle();
 
         result

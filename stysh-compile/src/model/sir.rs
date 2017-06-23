@@ -32,7 +32,7 @@
 
 use std;
 
-use basic::com;
+use basic::{com, mem};
 use model::sem;
 
 /// A Control Flow Graph.
@@ -179,6 +179,88 @@ impl ValueId {
 //  Implementation Details
 //
 const VALUE_ID_ARGUMENT_MASK: u16 = 1u16 << 15;
+
+impl<'a, 'target> mem::CloneInto<'target> for ControlFlowGraph<'a> {
+    type Output = ControlFlowGraph<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        ControlFlowGraph {
+            blocks: mem::CloneInto::clone_into(self.blocks, arena)
+        }
+    }
+}
+
+impl<'a, 'target> mem::CloneInto<'target> for BasicBlock<'a> {
+    type Output = BasicBlock<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        BasicBlock {
+            arguments: mem::CloneInto::clone_into(self.arguments, arena),
+            instructions: mem::CloneInto::clone_into(self.instructions, arena),
+            exit: arena.intern(&self.exit),
+        }
+    }
+}
+
+impl<'a, 'target> mem::CloneInto<'target> for Instruction<'a> {
+    type Output = Instruction<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Instruction::*;
+
+        match *self {
+            Call(f, a, r) => Call(
+                arena.intern(&f),
+                mem::CloneInto::clone_into(a, arena),
+                r
+            ),
+            Load(v, r) => Load(arena.intern(&v), r),
+            New(t, a, r) => New(
+                arena.intern(&t),
+                mem::CloneInto::clone_into(a, arena),
+                r
+            ),
+        }
+    }
+}
+
+impl<'a, 'target> mem::CloneInto<'target> for TerminatorInstruction<'a> {
+    type Output = TerminatorInstruction<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::TerminatorInstruction::*;
+
+        match *self {
+            Branch(v, j) => Branch(v, mem::CloneInto::clone_into(j, arena)),
+            Jump(j) => Jump(arena.intern(&j)),
+            Return(v) => Return(v),
+            Unreachable => Unreachable,
+        }
+    }
+}
+
+impl<'a, 'target> mem::CloneInto<'target> for Jump<'a> {
+    type Output = Jump<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Jump {
+            dest: self.dest,
+            arguments: mem::CloneInto::clone_into(self.arguments, arena),
+        }
+    }
+}
+
+impl<'target> mem::CloneInto<'target> for BlockId {
+    type Output = BlockId;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
+}
+
+impl<'target> mem::CloneInto<'target> for ValueId {
+    type Output = ValueId;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
+}
 
 impl<'a> std::fmt::Display for ControlFlowGraph<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {

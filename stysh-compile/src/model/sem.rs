@@ -302,6 +302,21 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Callable<'a> {
+    type Output = Callable<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Callable::*;
+
+        match *self {
+            Builtin(f) => Builtin(f),
+            Function(ref f) => Function(arena.intern(f)),
+            Unknown(v) => Unknown(v),
+            Unresolved(c) => Unresolved(CloneInto::clone_into(c, arena)),
+        }
+    }
+}
+
 impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
     type Output = Prototype<'target>;
 

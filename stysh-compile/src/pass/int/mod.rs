@@ -16,5 +16,7 @@
 //! provided by a plugin system, later.
 
 mod int;
+mod reg;
 
 pub use self::int::Interpreter;
+pub use self::reg::{Registry, SimpleRegistry};

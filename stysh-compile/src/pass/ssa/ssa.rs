@@ -196,25 +196,6 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         self.convert_value(current, value)
     }
 
-    fn convert_builtin(
-        &mut self,
-        current: ProtoBlock<'g, 'local>,
-        fun: sem::BuiltinFunction,
-        args: &[sem::Value<'g>],
-        range: com::Range,
-    )
-        -> ProtoBlock<'g, 'local>
-    {
-        let (mut current, arguments) =
-            self.convert_array_of_values(current, args);
-
-        current.push_instr(
-            sir::Instruction::CallBuiltin(fun, arguments, range)
-        );
-
-        current
-    }
-
     fn convert_call(
         &mut self,
         current: ProtoBlock<'g, 'local>,
@@ -224,13 +205,12 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        match callable {
-            sem::Callable::Builtin(fun)
-                => self.convert_builtin(current, fun, args, range),
-            sem::Callable::Function(_)
-                => unimplemented!(),
-            _ => unimplemented!(),
-        }
+        let (mut current, arguments) =
+            self.convert_array_of_values(current, args);
+
+        current.push_instr(sir::Instruction::Call(callable, arguments, range));
+
+        current
     }
 
     fn convert_identifier(
@@ -429,7 +409,7 @@ mod tests {
                 "0 ():",
                 "    $0 := load 1 ; 1@0",
                 "    $1 := load 2 ; 1@4",
-                "    $2 := add($0, $1) ; 5@0",
+                "    $2 := __add__($0, $1) ; 5@0",
                 "    return $2",
                 ""
             ])
@@ -511,7 +491,7 @@ mod tests {
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
                 "    $1 := load 2 ; 1@25",
-                "    $2 := add($0, $1) ; 5@28",
+                "    $2 := __add__($0, $1) ; 5@28",
                 "    return $2",
                 ""
             ])
@@ -553,7 +533,7 @@ mod tests {
             ).to_string(),
             cat(&[
                 "0 (Int, Int):",
-                "    $0 := add(@0, @1) ; 5@34",
+                "    $0 := __add__(@0, @1) ; 5@34",
                 "    return $0",
                 ""
             ])

@@ -393,16 +393,36 @@ impl std::fmt::Display for BuiltinFunction {
         use self::BuiltinFunction::*;
 
         match *self {
-            Add => write!(f, "add"),
-            Differ => write!(f, "ne"),
-            Equal => write!(f, "eq"),
-            FloorDivide => write!(f, "fdiv"),
-            GreaterThan => write!(f, "gt"),
-            GreaterThanOrEqual => write!(f, "gte"),
-            LessThan => write!(f, "lt"),
-            LessThanOrEqual => write!(f, "lte"),
-            Multiply => write!(f, "mul"),
-            Substract => write!(f, "sub"),
+            Add => write!(f, "__add__"),
+            Differ => write!(f, "__ne__"),
+            Equal => write!(f, "__eq__"),
+            FloorDivide => write!(f, "__fdiv__"),
+            GreaterThan => write!(f, "__gt__"),
+            GreaterThanOrEqual => write!(f, "__gte__"),
+            LessThan => write!(f, "__lt__"),
+            LessThanOrEqual => write!(f, "__lte__"),
+            Multiply => write!(f, "__mul__"),
+            Substract => write!(f, "__sub__"),
+        }
+    }
+}
+
+impl<'a> std::fmt::Display for Callable<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        use self::Callable::*;
+
+        match *self {
+            Builtin(b) => write!(f, "{}", b),
+            Function(fun) => write!(f, "<{}>", fun.name.0),
+            Unknown(_) => write!(f, "<unknown>"),
+            Unresolved(funs) => {
+                write!(f, "<unresolved: ")?;
+                for (i, e) in funs.iter().enumerate() {
+                    if i != 0 { write!(f, ", ")? }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ">")
+            },
         }
     }
 }

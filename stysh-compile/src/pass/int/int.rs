@@ -132,9 +132,18 @@ impl<'a> BlockInterpreter<'a> {
         use model::sir::Instruction::*;
 
         match *instr {
-            CallBuiltin(fun, args, _) => self.eval_builtin(fun, args),
+            Call(fun, args, _) => self.eval_call(fun, args),
             Load(value, range) => self.load(value, range),
             New(type_, fields, range) => self.eval_new(type_, fields, range),
+        }
+    }
+
+    fn eval_call(&self, fun: sem::Callable<'a>, args: &'a [sir::ValueId])
+        -> sem::Value<'a>
+    {
+        match fun {
+            sem::Callable::Builtin(b) => self.eval_builtin(b, args),
+            _ => unimplemented!(),
         }
     }
 
@@ -460,7 +469,7 @@ mod tests {
     fn instr_builtin<'a>(fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
         -> sir::Instruction<'a>
     {
-        sir::Instruction::CallBuiltin(fun, args, range(0, 0))
+        sir::Instruction::Call(sem::Callable::Builtin(fun), args, range(0, 0))
     }
 
     fn instr_load_bool(value: bool) -> sir::Instruction<'static> {

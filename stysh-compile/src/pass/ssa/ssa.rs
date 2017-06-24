@@ -399,7 +399,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::sem;
+    use model::sem::*;
     use model::sir::*;
 
 
@@ -411,11 +411,11 @@ mod tests {
         let arguments = &[left, right];
         let expr_range = range(0, 5);
 
-        let val = sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+        let val = Value {
+            type_: Type::Builtin(BuiltinType::Int),
             range: expr_range,
-            expr: sem::Expr::Call(
-                sem::Callable::Builtin(sem::BuiltinFunction::Add),
+            expr: Expr::Call(
+                Callable::Builtin(BuiltinFunction::Add),
                 arguments,
             )
         };
@@ -437,15 +437,15 @@ mod tests {
     fn tuple_simple() {
         let global_arena = mem::Arena::new();
 
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = Type::Builtin(BuiltinType::Int);
 
         assert_eq!(
             valueit(
                 &global_arena,
-                &sem::Value {
-                    type_: sem::Type::Tuple(sem::Tuple { fields: &[int, int] }),
+                &Value {
+                    type_: Type::Tuple(Tuple { fields: &[int, int] }),
                     range: range(0, 5),
-                    expr: sem::Expr::Tuple(sem::Tuple {
+                    expr: Expr::Tuple(Tuple {
                         fields: &[lit_integral(1, 0, 1), lit_integral(2, 4, 1)]
                     }),
                 }
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn block_simple() {
         let global_arena = mem::Arena::new();
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = Type::Builtin(BuiltinType::Int);
 
         //  { :var a := 1; :var b := 2; a + b }
         let (a, b) = (value(7, 1), value(20, 1));
@@ -472,28 +472,28 @@ mod tests {
         assert_eq!(
             valueit(
                 &global_arena,
-                &sem::Value {
-                    type_: sem::Type::Builtin(sem::BuiltinType::Int),
+                &Value {
+                    type_: Type::Builtin(BuiltinType::Int),
                     range: range(0, 35),
-                    expr: sem::Expr::Block(
+                    expr: Expr::Block(
                         &[
-                            sem::Stmt::Var(sem::Binding::Variable(
+                            Stmt::Var(Binding::Variable(
                                 a,
                                 lit_integral(1, 12, 1),
                                 range(2, 12)
                             )),
-                            sem::Stmt::Var(sem::Binding::Variable(
+                            Stmt::Var(Binding::Variable(
                                 b,
                                 lit_integral(2, 25, 1),
                                 range(15, 12)
                             )),
                         ],
-                        &sem::Value {
+                        &Value {
                             type_: int,
                             range: range(28, 5),
-                            expr: sem::Expr::Call(
-                                sem::Callable::Builtin(
-                                    sem::BuiltinFunction::Add
+                            expr: Expr::Call(
+                                Callable::Builtin(
+                                    BuiltinFunction::Add
                                 ),
                                 &[
                                     resolved_variable(a, int),
@@ -518,16 +518,16 @@ mod tests {
     #[test]
     fn fun_simple() {
         let global_arena = mem::Arena::new();
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = Type::Builtin(BuiltinType::Int);
 
         let (first, second) = (value(9, 1), value(17, 1));
 
         assert_eq!(
             funit(
                 &global_arena,
-                &sem::Function {
-                    prototype: &sem::FunctionProto {
-                        name: sem::ItemIdentifier(range(0, 0)),
+                &Function {
+                    prototype: &FunctionProto {
+                        name: ItemIdentifier(range(0, 0)),
                         range: range(0, 0),
                         arguments: &[
                             argument(first, int),
@@ -535,11 +535,11 @@ mod tests {
                         ],
                         result: int,
                     },
-                    body: sem::Value {
+                    body: Value {
                         type_: int,
                         range: range(34, 5),
-                        expr: sem::Expr::Call(
-                            sem::Callable::Builtin(sem::BuiltinFunction::Add),
+                        expr: Expr::Call(
+                            Callable::Builtin(BuiltinFunction::Add),
                             &[
                                 resolved_argument(first, int),
                                 resolved_argument(second, int),
@@ -560,30 +560,30 @@ mod tests {
     #[test]
     fn if_simple() {
         let global_arena = mem::Arena::new();
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = Type::Builtin(BuiltinType::Int);
 
         //  "if true { 1 } else { 2 }"
 
         assert_eq!(
             valueit(
                 &global_arena,
-                &sem::Value {
+                &Value {
                     type_: int,
                     range: range(0, 24),
-                    expr: sem::Expr::If(
+                    expr: Expr::If(
                         &bool_literal(true, 3, 4),
-                        &sem::Value {
+                        &Value {
                             type_: int,
                             range: range(8, 5),
-                            expr: sem::Expr::Block(
+                            expr: Expr::Block(
                                 &[],
                                 &lit_integral(1, 10, 1),
                             ),
                         },
-                        &sem::Value {
+                        &Value {
                             type_: int,
                             range: range(19, 5),
-                            expr: sem::Expr::Block(
+                            expr: Expr::Block(
                                 &[],
                                 &lit_integral(2, 21, 1),
                             ),
@@ -613,8 +613,7 @@ mod tests {
 
     #[test]
     fn if_with_arguments() {
-        use self::sem::*;
-        use self::sem::BuiltinFunction::*;
+        use self::BuiltinFunction::*;
 
         let global_arena = mem::Arena::new();
         let bool_ = Type::Builtin(BuiltinType::Bool);
@@ -725,7 +724,7 @@ mod tests {
         )
     }
 
-    fn valueit<'g>(global_arena: &'g mem::Arena, expr: &sem::Value<'g>)
+    fn valueit<'g>(global_arena: &'g mem::Arena, expr: &Value<'g>)
         -> ControlFlowGraph<'g>
     {
         use pass::ssa::GraphBuilder;
@@ -740,7 +739,7 @@ mod tests {
         result
     }
 
-    fn funit<'g>(global_arena: &'g mem::Arena, fun: &sem::Function<'g>)
+    fn funit<'g>(global_arena: &'g mem::Arena, fun: &Function<'g>)
         -> ControlFlowGraph<'g>
     {
         use pass::ssa::GraphBuilder;
@@ -755,49 +754,49 @@ mod tests {
         result
     }
 
-    fn argument<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
-        -> sem::Binding<'a>
+    fn argument<'a>(value: ValueIdentifier, type_: Type<'a>)
+        -> Binding<'a>
     {
-        sem::Binding::Argument(value, type_, range(0, 0))
+        Binding::Argument(value, type_, range(0, 0))
     }
 
     fn bool_literal(value: bool, offset: usize, length: usize)
-        -> sem::Value<'static>
+        -> Value<'static>
     {
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Bool),
+        Value {
+            type_: Type::Builtin(BuiltinType::Bool),
             range: range(offset, length),
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
+            expr: Expr::BuiltinVal(BuiltinValue::Bool(value)),
         }
     }
 
     fn block<'a>(
-        type_: sem::Type<'a>,
+        type_: Type<'a>,
         range: com::Range,
-        stmts: &'a [sem::Stmt<'a>],
-        value: &'a sem::Value<'a>
+        stmts: &'a [Stmt<'a>],
+        value: &'a Value<'a>
     )
-        -> sem::Value<'a>
+        -> Value<'a>
     {
-        sem::Value {
+        Value {
             type_: type_,
             range: range,
-            expr: sem::Expr::Block(stmts, value)
+            expr: Expr::Block(stmts, value)
         }
     }
 
     fn call<'a>(
-        type_: sem::Type<'a>,
+        type_: Type<'a>,
         range: com::Range,
-        callable: sem::Callable<'a>,
-        arguments: &'a [sem::Value<'a>]
+        callable: Callable<'a>,
+        arguments: &'a [Value<'a>]
     )
-        -> sem::Value<'a>
+        -> Value<'a>
     {
-        sem::Value {
+        Value {
             type_: type_,
             range: range,
-            expr: sem::Expr::Call(
+            expr: Expr::Call(
                 callable,
                 arguments,
             )
@@ -805,18 +804,18 @@ mod tests {
     }
 
     fn if_<'a>(
-        type_: sem::Type<'a>,
+        type_: Type<'a>,
         offset: usize,
-        condition: &'a sem::Value<'a>,
-        true_branch: &'a sem::Value<'a>,
-        false_branch: &'a sem::Value<'a>
+        condition: &'a Value<'a>,
+        true_branch: &'a Value<'a>,
+        false_branch: &'a Value<'a>
     )
-        -> sem::Value<'a>
+        -> Value<'a>
     {
-        sem::Value {
+        Value {
             type_: type_,
             range: com::Range::new(offset, 0).extend(false_branch.range),
-            expr: sem::Expr::If(
+            expr: Expr::If(
                 condition,
                 true_branch,
                 false_branch
@@ -825,12 +824,12 @@ mod tests {
     }
 
     fn lit_integral(value: i64, offset: usize, length: usize)
-        -> sem::Value<'static>
+        -> Value<'static>
     {
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+        Value {
+            type_: Type::Builtin(BuiltinType::Int),
             range: range(offset, length),
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
+            expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
         }
     }
 
@@ -838,28 +837,28 @@ mod tests {
         com::Range::new(offset, length)
     }
 
-    fn resolved_argument<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
-        -> sem::Value<'a>
+    fn resolved_argument<'a>(value: ValueIdentifier, type_: Type<'a>)
+        -> Value<'a>
     {
-        sem::Value {
+        Value {
             type_: type_,
             range: range(0, 0),
-            expr: sem::Expr::ArgumentRef(value),
+            expr: Expr::ArgumentRef(value),
         }
     }
 
-    fn resolved_variable<'a>(value: sem::ValueIdentifier, type_: sem::Type<'a>)
-        -> sem::Value<'a>
+    fn resolved_variable<'a>(value: ValueIdentifier, type_: Type<'a>)
+        -> Value<'a>
     {
-        sem::Value {
+        Value {
             type_: type_,
             range: range(0, 0),
-            expr: sem::Expr::VariableRef(value),
+            expr: Expr::VariableRef(value),
         }
     }
 
-    fn value(start: usize, length: usize) -> sem::ValueIdentifier {
-        sem::ValueIdentifier(range(start, length))
+    fn value(start: usize, length: usize) -> ValueIdentifier {
+        ValueIdentifier(range(start, length))
     }
 
     fn cat(lines: &[&str]) -> String {

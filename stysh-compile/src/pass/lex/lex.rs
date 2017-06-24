@@ -243,7 +243,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
                 b'a'...b'z' => self.parse_name(tok),
                 b':' => self.parse_colon(tok),
                 b if SIMPLE_SIGNS.contains(b) => self.parse_sign(tok),
-                _ => { println!("parse_token - {}", tok); unimplemented!() },
+                _ => panic!("parse_token not implemented for {}", tok),
             }
         })
     }
@@ -256,7 +256,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":fun" => Kind::KeywordFun,
             b":if" => Kind::KeywordIf,
             b":var" => Kind::KeywordVar,
-            _ => unimplemented!(),
+            _ => panic!("parse_colon not implemented for {}", tok),
         };
         Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
@@ -273,7 +273,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             } else {
                 Kind::NameValue
             },
-            _ => unreachable!("parse_name - {}", tok),
+            _ => panic!("parse_name not implemented {}", tok),
         };
 
         Some(Token::new(kind, tok.offset, tok.raw.len()))
@@ -301,7 +301,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b"->" => Kind::SignArrowSingle,
             b"," => Kind::SignComma,
             b";" => Kind::SignSemiColon,
-            _ => { println!("parse_sign - {}", tok); unimplemented!() },
+            _ => panic!("parse_sign not implemented for {}", tok),
         };
 
         Some(Token::new(kind, tok.offset, tok.raw.len()))

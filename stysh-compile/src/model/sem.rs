@@ -198,12 +198,16 @@ impl<'a> Type<'a> {
     }
 }
 
-impl<'a> Prototype<'a> {
-    /// Returns the range spanned by the prototype.
-    pub fn range(&self) -> com::Range {
-        match *self {
-            Prototype::Fun(fun) => fun.range,
-        }
+impl<'a> BuiltinValue<'a> {
+    /// Returns the type of the built-in value.
+    pub fn result_type(&self) -> Type<'static> {
+        use self::BuiltinValue::*;
+
+        Type::Builtin(match *self {
+            Bool(_) => BuiltinType::Bool,
+            Int(_) => BuiltinType::Int,
+            String(_) => BuiltinType::String,
+        })
     }
 }
 
@@ -216,6 +220,15 @@ impl<'a> Callable<'a> {
             Builtin(fun) => fun.result_type(),
             Function(fun) => fun.result,
             Unknown(_) | Unresolved(_) => Type::unresolved(),
+        }
+    }
+}
+
+impl<'a> Prototype<'a> {
+    /// Returns the range spanned by the prototype.
+    pub fn range(&self) -> com::Range {
+        match *self {
+            Prototype::Fun(fun) => fun.range,
         }
     }
 }
@@ -279,10 +292,27 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
     type Output = Expr<'target>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Expr::*;
+
         match *self {
-            Expr::BuiltinVal(v) => Expr::BuiltinVal(arena.intern(&v)),
-            Expr::Tuple(t) => Expr::Tuple(arena.intern(&t)),
-            _ => unimplemented!(),
+            ArgumentRef(v) => ArgumentRef(v),
+            Block(stmts, v) => Block(
+                CloneInto::clone_into(stmts, arena),
+                arena.intern_ref(v),
+            ),
+            BuiltinVal(v) => BuiltinVal(arena.intern(&v)),
+            Call(c, args) => Call(
+                arena.intern(&c),
+                CloneInto::clone_into(args, arena),
+            ),
+            If(c, t, f) => If(
+                arena.intern_ref(c),
+                arena.intern_ref(t),
+                arena.intern_ref(f),
+            ),
+            Tuple(t) => Tuple(arena.intern(&t)),
+            VariableRef(v) => VariableRef(v),
+            _ => panic!("not yet implement for {:?}", self),
         }
     }
 }
@@ -298,6 +328,18 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
                 => Argument(id, arena.intern(&type_), range),
             Variable(id, value, range)
                 => Variable(id, arena.intern(&value), range),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
+    type Output = Stmt<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Stmt::*;
+
+        match *self {
+            Var(b) => Var(arena.intern(&b)),
         }
     }
 }
@@ -337,6 +379,17 @@ impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
             range: self.range,
             arguments: CloneInto::clone_into(self.arguments, arena),
             result: arena.intern(&self.result),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Function<'a> {
+    type Output = Function<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Function {
+            prototype: arena.intern_ref(self.prototype),
+            body: arena.intern(&self.body),
         }
     }
 }

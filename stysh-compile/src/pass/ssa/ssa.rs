@@ -187,7 +187,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 {
                     current = self.convert_value(current, &value);
                     let id = current.last_value();
-                    current.bindings.push((var.0.into(), id));
+                    current.bindings.push((var.0.into(), id, value.type_));
                 },
                 _ => unimplemented!(),
             }
@@ -236,16 +236,18 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     {
         fn create_branch<'g, 'local>(
             imp: &mut GraphBuilderImpl<'g, 'local>,
+            pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
             value: &sem::Value<'g>,
         )
         {
             let mut block = ProtoBlock::new(branch_id, imp.local_arena);
+            block.predecessors.push(pred_id);
 
             block = imp.convert_value(block, value);
             let last_value = block.last_value();
-            block.bindings.push((BindingId(if_id.0), last_value));
+            block.bindings.push((BindingId(if_id.0), last_value, value.type_));
 
             block.exit = ProtoTerminator::Jump(
                 ProtoJump::new(if_id, imp.local_arena)
@@ -259,6 +261,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         let false_id: BlockId = false_.range.into();
 
         current = self.convert_value(current, condition);
+        let current_id = current.id;
 
         current.exit = ProtoTerminator::Branch(
             current.last_value(),
@@ -273,8 +276,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         self.blocks.push(RefCell::new(current));
 
-        create_branch(self, if_id, true_id, true_);
-        create_branch(self, if_id, false_id, false_);
+        create_branch(self, current_id, if_id, true_id, true_);
+        create_branch(self, current_id, if_id, false_id, false_);
 
         let mut result = ProtoBlock::new(if_id, self.local_arena);
         result.arguments.push((BindingId(if_id.0), true_.type_));
@@ -325,7 +328,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         let mut arguments =
             mem::Array::with_capacity(values.len(), self.global_arena);
         for a in values {
-            arguments.push(current.bind(Self::binding_of(a)));
+            arguments.push(current.bind(Self::binding_of(a)).0);
         }
 
         (current, arguments.into_slice())
@@ -342,8 +345,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     fn resolve_arguments(&self)
         -> mem::ArrayMap<'local, BlockId, sir::BlockId>
     {
-        //  TODO(matthieum): Ensure that each predecessor correctly fill in the
-        //  arguments of its successors.
+        //  Map each proto block ID to its definitive block ID.
         let map = {
             let mut map = mem::ArrayMap::with_capacity(
                 self.blocks.len(),
@@ -357,6 +359,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         let mut bindings = mem::Array::new(self.local_arena);
 
+        //  Ensure each predecessor forwards the correct arguments to their
+        //  successor.
         for block in self.blocks.iter().rev() {
             let block = block.borrow();
 
@@ -369,6 +373,19 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 let id = map.get(id).expect("Known block!");
                 let mut pred = self.blocks[id.index()].borrow_mut();
                 pred.bind_successor(block.id, &*bindings);
+            }
+        }
+
+        //  Propagate the types of the arguments from predecessor to successor.
+        for block in self.blocks.iter() {
+            let mut block = block.borrow_mut();
+
+            if let Some(&pred) = block.predecessors.get(0) {
+                let pred = map.get(&pred).expect("Known block!");
+                let pred = self.blocks[pred.index()].borrow();
+
+                let jump = pred.exit.get_jump(block.id);
+                block.set_arguments_types(jump);
             }
         }
 
@@ -594,6 +611,120 @@ mod tests {
         );
     }
 
+    #[test]
+    fn if_with_arguments() {
+        use self::sem::*;
+        use self::sem::BuiltinFunction::*;
+
+        let global_arena = mem::Arena::new();
+        let bool_ = Type::Builtin(BuiltinType::Bool);
+        let int = Type::Builtin(BuiltinType::Int);
+
+        //  ":fun fib(current: Int, next: Int, count: Int) -> Int {"     55
+        //  "    :if count == 0 {"                                       76
+        //  "        current"                                            92
+        //  "    } :else {"                                             106
+        //  "       fib(next, current + next, count - 1)"               150
+        //  "    }"                                                     157
+        //  "}"                                                         159
+
+        let (current, next, count) = (value(9, 7), value(23, 4), value(34, 5));
+
+        let proto = global_arena.intern(&FunctionProto {
+            name: ItemIdentifier(range(5, 3)),
+            range: range(0, 52),
+            arguments: &[
+                argument(current, int),
+                argument(next, int),
+                argument(count, int),
+            ],
+            result: int,
+        });
+
+        let fun = global_arena.intern(&Function {
+            prototype: &proto,
+            body: block(
+                int,
+                range(53, 105),
+                &[],
+                &if_(
+                    int,
+                    59,
+                    &call(
+                        bool_,
+                        range(63, 10),
+                        Callable::Builtin(Equal),
+                        &[
+                            resolved_argument(count, int),
+                            lit_integral(0, 72, 1),
+                        ]
+                    ),
+                    &block(
+                        int,
+                        range(74, 32),
+                        &[],
+                        &resolved_argument(current, int),
+                    ),
+                    &block(
+                        int,
+                        range(106, 50),
+                        &[],
+                        &call(
+                            int,
+                            range(113, 36),
+                            Callable::Function(proto),
+                            &[
+                                resolved_argument(next, int),
+                                call(
+                                    int,
+                                    range(123, 14),
+                                    Callable::Builtin(Add),
+                                    &[
+                                        resolved_argument(current, int),
+                                        resolved_argument(next, int),
+                                    ]
+                                ),
+                                call(
+                                    int,
+                                    range(139, 9),
+                                    Callable::Builtin(Substract),
+                                    &[
+                                        resolved_argument(count, int),
+                                        lit_integral(1, 147, 1)
+                                    ]
+                                )
+                            ]
+                        ),
+                    )
+                )
+            )
+        });
+
+        assert_eq!(
+            funit(&global_arena, &fun).to_string(),
+            cat(&[
+                "0 (Int, Int, Int):",
+                "    $0 := load 0 ; 1@72",
+                "    $1 := __eq__(@2, $0) ; 10@63",
+                "    branch $1 in [0 => <1> (@0), 1 => <2> (@1, @0, @2)]",
+                "",
+                "1 (Int):",
+                "    jump <3> (@0)",
+                "",
+                "2 (Int, Int, Int):",
+                "    $0 := __add__(@1, @0) ; 14@123",
+                "    $1 := load 1 ; 1@147",
+                "    $2 := __sub__(@2, $1) ; 9@139",
+                "    $3 := <3@5>(@0, $0, $2) ; 36@113",
+                "    jump <3> ($3)",
+                "",
+                "3 (Int):",
+                "    return @0",
+                "",
+            ])
+        )
+    }
+
     fn valueit<'g>(global_arena: &'g mem::Arena, expr: &sem::Value<'g>)
         -> ControlFlowGraph<'g>
     {
@@ -637,6 +768,59 @@ mod tests {
             type_: sem::Type::Builtin(sem::BuiltinType::Bool),
             range: range(offset, length),
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
+        }
+    }
+
+    fn block<'a>(
+        type_: sem::Type<'a>,
+        range: com::Range,
+        stmts: &'a [sem::Stmt<'a>],
+        value: &'a sem::Value<'a>
+    )
+        -> sem::Value<'a>
+    {
+        sem::Value {
+            type_: type_,
+            range: range,
+            expr: sem::Expr::Block(stmts, value)
+        }
+    }
+
+    fn call<'a>(
+        type_: sem::Type<'a>,
+        range: com::Range,
+        callable: sem::Callable<'a>,
+        arguments: &'a [sem::Value<'a>]
+    )
+        -> sem::Value<'a>
+    {
+        sem::Value {
+            type_: type_,
+            range: range,
+            expr: sem::Expr::Call(
+                callable,
+                arguments,
+            )
+        }
+    }
+
+    fn if_<'a>(
+        type_: sem::Type<'a>,
+        offset: usize,
+        condition: &'a sem::Value<'a>,
+        true_branch: &'a sem::Value<'a>,
+        false_branch: &'a sem::Value<'a>
+    )
+        -> sem::Value<'a>
+    {
+        sem::Value {
+            type_: type_,
+            range: com::Range::new(offset, 0).extend(false_branch.range),
+            expr: sem::Expr::If(
+                condition,
+                true_branch,
+                false_branch
+            )
         }
     }
 

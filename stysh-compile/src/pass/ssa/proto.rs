@@ -13,25 +13,29 @@ pub struct ProtoBlock<'g, 'local>
     pub id: BlockId,
     pub arguments: mem::Array<'local, (BindingId, sem::Type<'g>)>,
     pub predecessors: mem::Array<'local, BlockId>,
-    pub bindings: mem::Array<'local, (BindingId, sir::ValueId)>,
+    pub bindings: mem::Array<'local, (BindingId, sir::ValueId, sem::Type<'g>)>,
     pub instructions: mem::Array<'local, sir::Instruction<'g>>,
-    pub exit: ProtoTerminator<'local>,
+    pub exit: ProtoTerminator<'g, 'local>,
 }
 
 //  A sir::TerminatorInstruction in the process of being constructed.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum ProtoTerminator<'a> {
-    Branch(sir::ValueId, mem::Array<'a, ProtoJump<'a>>),
-    Jump(ProtoJump<'a>),
+pub enum ProtoTerminator<'g, 'local>
+    where 'g: 'local
+{
+    Branch(sir::ValueId, mem::Array<'local, ProtoJump<'g, 'local>>),
+    Jump(ProtoJump<'g, 'local>),
     Return(sir::ValueId),
     Unreachable,
 }
 
 //  A sir::Jump in the process of being constructed.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ProtoJump<'a> {
+pub struct ProtoJump<'g, 'local>
+    where 'g: 'local
+{
     pub dest: BlockId,
-    pub arguments: mem::Array<'a, sir::ValueId>,
+    pub arguments: mem::Array<'local, (sir::ValueId, sem::Type<'g>)>,
 }
 
 //  Use the offset at which the block starts.
@@ -84,22 +88,26 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         }
     }
 
-    pub fn bind(&mut self, binding: BindingId) -> sir::ValueId {
+    pub fn bind(&mut self, binding: BindingId)
+        -> (sir::ValueId, sem::Type<'g>)
+    {
+        let unresolved = sem::Type::unresolved();
+
         for (index, a) in self.arguments.iter().enumerate() {
             if a.0 == binding {
-                return sir::ValueId::new_argument(index);
+                return (sir::ValueId::new_argument(index), a.1);
             }
         }
 
-        for &(id, value) in &self.bindings {
+        for &(id, value, type_) in &self.bindings {
             if id == binding {
-                return value;
+                return (value, type_);
             }
         }
 
-        self.arguments.push((binding, sem::Type::unresolved()));
+        self.arguments.push((binding, unresolved));
 
-        sir::ValueId::new_argument(self.arguments.len() - 1)
+        (sir::ValueId::new_argument(self.arguments.len() - 1), unresolved)
     }
 
     pub fn bind_successor(&mut self, id: BlockId, bindings: &[BindingId]) {
@@ -116,20 +124,57 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         jump.arguments = arguments;
     }
 
+    pub fn set_arguments_types(&mut self, jump: &ProtoJump<'g, 'local>) {
+        debug_assert!(
+            self.arguments.len() == jump.arguments.len(),
+            "{:?} != {:?}", self.arguments, jump.arguments
+        );
+
+        let unresolved = sem::Type::unresolved();
+
+        for (a, j) in self.arguments.iter_mut().zip(jump.arguments.iter()) {
+            if a.1 != unresolved {
+                debug_assert!(a.1 == j.1, "{:?} != {:?}", a, j);
+            } else {
+                a.1 = j.1;
+            }
+        }
+    }
+
     pub fn push_instr(&mut self, instr: sir::Instruction<'g>) {
         let id = sir::ValueId::new_instruction(self.instructions.len());
         self.instructions.push(instr);
-        self.bindings.push((instr.range().into(), id));
+        self.bindings.push((instr.range().into(), id, instr.result_type()));
     }
 }
 
-impl<'a> ProtoTerminator<'a> {
-    pub fn into_terminator<'g>(
+impl<'g, 'local> ProtoTerminator<'g, 'local>
+    where 'g: 'local
+{
+    pub fn get_jump(&self, block: BlockId) -> &ProtoJump<'g, 'local> {
+        use self::ProtoTerminator::*;
+
+        match self {
+            &Branch(_, ref protos) => {
+                for j in protos {
+                    if j.dest == block { return j };
+                }
+                unreachable!();
+            },
+            &Jump(ref jump) => {
+                debug_assert!(jump.dest == block, "{:?} != {:?}", block, jump);
+                jump
+            },
+            _ => panic!("No jump for {:?}", block),
+        }
+    }
+
+    pub fn into_terminator<'target>(
         &self,
         map: &mem::ArrayMap<BlockId, sir::BlockId>,
-        arena: &'g mem::Arena
+        arena: &'target mem::Arena
     )
-        -> sir::TerminatorInstruction<'g>
+        -> sir::TerminatorInstruction<'target>
     {
         use self::ProtoTerminator::*;
         use model::sir::TerminatorInstruction as TI;
@@ -149,24 +194,35 @@ impl<'a> ProtoTerminator<'a> {
     }
 }
 
-impl<'a> ProtoJump<'a> {
-    pub fn new(block: BlockId, arena: &'a mem::Arena) -> ProtoJump<'a> {
+impl<'g, 'local> ProtoJump<'g, 'local>
+    where 'g: 'local
+{
+    pub fn new(block: BlockId, arena: &'local mem::Arena)
+        -> ProtoJump<'g, 'local>
+    {
         ProtoJump {
             dest: block,
             arguments: mem::Array::new(arena),
         }
     }
 
-    pub fn into_jump<'g>(
+    pub fn into_jump<'target>(
         &self,
         map: &mem::ArrayMap<BlockId, sir::BlockId>,
-        arena: &'g mem::Arena
+        arena: &'target mem::Arena
     )
-        -> sir::Jump<'g>
+        -> sir::Jump<'target>
     {
+        let mut arguments =
+            mem::Array::with_capacity(self.arguments.len(), arena);
+
+        for &(a, _) in self.arguments.iter() {
+            arguments.push(a);
+        }
+
         sir::Jump {
             dest: *map.get(&self.dest).expect("Complete map"),
-            arguments: arena.insert_slice(&*self.arguments),
+            arguments: arguments.into_slice(),
         }
     }
 }
@@ -193,7 +249,7 @@ impl convert::From<sem::ValueIdentifier> for BindingId {
 //  Implementation Details
 //
 impl<'g, 'local> ProtoBlock<'g, 'local> {
-    fn get_jump_mut(&mut self, id: BlockId) -> &mut ProtoJump<'local> {
+    fn get_jump_mut(&mut self, id: BlockId) -> &mut ProtoJump<'g, 'local> {
         match self.exit {
             ProtoTerminator::Branch(_, ref mut jumps) => {
                 for j in jumps.as_slice_mut() {

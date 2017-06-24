@@ -125,10 +125,23 @@ impl<'a> BasicBlock<'a> {
 impl<'a> Instruction<'a> {
     /// Returns the range spanned by the instruction.
     pub fn range(&self) -> com::Range {
+        use self::Instruction::*;
+
         match *self {
-            Instruction::Call(_, _, r) => r,
-            Instruction::Load(_, r) => r,
-            Instruction::New(_, _, r) => r,
+            Call(_, _, r) => r,
+            Load(_, r) => r,
+            New(_, _, r) => r,
+        }
+    }
+
+    /// Returns the resulting type of the instruction.
+    pub fn result_type(&self) -> sem::Type<'a> {
+        use self::Instruction::*;
+
+        match *self {
+            Call(fun, _, _) => fun.result_type(),
+            Load(builtin, _) => builtin.result_type(),
+            New(type_, _, _) => type_,
         }
     }
 }

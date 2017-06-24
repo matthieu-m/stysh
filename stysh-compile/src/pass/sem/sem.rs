@@ -11,26 +11,33 @@ use super::nmr::{self, scp};
 /// The Stysh ASG builder.
 ///
 /// Builds the Abstract Semantic Graph.
-pub struct GraphBuilder<'g, 'local> {
+pub struct GraphBuilder<'a, 'g, 'local>
+    where 'g: 'a
+{
     code_fragment: com::CodeFragment,
+    scope: &'a scp::Scope<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> GraphBuilder<'g, 'local> {
+impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
+    where 'g: 'a
+{
     /// Creates a new instance of the graph builder.
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
         source: com::CodeFragment,
+        scope: &'a scp::Scope<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
-        -> GraphBuilder<'g, 'local>
+        -> GraphBuilder<'a, 'g, 'local>
     {
         GraphBuilder {
             code_fragment: source,
+            scope: scope,
             global_arena: global,
             local_arena: local
         }
@@ -45,9 +52,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 
     /// Translates a stand-alone expression.
     pub fn expression(&mut self, e: &syn::Expression) -> sem::Value<'g> {
-        let scope = ();
-
-        self.resolver(&scope).value_of(e)
+        self.resolver(self.scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
@@ -71,17 +76,17 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
 //
 //  Implementation Details
 //
-impl<'g, 'local> GraphBuilder<'g, 'local> {
+impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
+    where 'g: 'a
+{
     fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
-        let builtin = self.builtin_scope();
-
         let mut arguments =
             mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
 
         for a in fun.arguments {
             arguments.push(sem::Binding::Argument(
                 sem::ValueIdentifier(a.name.0),
-                self.resolver(&builtin).type_of(&a.type_),
+                self.resolver(self.scope).type_of(&a.type_),
                 a.range()
             ));
         }
@@ -94,7 +99,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
                     fun.result.range().end_offset() - (fun.keyword as usize)
                 ),
                 arguments: arguments.into_slice(),
-                result: self.resolver(&builtin).type_of(&fun.result),
+                result: self.resolver(self.scope).type_of(&fun.result),
             }
         )
     }
@@ -102,8 +107,7 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
     fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
         -> sem::Item<'g>
     {
-        let builtin = self.builtin_scope();
-        let scope = self.function_scope(&builtin, p);
+        let scope = self.function_scope(self.scope, p);
 
         sem::Item::Fun(sem::Function {
             prototype: p,
@@ -111,16 +115,12 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         })
     }
 
-    fn builtin_scope(&self) -> scp::BuiltinScope {
-        scp::BuiltinScope::new(&*self.code_fragment)
-    }
-
-    fn function_scope<'a>(
-        &'a self,
-        parent: &'a scp::Scope<'g>,
-        p: &'a sem::FunctionProto<'a>
+    fn function_scope<'b>(
+        &'b self,
+        parent: &'b scp::Scope<'g>,
+        p: &'b sem::FunctionProto<'b>
     )
-        -> scp::FunctionScope<'a, 'g>
+        -> scp::FunctionScope<'b, 'g>
     {
         scp::FunctionScope::new(
             &*self.code_fragment,
@@ -131,8 +131,8 @@ impl<'g, 'local> GraphBuilder<'g, 'local> {
         )
     }
 
-    fn resolver<'a>(&'a self, scope: &'a scp::Scope<'g>)
-        -> nmr::NameResolver<'a, 'g, 'local>
+    fn resolver<'b>(&'b self, scope: &'b scp::Scope<'g>)
+        -> nmr::NameResolver<'b, 'g, 'local>
     {
         nmr::NameResolver::new(
             &*self.code_fragment,
@@ -151,16 +151,20 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::sem::*;
+    use super::scp::BuiltinScope;
 
     #[test]
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(
+            b":fun add(a: Int, b: Int) -> Int { 1 + 2 }"
+        );
         let int = Type::Builtin(BuiltinType::Int);
 
         assert_eq!(
             protoit(
                 &global_arena,
-                b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
+                &builtin,
                 &syn::Item::Fun(
                     syn::Function {
                         name: syn::VariableIdentifier(range(5, 3)),
@@ -214,6 +218,9 @@ mod tests {
     #[test]
     fn item_fun() {
         let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(
+            b":fun add(a: Int, b: Int) -> Int { a + b }"
+        );
         let int = Type::Builtin(BuiltinType::Int);
 
         let function_proto = FunctionProto {
@@ -233,7 +240,7 @@ mod tests {
         assert_eq!(
             itemit(
                 &global_arena,
-                b":fun add(a: Int, b: Int) -> Int { a + b }",
+                &builtin,
                 &prototype,
                 &syn::Item::Fun(
                     syn::Function {
@@ -301,6 +308,9 @@ mod tests {
     #[test]
     fn item_fun_tuple() {
         let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(
+            b":fun add() -> (Int, Int) { (1, 2) }"
+        );
 
         fn lit_int(offset: usize, length: usize) -> syn::Expression<'static> {
             syn::Expression::Lit(syn::Literal::Integral, range(offset, length))
@@ -332,7 +342,7 @@ mod tests {
         assert_eq!(
             itemit(
                 &global_arena,
-                b":fun add() -> (Int, Int) { (1, 2) }",
+                &builtin,
                 &prototype,
                 &syn::Item::Fun(
                     syn::Function {
@@ -386,7 +396,7 @@ mod tests {
 
     fn protoit<'g>(
         global_arena: &'g mem::Arena,
-        fragment: &[u8],
+        builtin: &'g BuiltinScope<'g>,
         item: &syn::Item
     )
         -> Prototype<'g>
@@ -395,10 +405,10 @@ mod tests {
 
         let mut local_arena = mem::Arena::new();
 
-        let fragment = com::CodeFragment::new(fragment.to_vec());
+        let fragment = com::CodeFragment::new(builtin.source().to_vec());
 
         let result =
-            GraphBuilder::new(fragment, global_arena, &local_arena)
+            GraphBuilder::new(fragment, builtin, global_arena, &local_arena)
                 .prototype(item);
         local_arena.recycle();
 
@@ -407,7 +417,7 @@ mod tests {
 
     fn itemit<'g>(
         global_arena: &'g mem::Arena,
-        fragment: &[u8],
+        builtin: &'g BuiltinScope<'g>,
         proto: &'g Prototype,
         item: &syn::Item
     )
@@ -417,10 +427,10 @@ mod tests {
 
         let mut local_arena = mem::Arena::new();
 
-        let fragment = com::CodeFragment::new(fragment.to_vec());
+        let fragment = com::CodeFragment::new(builtin.source().to_vec());
 
         let result =
-            GraphBuilder::new(fragment, global_arena, &local_arena)
+            GraphBuilder::new(fragment, builtin, global_arena, &local_arena)
                 .item(proto, item);
         local_arena.recycle();
 

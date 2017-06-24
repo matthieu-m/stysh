@@ -1,5 +1,7 @@
 //! Lexical scopes for name resolution
 
+use std::fmt;
+
 use basic::mem;
 
 use model::sem::{
@@ -8,7 +10,7 @@ use model::sem::{
 };
 
 /// A Lexical Scope trait.
-pub trait Scope<'g> {
+pub trait Scope<'g>: fmt::Debug {
     /// Find the definition of a binding, if known.
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g>;
 
@@ -39,6 +41,7 @@ pub trait Scope<'g> {
 }
 
 /// A Builtin Scope.
+#[derive(Debug)]
 pub struct BuiltinScope<'a> {
     source: &'a [u8],
 }
@@ -47,6 +50,11 @@ impl<'a> BuiltinScope<'a> {
     /// Creates an instance of BuiltinScope.
     pub fn new(source: &'a [u8]) -> BuiltinScope<'a> {
         BuiltinScope { source: source }
+    }
+
+    /// Returns the source it is created from.
+    pub fn source(&self) -> &'a [u8] {
+        self.source
     }
 }
 
@@ -125,19 +133,13 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
         self.values.insert(&self.source[id.0], (id, type_));
     }
-}
 
-impl<'g> Scope<'g> for () {
-    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        self.unresolved_binding(name)
-    }
-
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
-        self.unresolved_function(name)
-    }
-
-    fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
-        self.unresolved_type(name)
+    /// Adds a new function identifier to the scope.
+    pub fn add_function(&mut self, proto: FunctionProto<'g>) {
+        self.functions.insert(
+            &self.source[proto.name.0],
+            Callable::Function(proto)
+        );
     }
 }
 
@@ -220,7 +222,11 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
             collection.push(callable);
         }
 
-        Unresolved(self.global_arena.insert_slice(&*collection))
+        match collection.len() {
+            0 => Unknown(name),
+            1 => collection[0],
+            _ => Unresolved(self.global_arena.insert_slice(&*collection))
+        }
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
@@ -232,6 +238,29 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
 //  Implementation Details
 //
 type SourceMap<'a, V> = mem::ArrayMap<'a, &'a [u8], V>;
+
+impl<'a, 'g> fmt::Debug for FunctionScope<'a, 'g> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "FunctionScope {{ parent: {:?}, arguments: {:?} }}",
+            self.parent,
+            self.arguments,
+        )
+    }
+}
+
+impl<'a, 'g, 'local> fmt::Debug for BlockScope<'a, 'g, 'local> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "BlockScope {{ parent: {:?}, functions: {:?}, values: {:?} }}",
+            self.parent,
+            self.functions,
+            self.values,
+        )
+    }
+}
 
 //
 //  Tests

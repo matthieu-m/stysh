@@ -601,6 +601,7 @@ mod tests {
         );
     }
 
+    #[derive(Debug)]
     struct MockScope<'g> {
         callables: mem::ArrayMap<'g, ValueIdentifier, Callable<'g>>,
         types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,

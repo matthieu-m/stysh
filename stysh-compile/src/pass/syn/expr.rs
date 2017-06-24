@@ -123,7 +123,9 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                         self.parse_if_else()
                     } else {
                         self.raw.pop_tokens(1);
-                        tokens[0].into_expr().expect("FIXME...")
+                        tokens[0]
+                            .into_expr()
+                            .expect(&format!("FIXME: {:?}", tokens[0]))
                     }
                 },
                 tt::Node::Braced(o, n, c) => {
@@ -155,6 +157,8 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             //  It might be a function call expression.
             if let Some(tt::Node::Braced(o, n, c)) = self.raw.peek() {
                 if o.kind() == K::ParenthesisOpen {
+                    self.raw.pop_node();
+
                     yard.push_expression(self.parse_parens(n, o, c));
                 }
             }
@@ -402,7 +406,7 @@ mod tests {
         assert_eq!(
             varit(&global_arena, b" :var fool := 1234;"),
             VariableBinding {
-                name: VariableIdentifier(range(6, 4)),
+                name: var(6, 4),
                 type_: None,
                 expr: int(14, 4),
                 var: 1,
@@ -420,7 +424,7 @@ mod tests {
         assert_eq!(
             varit(&global_arena, b" :var fool 1234"),
             VariableBinding {
-                name: VariableIdentifier(range(6, 4)),
+                name: var(6, 4),
                 type_: None,
                 expr: int(11, 4),
                 var: 1,
@@ -440,7 +444,7 @@ mod tests {
             Expression::Block(
                 &[
                     Statement::Var(VariableBinding {
-                        name: VariableIdentifier(range(11, 4)),
+                        name: var(11, 4),
                         type_: None,
                         expr: int(19, 4),
                         var: 6,
@@ -449,7 +453,7 @@ mod tests {
                         semi: 23,
                     }),
                 ],
-                &Expression::Var(VariableIdentifier(range(29, 4))),
+                &Expression::Var(var(29, 4)),
                 range(0, 35)
             )
         );
@@ -481,13 +485,32 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"basic(1, 2)"),
             Expression::FunctionCall(FunctionCall {
-                function: &Expression::Var(VariableIdentifier(range(0, 5))),
+                function: &Expression::Var(var(0, 5)),
                 arguments: &[ int(6, 1), int(9, 1) ],
                 commas: &[7, 9],
                 open: 5,
                 close: 10,
             })
-        )
+        );
+
+        assert_eq!(
+            varit(&global_arena, b":var a := basic(1, 2);"),
+            VariableBinding {
+                name: var(5, 1),
+                type_: None,
+                expr: Expression::FunctionCall(FunctionCall {
+                    function: &Expression::Var(var(10, 5)),
+                    arguments: &[ int(16, 1), int(19, 1) ],
+                    commas: &[17, 19],
+                    open: 15,
+                    close: 20,
+                }),
+                var: 0,
+                colon: 0,
+                bind: 7,
+                semi: 21,
+            }
+        );
     }
 
     #[test]
@@ -532,7 +555,7 @@ mod tests {
         assert_eq!(
             varit(&global_arena, b":var x := true;"),
             VariableBinding {
-                name: VariableIdentifier(range(5, 1)),
+                name: var(5, 1),
                 type_: None,
                 expr: boolean(true, 10, 4),
                 var: 0,
@@ -626,6 +649,10 @@ mod tests {
     
     fn int(offset: usize, length: usize) -> Expression<'static> {
         Expression::Lit(Literal::Integral, range(offset, length))
+    }
+
+    fn var(offset: usize, length: usize) -> VariableIdentifier {
+        VariableIdentifier(range(offset, length))
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

@@ -168,7 +168,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => self.convert_tuple(current, value.type_, tuple, range),
             sem::Expr::VariableRef(id)
                 => self.convert_identifier(current, id),
-            _ => unimplemented!(),
+            _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
     }
 

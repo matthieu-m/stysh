@@ -11,24 +11,24 @@ use super::reg::Registry;
 /// Interprets a SIR control flow graph based on a type dictionary, producing
 /// either a value, or an error if the interpretation cannot succeed (missing
 /// definitions, FFI call, ...).
-pub struct Interpreter<'g, 'local>
-    where 'g: 'local
+pub struct Interpreter<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
-    registry: &'g Registry<'g>,
+    registry: &'a Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> Interpreter<'g, 'local>
-    where 'g: 'local
+impl<'a, 'g, 'local> Interpreter<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
     /// Creates a new instance of an interpreter.
     pub fn new(
-        registry: &'g Registry<'g>,
+        registry: &'a Registry<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
-        -> Interpreter<'g, 'local>
+        -> Interpreter<'a, 'g, 'local>
     {
         Interpreter {
             registry: registry,
@@ -53,18 +53,18 @@ impl<'g, 'local> Interpreter<'g, 'local>
 //
 //  Implementation Details
 //
-struct FrameInterpreter<'g, 'local>
-    where 'g: 'local
+struct FrameInterpreter<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
-    registry: &'g Registry<'g>,
+    registry: &'a Registry<'g>,
     arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> FrameInterpreter<'g, 'local>
-    where 'g: 'local
+impl<'a, 'g, 'local> FrameInterpreter<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
-    fn new(registry: &'g Registry<'g>, arena: &'local mem::Arena)
-        -> FrameInterpreter<'g, 'local>
+    fn new(registry: &'a Registry<'g>, arena: &'local mem::Arena)
+        -> FrameInterpreter<'a, 'g, 'local>
     {
         FrameInterpreter { registry: registry, arena: arena }
     }
@@ -78,15 +78,15 @@ impl<'g, 'local> FrameInterpreter<'g, 'local>
     {
         use self::BlockResult::*;
 
-        fn interpret_block<'g, 'local>(
-            registry: &'g Registry<'g>,
+        fn interpret_block<'a, 'g, 'local>(
+            registry: &'a Registry<'g>,
             arena: &'local mem::Arena,
             block: &'g sir::BasicBlock<'g>,
             arguments: &'local [sem::Value<'local>],
         )
             -> BlockResult<'local>
         where
-            'g: 'local
+            'g: 'a + 'local
         {
             let mut interpreter =
                 BlockInterpreter::new(registry, arena, arguments);
@@ -120,24 +120,24 @@ impl<'g, 'local> FrameInterpreter<'g, 'local>
     }
 }
 
-struct BlockInterpreter<'g, 'local>
-    where 'g: 'local
+struct BlockInterpreter<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
-    registry: &'g Registry<'g>,
+    registry: &'a Registry<'g>,
     arena: &'local mem::Arena,
     arguments: &'local [sem::Value<'local>],
     bindings: mem::Array<'local, sem::Value<'local>>,
 }
 
-impl<'g, 'local> BlockInterpreter<'g, 'local>
+impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
     where 'g: 'local
 {
     fn new(
-        registry: &'g Registry<'g>,
+        registry: &'a Registry<'g>,
         arena: &'local mem::Arena,
         arguments: &'local [sem::Value<'local>]
     )
-        -> BlockInterpreter<'g, 'local>
+        -> BlockInterpreter<'a, 'g, 'local>
     {
         BlockInterpreter {
             registry: registry,
@@ -182,7 +182,7 @@ impl<'g, 'local> BlockInterpreter<'g, 'local>
         match fun {
             sem::Callable::Builtin(b) => self.eval_builtin(b, args),
             sem::Callable::Function(ref f) => self.eval_function(f, args),
-            _ => unimplemented!(),
+            _ => panic!("unimplemented - eval_call - {:?}", fun),
         }
     }
 
@@ -298,9 +298,17 @@ impl<'g, 'local> BlockInterpreter<'g, 'local>
 
     fn get_value(&self, id: sir::ValueId) -> sem::Value<'local> {
         if let Some(i) = id.as_instruction() {
+            debug_assert!(
+                i < self.bindings.len(), "{} not in {:?}", i, self.bindings
+            );
             self.bindings[i]
+        } else if let Some(a) = id.as_argument() {
+            debug_assert!(
+                a < self.arguments.len(), "{} not in {:?}", a, self.arguments
+            );
+            self.arguments[a]
         } else {
-            self.arguments[id.as_argument().expect("Either instr or arg!")]
+            unreachable!()
         }
     }
 

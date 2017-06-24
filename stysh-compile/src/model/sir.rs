@@ -347,11 +347,7 @@ impl<'a> std::fmt::Display for Jump<'a> {
 
 impl std::fmt::Display for ValueId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        let prefix = if self.is_argument() {
-            '@'
-        } else {
-            '$'
-        };
+        let prefix = if self.is_argument() { '@' } else { '$' };
         let index =
             self.as_argument().unwrap_or_else(
                 || self.as_instruction().unwrap()

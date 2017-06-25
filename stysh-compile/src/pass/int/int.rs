@@ -229,25 +229,34 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             }
         }
 
+        fn to_bool(value: sem::BuiltinValue) -> bool {
+            use std::convert::Into;
+            Into::<bool>::into(value)
+        }
+
         fn to_int(value: sem::BuiltinValue) -> i64 {
             use std::convert::Into;
             Into::<i64>::into(value)
         }
 
-        let left = get_builtin(self.get_value(args[0]));
-        let right = get_builtin(self.get_value(args[1]));
+        let left = || get_builtin(self.get_value(args[0]));
+        let right = || get_builtin(self.get_value(args[1]));
 
         let value = match fun {
-            Add => Int(to_int(left) + to_int(right)),
-            Differ => Bool(left != right),
-            Equal => Bool(left == right),
-            FloorDivide => Int(to_int(left) / to_int(right)),
-            GreaterThan => Bool(left > right),
-            GreaterThanOrEqual => Bool(left >= right),
-            LessThan => Bool(left < right),
-            LessThanOrEqual => Bool(left <= right),
-            Multiply => Int(to_int(left) * to_int(right)),
-            Substract => Int(to_int(left) - to_int(right)),
+            And => Bool(to_bool(left()) && to_bool(right())),
+            Add => Int(to_int(left()) + to_int(right())),
+            Differ => Bool(left() != right()),
+            Equal => Bool(left() == right()),
+            FloorDivide => Int(to_int(left()) / to_int(right())),
+            GreaterThan => Bool(left() > right()),
+            GreaterThanOrEqual => Bool(left() >= right()),
+            LessThan => Bool(left() < right()),
+            LessThanOrEqual => Bool(left() <= right()),
+            Multiply => Int(to_int(left()) * to_int(right())),
+            Not => Bool(!to_bool(left())),
+            Or => Bool(to_bool(left()) || to_bool(right())),
+            Substract => Int(to_int(left()) - to_int(right())),
+            Xor => Bool(to_bool(left()) ^ to_bool(right())),
         };
 
         sem::Value {

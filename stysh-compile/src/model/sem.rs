@@ -120,6 +120,8 @@ pub enum Callable<'a> {
 pub enum BuiltinFunction {
     /// An addition.
     Add,
+    /// A boolean and.
+    And,
     /// An non-equality comparison.
     Differ,
     /// An equality comparison.
@@ -136,8 +138,14 @@ pub enum BuiltinFunction {
     LessThanOrEqual,
     /// A multiplication.
     Multiply,
+    /// A boolean not.
+    Not,
+    /// A boolean or.
+    Or,
     /// A substraction.
     Substract,
+    /// A boolean xor.
+    Xor,
 }
 
 /// A tuple.
@@ -234,14 +242,23 @@ impl<'a> Prototype<'a> {
 }
 
 impl BuiltinFunction {
+    /// Returns the number of arguments expected.
+    pub fn number_arguments(&self) -> u8 {
+        if *self == BuiltinFunction::Not {
+            1
+        } else {
+            2
+        }
+    }
+
     /// Returns the type of the result of the function.
     pub fn result_type(&self) -> Type<'static> {
         use self::BuiltinFunction::*;
 
         let type_ = match *self {
             Add | FloorDivide | Multiply | Substract => BuiltinType::Int,
-            Differ | Equal | GreaterThan | GreaterThanOrEqual |
-            LessThan | LessThanOrEqual => BuiltinType::Bool,
+            And | Differ | Equal | GreaterThan | GreaterThanOrEqual |
+            LessThan | LessThanOrEqual | Not | Or | Xor => BuiltinType::Bool,
         };
         Type::Builtin(type_)
     }
@@ -461,6 +478,7 @@ impl std::fmt::Display for BuiltinFunction {
         use self::BuiltinFunction::*;
 
         match *self {
+            And => write!(f, "__and__"),
             Add => write!(f, "__add__"),
             Differ => write!(f, "__ne__"),
             Equal => write!(f, "__eq__"),
@@ -470,7 +488,10 @@ impl std::fmt::Display for BuiltinFunction {
             LessThan => write!(f, "__lt__"),
             LessThanOrEqual => write!(f, "__lte__"),
             Multiply => write!(f, "__mul__"),
+            Not => write!(f, "__not__"),
+            Or => write!(f, "__or__"),
             Substract => write!(f, "__sub__"),
+            Xor => write!(f, "__xor__"),
         }
     }
 }

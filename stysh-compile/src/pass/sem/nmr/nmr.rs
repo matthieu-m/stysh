@@ -85,15 +85,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Expression;
 
         match *expr {
-            Expression::BinOp(op, _, left, right) =>
-                self.value_of_binary_operator(op, left, right),
+            Expression::BinOp(op, _, left, right)
+                 => self.value_of_binary_operator(op, left, right),
             Expression::Block(s, e, r) => self.value_of_block(s, e, r),
             Expression::FunctionCall(fun) => self.value_of_call(fun),
             Expression::If(if_else) => self.value_of_if_else(if_else),
             Expression::Lit(lit, range) => self.value_of_literal(lit, range),
+            Expression::PreOp(op, _, e)
+                => self.value_of_prefix_operator(op, e, expr.range()),
             Expression::Tuple(t) => self.value_of_tuple(&t),
             Expression::Var(id) => self.value_of_variable(id),
-            _ => unimplemented!(),
         }
     }
 
@@ -161,6 +162,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let right = self.value_of_expr(right);
 
         let op = match op {
+            O::And => F::And,
             O::Different => F::Differ,
             O::Equal => F::Equal,
             O::FloorBy => F::FloorDivide,
@@ -169,9 +171,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             O::LessThan => F::LessThan,
             O::LessThanOrEqual => F::LessThanOrEqual,
             O::Minus => F::Substract,
+            O::Or => F::Or,
             O::Plus => F::Add,
             O::Times => F::Multiply,
-            _ => unimplemented!(),
+            O::Xor => F::Xor,
         };
 
         sem::Value {
@@ -298,6 +301,32 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::String),
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+        }
+    }
+
+    fn value_of_prefix_operator(&mut self, 
+        op: syn::PrefixOperator,
+        expr: &syn::Expression,
+        range: com::Range,
+    )
+        -> sem::Value<'g>
+    {
+        use model::syn::PrefixOperator as O;
+        use model::sem::BuiltinFunction as F;
+
+        let expr = self.value_of_expr(expr);
+
+        let op = match op {
+            O::Not => F::Not,
+        };
+
+        sem::Value {
+            type_: op.result_type(),
+            range: range,
+            expr: sem::Expr::Call(
+                sem::Callable::Builtin(op),
+                self.global_arena.insert_slice(&[expr])
+            ),
         }
     }
 

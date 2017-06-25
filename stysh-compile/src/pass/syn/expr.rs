@@ -66,8 +66,14 @@ struct ShuntingYard<'g, 'local>
     where 'g: 'local
 {
     global_arena: &'g mem::Arena,
-    op_stack: mem::Array<'local, (BinaryOperator, u32, Precedence)>,
+    op_stack: mem::Array<'local, (Operator, u32, Precedence)>,
     expr_stack: mem::Array<'local, Expression<'g>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+enum Operator {
+    Bin(BinaryOperator),
+    Pre(PrefixOperator),
 }
 
 impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
@@ -80,27 +86,33 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn parse(&mut self) -> Expression<'g> {
         use model::tt::Kind as K;
 
-        fn binop(kind: tt::Kind) -> Option<(BinaryOperator, Precedence)> {
+        fn binop(kind: tt::Kind) -> Option<(Operator, Precedence)> {
             use model::syn::BinaryOperator as B;
 
             //  Ordered from higher precedence to lower; higher binding tigther.
             match kind {
-                K::SignDoubleSlash => Some((B::FloorBy, 4)),
-                K::SignStar => Some((B::Times, 4)),
+                K::SignDoubleSlash => Some((B::FloorBy, 7)),
+                K::SignStar => Some((B::Times, 7)),
 
-                K::SignDash => Some((B::Minus, 3)),
-                K::SignPlus => Some((B::Plus, 3)),
+                K::SignDash => Some((B::Minus, 6)),
+                K::SignPlus => Some((B::Plus, 6)),
 
-                K::SignLeft => Some((B::LessThan, 2)),
-                K::SignLeftEqual => Some((B::LessThanOrEqual, 2)),
-                K::SignRight => Some((B::GreaterThan, 2)),
-                K::SignRightEqual => Some((B::GreaterThanOrEqual, 2)),
+                K::SignLeft => Some((B::LessThan, 5)),
+                K::SignLeftEqual => Some((B::LessThanOrEqual, 5)),
+                K::SignRight => Some((B::GreaterThan, 5)),
+                K::SignRightEqual => Some((B::GreaterThanOrEqual, 5)),
 
-                K::SignBangEqual => Some((B::Different, 1)),
-                K::SignDoubleEqual => Some((B::Equal, 1)),
+                K::SignBangEqual => Some((B::Different, 4)),
+                K::SignDoubleEqual => Some((B::Equal, 4)),
+
+                K::KeywordAnd => Some((B::And, 3)),
+
+                K::KeywordXor => Some((B::Xor, 2)),
+
+                K::KeywordOr => Some((B::Or, 1)),
 
                 _ => None
-            }.map(|(b, p)| (b, Precedence(p)))
+            }.map(|(b, p)| (Operator::Bin(b), Precedence(p)))
         }
 
         //  An expression is an expression, optionally followed by a binary 
@@ -119,13 +131,23 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                 tt::Node::Run(tokens) => {
                     let kind = tokens[0].kind();
 
-                    if kind == K::KeywordIf {
-                        self.parse_if_else()
-                    } else {
-                        self.raw.pop_tokens(1);
-                        tokens[0]
-                            .into_expr()
-                            .expect(&format!("FIXME: {:?}", tokens[0]))
+                    match kind {
+                        K::KeywordIf => self.parse_if_else(),
+                        K::KeywordNot => {
+                            self.raw.pop_tokens(1);
+                            yard.push_operator(
+                                Operator::Pre(PrefixOperator::Not),
+                                tokens[0].offset() as u32,
+                                Precedence(8)
+                            );
+                            continue;
+                        },
+                        _ => {
+                            self.raw.pop_tokens(1);
+                            tokens[0]
+                                .into_expr()
+                                .expect(&format!("FIXME: {:?}", tokens[0]))
+                        },
                     }
                 },
                 tt::Node::Braced(o, n, c) => {
@@ -291,7 +313,7 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
 
     fn push_operator(
         &mut self,
-        op: BinaryOperator,
+        op: Operator,
         pos: u32,
         prec: Precedence)
     {
@@ -309,15 +331,26 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
 
     fn pop_operators(&mut self, threshold: Precedence) {
         while let Some((op, pos)) = self.pop_operator_impl(threshold) {
-            let right_hand = self.expr_stack.pop().expect("Right");
-            let left_hand = self.expr_stack.pop().expect("Left");
-
-            self.expr_stack.push(Expression::BinOp(
-                op,
-                pos,
-                self.global_arena.insert(left_hand),
-                self.global_arena.insert(right_hand),
-            ));
+            match op {
+                Operator::Bin(op) => {
+                    let right_hand = self.expr_stack.pop().expect("Right");
+                    let left_hand = self.expr_stack.pop().expect("Left");
+                    self.expr_stack.push(Expression::BinOp(
+                        op,
+                        pos,
+                        self.global_arena.insert(left_hand),
+                        self.global_arena.insert(right_hand),
+                    ));
+                },
+                Operator::Pre(op) => {
+                    let expr = self.expr_stack.pop().expect("Expression");
+                    self.expr_stack.push(Expression::PreOp(
+                        op,
+                        pos,
+                        self.global_arena.insert(expr),
+                    ));
+                },
+            };
         }
     }
 
@@ -333,7 +366,7 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     }
 
     fn pop_operator_impl(&mut self, threshold: Precedence)
-        -> Option<(BinaryOperator, u32)>
+        -> Option<(Operator, u32)>
     {
         if let Some((op, pos, prec)) = self.op_stack.peek().cloned() {
             if threshold <= prec {
@@ -563,6 +596,30 @@ mod tests {
                 bind: 7,
                 semi: 14,
             }
+        );
+    }
+
+    #[test]
+    fn shunting_yard_prefix() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b":not a :or b :and c"),
+            Expression::BinOp(
+                BinaryOperator::Or,
+                7,
+                &Expression::PreOp(
+                    PrefixOperator::Not,
+                    0,
+                    &Expression::Var(var(5, 1)),
+                ),
+                &Expression::BinOp(
+                    BinaryOperator::And,
+                    13,
+                    &Expression::Var(var(11, 1)),
+                    &Expression::Var(var(18, 1)),
+                ),
+            )
         );
     }
 

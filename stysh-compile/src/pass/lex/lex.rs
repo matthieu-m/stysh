@@ -252,10 +252,14 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         let kind = match tok.raw {
             b":" => Kind::SignColon,
             b":=" => Kind::SignBind,
+            b":and" => Kind::KeywordAnd,
             b":else" => Kind::KeywordElse,
             b":fun" => Kind::KeywordFun,
             b":if" => Kind::KeywordIf,
+            b":not" => Kind::KeywordNot,
+            b":or" => Kind::KeywordOr,
             b":var" => Kind::KeywordVar,
+            b":xor" => Kind::KeywordXor,
             _ => panic!("parse_colon not implemented for {}", tok),
         };
         Some(Token::new(kind, tok.offset, tok.raw.len()))

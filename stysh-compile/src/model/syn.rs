@@ -38,6 +38,8 @@ pub enum Expression<'a> {
     If(IfElse<'a>),
     /// A literal.
     Lit(Literal<'a>, com::Range),
+    /// A prefix unary operation.
+    PreOp(PrefixOperator, u32, &'a Expression<'a>),
     /// A tuple.
     Tuple(Tuple<'a, Expression<'a>>),
     /// A variable identifier.
@@ -96,6 +98,8 @@ pub struct Argument<'a> {
 /// A Binary Operator such as `+` or `*`.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BinaryOperator {
+    /// The `:and` operator.
+    And,
     /// The `!=` operator.
     Different,
     /// The `==` operator.
@@ -112,10 +116,21 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     /// The `-` operator.
     Minus,
+    /// The `:or` operator.
+    Or,
     /// The `+` operator.
     Plus,
     /// The `*` operator.
     Times,
+    /// The `:xor` operator.
+    Xor,
+}
+
+/// A Prefix Unary Operator such as `:not`.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum PrefixOperator {
+    /// The `:not` operator.
+    Not,
 }
 
 /// A function call expression.
@@ -242,6 +257,8 @@ impl<'a> Expression<'a> {
             FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
             Lit(_, range) => range,
+            PreOp(_, pos, expr)
+                => com::Range::new(pos as usize, 0).extend(expr.range()),
             Tuple(t) => t.range(),
             Var(VariableIdentifier(range)) => range,
         }
@@ -434,6 +451,14 @@ mod tests {
         let node = Node::Expr(expr);
 
         assert_eq!(node.range(), range(3, 5));
+    }
+
+    #[test]
+    fn range_node_prefix_unary_operator() {
+        let expr = expr_lit_integral(7, 2);
+        let node = Node::Expr(Expression::PreOp(PrefixOperator::Not, 1, &expr));
+
+        assert_eq!(node.range(), range(1, 8));
     }
 
     #[test]

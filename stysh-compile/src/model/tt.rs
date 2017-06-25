@@ -48,14 +48,22 @@ pub enum Kind {
     BracketClose,
     /// A '[' brace.
     BracketOpen,
+    /// The :and keyword.
+    KeywordAnd,
     /// The :else keyword.
     KeywordElse,
     /// The :fun keyword.
     KeywordFun,
     /// The :if keyword.
     KeywordIf,
+    /// The :not keyword.
+    KeywordNot,
+    /// The :or keyword.
+    KeywordOr,
     /// The :var keyword.
     KeywordVar,
+    /// The :xor keyword.
+    KeywordXor,
     /// A 'false' literal.
     LitBoolFalse,
     /// A 'true' literal.

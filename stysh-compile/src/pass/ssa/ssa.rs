@@ -205,12 +205,73 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
+        //  :and and :or have short-circuiting semantics.
+        if let sem::Callable::Builtin(b) = callable {
+            use model::sem::BuiltinFunction::{And, Or};
+
+            match b {
+                And | Or => return self.convert_call_shortcircuit(
+                    current,
+                    b,
+                    args,
+                    range
+                ),
+                _ => (),
+            };
+        }
+
         let (mut current, arguments) =
             self.convert_array_of_values(current, args);
 
         current.push_instr(sir::Instruction::Call(callable, arguments, range));
 
         current
+    }
+
+    fn convert_call_shortcircuit(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        fun: sem::BuiltinFunction,
+        args: &[sem::Value<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        //  Short circuiting expressions are just sugar for if/else expressions.
+        use model::sem::BuiltinFunction::{And, Or};
+
+        debug_assert!(args.len() == 2, "Too many arguments: {:?}", args);
+
+        fn boolean(b: bool, r: com::Range) -> sem::Value<'static> {
+            sem::Value {
+                type_: sem::Type::Builtin(sem::BuiltinType::Bool),
+                range: r,
+                expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(b)),
+            }
+        }
+
+        let fake_range = {
+            let r = args[0].range;
+            com::Range::new(r.offset() + 1, r.length() - 1)
+        };
+
+        match fun {
+            And => self.convert_if(
+                current,
+                &args[0],
+                &args[1],
+                &boolean(false, fake_range),
+                range
+            ),
+            Or => self.convert_if(
+                current,
+                &args[0],
+                &boolean(true, fake_range),
+                &args[1],
+                range
+            ),
+            _ => unreachable!("{:?} at {:?}", fun, range),
+        }
     }
 
     fn convert_identifier(
@@ -605,6 +666,137 @@ mod tests {
                 "    jump <0> ($0)",
                 "",
                 "3 (Int):",
+                "    return @0",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn if_shortcircuit() {
+        use self::BuiltinFunction::*;
+
+        //  ":fun in(a: Int, b: Int, c: Int) -> Bool { ... }"
+        fn maker<'g>(arena: &'g mem::Arena, content: Value)
+            -> &'g Function<'g>
+        {
+            let bool_ = Type::Builtin(BuiltinType::Bool);
+            let int = Type::Builtin(BuiltinType::Int);
+            let (a, b, c) = (value(8, 1), value(16, 1), value(24, 1));
+
+            let proto = arena.intern(&FunctionProto {
+                name: ItemIdentifier(range(5, 2)),
+                range: range(0, 39),
+                arguments: &[
+                    argument(a, int),
+                    argument(b, int),
+                    argument(c, int),
+                ],
+                result: bool_,
+            });
+
+            let fun = arena.intern(&Function {
+                prototype: &proto,
+                body: block(
+                    bool_,
+                    range(53, 105),
+                    &[],
+                    &content
+                )
+            });
+
+            arena.insert(fun)
+        }
+
+        let global_arena = mem::Arena::new();
+        let bool_ = Type::Builtin(BuiltinType::Bool);
+        let int = Type::Builtin(BuiltinType::Int);
+
+        let (a, b, c) = (value(8, 1), value(16, 1), value(24, 1));
+
+        let left = global_arena.intern(&call(
+            bool_,
+            range(42, 6),
+            Callable::Builtin(LessThanOrEqual),
+            &[
+                resolved_argument(a, int),
+                resolved_argument(b, int),
+            ]
+        ));
+
+        let right = global_arena.intern(&call(
+            bool_,
+            range(54, 5),
+            Callable::Builtin(LessThan),
+            &[
+                resolved_argument(b, int),
+                resolved_argument(c, int),
+            ]
+        ));
+
+        //  "a <= b :and b < c"
+
+        assert_eq!(
+            funit(
+                &global_arena,
+                maker(
+                    &global_arena,
+                    call(
+                        bool_,
+                        range(42, 17),
+                        Callable::Builtin(And),
+                        &[ left, right ]
+                    )
+                )
+            ).to_string(),
+            cat(&[
+                "0 (Int, Int, Int):",
+                "    $0 := __lte__(@0, @1) ; 6@42",
+                "    branch $0 in [0 => <1> (@1, @2), 1 => <2> ()]",
+                "",
+                "1 (Int, Int):",
+                "    $0 := __lt__(@0, @1) ; 5@54",
+                "    jump <3> ($0)",
+                "",
+                "2 ():",
+                "    $0 := load false ; 5@43",
+                "    jump <3> ($0)",
+                "",
+                "3 (Bool):",
+                "    return @0",
+                ""
+            ])
+        );
+
+        //  "a <= b :or  b < c"
+
+        assert_eq!(
+            funit(
+                &global_arena,
+                maker(
+                    &global_arena,
+                    call(
+                        bool_,
+                        range(42, 17),
+                        Callable::Builtin(Or),
+                        &[ left, right ]
+                    )
+                )
+            ).to_string(),
+            cat(&[
+                "0 (Int, Int, Int):",
+                "    $0 := __lte__(@0, @1) ; 6@42",
+                "    branch $0 in [0 => <1> (), 1 => <2> (@1, @2)]",
+                "",
+                "1 ():",
+                "    $0 := load true ; 5@43",
+                "    jump <3> ($0)",
+                "",
+                "2 (Int, Int):",
+                "    $0 := __lt__(@0, @1) ; 5@54",
+                "    jump <3> ($0)",
+                "",
+                "3 (Bool):",
                 "    return @0",
                 ""
             ])

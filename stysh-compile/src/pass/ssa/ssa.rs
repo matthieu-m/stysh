@@ -237,37 +237,25 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        //  Short circuiting expressions are just sugar for if/else expressions.
+        //  Short circuiting expressions are close to sugar for if/else
+        //  expressions.
         use model::sem::BuiltinFunction::{And, Or};
 
         debug_assert!(args.len() == 2, "Too many arguments: {:?}", args);
 
-        fn boolean(b: bool, r: com::Range) -> sem::Value<'static> {
-            sem::Value {
-                type_: sem::Type::Builtin(sem::BuiltinType::Bool),
-                range: r,
-                expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(b)),
-            }
-        }
-
-        let fake_range = {
-            let r = args[0].range;
-            com::Range::new(r.offset() + 1, r.length() - 1)
-        };
-
         match fun {
-            And => self.convert_if(
+            And => self.convert_if_impl(
                 current,
                 &args[0],
-                &args[1],
-                &boolean(false, fake_range),
+                Some(&args[1]),
+                None,
                 range
             ),
-            Or => self.convert_if(
+            Or => self.convert_if_impl(
                 current,
                 &args[0],
-                &boolean(true, fake_range),
-                &args[1],
+                None,
+                Some(&args[1]),
                 range
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
@@ -287,10 +275,29 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_if(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
+        current: ProtoBlock<'g, 'local>,
         condition: &sem::Value<'g>,
         true_: &sem::Value<'g>,
         false_: &sem::Value<'g>,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        self.convert_if_impl(
+            current,
+            condition,
+            Some(true_),
+            Some(false_),
+            range
+        )
+    }
+
+    fn convert_if_impl(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        condition: &sem::Value<'g>,
+        true_: Option<&sem::Value<'g>>,
+        false_: Option<&sem::Value<'g>>,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -318,8 +325,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
 
         let if_id: BlockId = range.into();
-        let true_id: BlockId = true_.range.into();
-        let false_id: BlockId = false_.range.into();
+        let true_id: Option<BlockId> = true_.map(|t| t.range.into());
+        let false_id: Option<BlockId> = false_.map(|f| f.range.into());
 
         current = self.convert_value(current, condition);
         let current_id = current.id;
@@ -328,8 +335,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             current.last_value(),
             mem::Array::from_slice(
                 &[
-                    ProtoJump::new(true_id, self.local_arena),
-                    ProtoJump::new(false_id, self.local_arena),
+                    ProtoJump::new(true_id.unwrap_or(if_id), self.local_arena),
+                    ProtoJump::new(false_id.unwrap_or(if_id), self.local_arena),
                 ],
                 self.local_arena
             ),
@@ -337,12 +344,22 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         self.blocks.push(RefCell::new(current));
 
-        create_branch(self, current_id, if_id, true_id, true_);
-        create_branch(self, current_id, if_id, false_id, false_);
+        if let Some(true_) = true_ {
+            create_branch(self, current_id, if_id, true_id.unwrap(), true_);
+        }
+        if let Some(false_) = false_ {
+            create_branch(self, current_id, if_id, false_id.unwrap(), false_);
+        }
+
+        let either_branch =
+            true_.unwrap_or_else(|| false_.expect("One branch shall be valid"));
 
         let mut result = ProtoBlock::new(if_id, self.local_arena);
-        result.arguments.push((BindingId(if_id.0), true_.type_));
-        result.predecessors.extend(&[true_id, false_id]);
+        result.arguments.push((BindingId(if_id.0), either_branch.type_));
+        result.predecessors.extend(&[
+            true_id.unwrap_or(current_id),
+            false_id.unwrap_or(current_id),
+        ]);
         result
     }
 
@@ -752,17 +769,13 @@ mod tests {
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
-                "    branch $0 in [0 => <1> (@1, @2), 1 => <2> ()]",
+                "    branch $0 in [0 => <1> (@1, @2), 1 => <2> ($0)]",
                 "",
                 "1 (Int, Int):",
                 "    $0 := __lt__(@0, @1) ; 5@54",
-                "    jump <3> ($0)",
+                "    jump <2> ($0)",
                 "",
-                "2 ():",
-                "    $0 := load false ; 5@43",
-                "    jump <3> ($0)",
-                "",
-                "3 (Bool):",
+                "2 (Bool):",
                 "    return @0",
                 ""
             ])
@@ -786,17 +799,13 @@ mod tests {
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
-                "    branch $0 in [0 => <1> (), 1 => <2> (@1, @2)]",
+                "    branch $0 in [0 => <2> ($0), 1 => <1> (@1, @2)]",
                 "",
-                "1 ():",
-                "    $0 := load true ; 5@43",
-                "    jump <3> ($0)",
-                "",
-                "2 (Int, Int):",
+                "1 (Int, Int):",
                 "    $0 := __lt__(@0, @1) ; 5@54",
-                "    jump <3> ($0)",
+                "    jump <2> ($0)",
                 "",
-                "3 (Bool):",
+                "2 (Bool):",
                 "    return @0",
                 ""
             ])

@@ -11,7 +11,7 @@ use model::tt;
 use model::syn::*;
 
 use pass::syn::com::RawParser;
-use pass::syn::{expr, fun};
+use pass::syn::{expr, fun, typ};
 
 /// The Stysh parser.
 ///
@@ -62,6 +62,7 @@ impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
         self.raw.peek()
             .map(|node| {
                 match node.front().kind() {
+                    tt::Kind::KeywordEnum => Node::Item(self.parse_enum()),
                     tt::Kind::KeywordFun => Node::Item(self.parse_function()),
                     tt::Kind::KeywordVar => Node::Stmt(self.parse_variable()),
                     _ => Node::Expr(self.parse_expression()),
@@ -88,6 +89,10 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
 
     fn parse_expression(&mut self) -> Expression<'g> {
         expr::parse_expression(&mut self.raw)
+    }
+
+    fn parse_enum(&mut self) -> Item<'g> {
+        Item::Enum(typ::parse_enum(&mut self.raw))
     }
 
     fn parse_function(&mut self) -> Item<'g> {

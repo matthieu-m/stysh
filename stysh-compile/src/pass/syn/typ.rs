@@ -4,12 +4,18 @@
 
 use basic::com;
 
-use model::syn::{Type, TypeIdentifier, Tuple};
+use model::tt::{Kind, Node};
+use model::syn::{Enum, EnumVariant, Type, TypeIdentifier, Tuple};
 
 use super::com::RawParser;
 
-pub struct TypeParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>
+pub fn parse_enum<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> Enum<'g>
+{
+    let mut parser = EnumParser::new(*raw);
+    let e = parser.parse();
+    *raw = parser.into_raw();
+    e
 }
 
 pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
@@ -21,14 +27,105 @@ pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     t
 }
 
+//
+//  Implementation Details
+//
+struct EnumParser<'a, 'g, 'local> {
+    raw: RawParser<'a, 'g, 'local>,
+}
+
+struct TypeParser<'a, 'g, 'local> {
+    raw: RawParser<'a, 'g, 'local>,
+}
+
+impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> EnumParser<'a, 'g, 'local> {
+        EnumParser { raw: raw }
+    }
+
+    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+
+    fn parse(&mut self) -> Enum<'g> {
+        //  Expects:
+        //  -   :enum
+        //  -   type-identifier
+        //  -   {
+        //  -       variants (with trailing comma)
+        //  -   }
+        let keyword = self.raw.pop_kind(Kind::KeywordEnum).expect(":enum");
+
+        let name = TypeIdentifier(
+            self.raw
+                .pop_kind(Kind::NameType)
+                .map(|t| t.range())
+                .unwrap_or(com::Range::new(keyword.range().end_offset(), 0))
+        );
+
+        match self.raw.peek() {
+            Some(Node::Braced(o, ns, c)) => {
+                let mut parser = EnumParser::new(self.raw.spawn(ns));
+
+                let mut variants = self.raw.local_array();
+                let mut commas = self.raw.local_array();
+                while let Some((v, c)) = parser.parse_variant() {
+                    variants.push(v);
+                    commas.push(c);
+                }
+
+                Enum {
+                    name: name,
+                    variants: self.raw.intern_slice(variants.into_slice()),
+                    keyword: keyword.offset() as u32,
+                    open: o.offset() as u32,
+                    close: c.offset() as u32,
+                    commas: self.raw.intern_slice(commas.into_slice()),
+                }
+            },
+            _ => Enum {
+                name: name,
+                variants: &[],
+                keyword: keyword.offset() as u32,
+                open: 0,
+                close: 0,
+                commas: &[],
+            },
+        }
+    }
+
+    fn parse_variant(&mut self) -> Option<(EnumVariant, u32)> {
+        if self.raw.peek().is_none() {
+            return None;
+        }
+
+        let variant =
+            self.raw
+                .pop_kind(Kind::NameType)
+                .map(|n| EnumVariant::Unit(TypeIdentifier(n.range())));
+        let comma =
+            self.raw
+                .pop_kind(Kind::SignComma)
+                .map(|c| c.offset() as u32);
+
+        match (variant, comma) {
+            (Some(variant), Some(comma)) => Some((variant, comma)),
+            (Some(variant), None) => Some((variant, 0)),
+            (None, Some(comma)) => Some((
+                EnumVariant::Missing(com::Range::new(comma as usize, 0)),
+                comma
+            )),
+            (None, None) => unimplemented!(),
+        }
+    }
+}
+
 impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
-    pub fn new(raw: RawParser<'a, 'g, 'local>) -> TypeParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> TypeParser<'a, 'g, 'local> {
         TypeParser { raw: raw }
     }
 
-    pub fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
-    pub fn parse(&mut self) -> Type<'g> {
+    fn parse(&mut self) -> Type<'g> {
         self.maybe_parse()
             .or_else(||
                 self.raw.peek().map(|n|
@@ -38,9 +135,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
             .unwrap_or(Type::Missing(com::Range::new(0, 0)))
     }
 
-    pub fn maybe_parse(&mut self) -> Option<Type<'g>> {
-        use model::tt::{Kind, Node};
-
+    fn maybe_parse(&mut self) -> Option<Type<'g>> {
         self.raw.peek().map(|node| {
             match node {
                 Node::Run(_) => {
@@ -87,6 +182,73 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 mod tests {
     use basic::{com, mem};
     use model::syn::*;
+
+    #[test]
+    fn enum_empty() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            enumit(&global, b":enum Empty {}"),
+            Enum {
+                name: typeid(6, 5),
+                variants: &[],
+                keyword: 0,
+                open: 12,
+                close: 13,
+                commas: &[]
+            }
+        );
+    }
+
+    #[test]
+    fn enum_unit_single() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            enumit(&global, b":enum Simple { First }"),
+            Enum {
+                name: typeid(6, 6),
+                variants: &[ EnumVariant::Unit(typeid(15, 5)) ],
+                keyword: 0,
+                open: 13,
+                close: 21,
+                commas: &[ 0 ]
+            }
+        );
+
+        assert_eq!(
+            enumit(&global, b":enum Simple { First ,}"),
+            Enum {
+                name: typeid(6, 6),
+                variants: &[ EnumVariant::Unit(typeid(15, 5)) ],
+                keyword: 0,
+                open: 13,
+                close: 22,
+                commas: &[ 21 ]
+            }
+        );
+    }
+
+    #[test]
+    fn enum_unit_multiple() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            enumit(&global, b":enum Simple { First, Second, Third }"),
+            Enum {
+                name: typeid(6, 6),
+                variants: &[
+                    EnumVariant::Unit(typeid(15, 5)),
+                    EnumVariant::Unit(typeid(22, 6)),
+                    EnumVariant::Unit(typeid(30, 5)),
+                ],
+                keyword: 0,
+                open: 13,
+                close: 36,
+                commas: &[ 20, 28, 0 ]
+            }
+        );
+    }
 
     #[test]
     fn tuple_unit() {
@@ -194,22 +356,40 @@ mod tests {
         );
     }
 
-    fn typeit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Type<'g> {
+    fn enumit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Enum<'g> {
         use super::super::com::RawParser;
 
         let mut local_arena = mem::Arena::new();
 
         let e = {
             let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_type(&mut raw)
+            super::parse_enum(&mut raw)
         };
         local_arena.recycle();
 
         e
     }
 
+    fn typeit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Type<'g> {
+        use super::super::com::RawParser;
+
+        let mut local_arena = mem::Arena::new();
+
+        let t = {
+            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
+            super::parse_type(&mut raw)
+        };
+        local_arena.recycle();
+
+        t
+    }
+
     fn simple_type(offset: usize, length: usize) -> Type<'static> {
-        Type::Simple(TypeIdentifier(range(offset, length)))
+        Type::Simple(typeid(offset, length))
+    }
+
+    fn typeid(offset: usize, length: usize) -> TypeIdentifier {
+        TypeIdentifier(range(offset, length))
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

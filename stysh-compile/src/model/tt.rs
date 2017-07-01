@@ -52,6 +52,8 @@ pub enum Kind {
     KeywordAnd,
     /// The :else keyword.
     KeywordElse,
+    /// The :enum keyword.
+    KeywordEnum,
     /// The :fun keyword.
     KeywordFun,
     /// The :if keyword.

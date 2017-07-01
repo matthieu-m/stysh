@@ -46,6 +46,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     /// Extracts the prototype of an item.
     pub fn prototype(&mut self, item: &syn::Item) -> sem::Prototype<'g> {
         match *item {
+            syn::Item::Enum(_) => unimplemented!(),
             syn::Item::Fun(fun) => self.fun_prototype(fun),
         }
     }
@@ -67,6 +68,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         match (*item, proto) {
+            (syn::Item::Enum(_), _) => unimplemented!(),
             (syn::Item::Fun(i), &sem::Prototype::Fun(ref p))
                 => self.fun_item(i, p),
         }

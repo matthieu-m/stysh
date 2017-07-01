@@ -49,6 +49,8 @@ pub enum Expression<'a> {
 /// An Item.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Item<'a> {
+    /// An enum.
+    Enum(Enum<'a>),
     /// A function.
     Fun(Function<'a>),
 }
@@ -59,6 +61,36 @@ pub enum Statement<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A variable definition.
     Var(VariableBinding<'a>),
+}
+
+/// An Enum.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Enum<'a> {
+    /// Name of the enum.
+    pub name: TypeIdentifier,
+    /// Variants of the enum.
+    pub variants: &'a [EnumVariant],
+    /// Offset of the `:enum` keyword.
+    pub keyword: u32,
+    /// Offset of the opening brace.
+    pub open: u32,
+    /// Offset of the closing brace.
+    pub close: u32,
+    /// Offsets of the commas separating the variants, an absent comma is 
+    /// placed at the offset of the last character of the field it would have
+    /// followed.
+    pub commas: &'a [u32],
+}
+
+/// An Enum Variant.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum EnumVariant {
+    /// A missing variant, when two commas succeed one another.
+    Missing(com::Range),
+    /// An unexpected range of tokens.
+    Unexpected(com::Range),
+    /// A unit variant, with no argument.
+    Unit(TypeIdentifier),
 }
 
 /// A Function.
@@ -268,10 +300,77 @@ impl<'a> Expression<'a> {
 impl<'a> Item<'a> {
     /// Returns the range spanned by the item.
     pub fn range(&self) -> com::Range {
-        use self::Item::Fun;
+        use self::Item::*;
 
         match *self {
+            Enum(e) => e.range(),
             Fun(fun) => fun.range(),
+        }
+    }
+}
+
+impl<'a> Enum<'a> {
+    /// Returns the `:enum` token.
+    pub fn keyword(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::KeywordEnum, self.keyword as usize, 5)
+    }
+
+    /// Returns the `{` token.
+    pub fn brace_open(&self) -> tt::Token {
+        if self.open == 0 {
+            tt::Token::new(tt::Kind::BraceOpen, self.name.0.end_offset(), 0)
+        } else {
+            tt::Token::new(tt::Kind::BraceOpen, self.open as usize, 1)
+        }
+    }
+
+    /// Returns the `}` token.
+    pub fn brace_close(&self) -> tt::Token {
+        if self.close == 0 {
+            let last_comma = self.comma(self.commas.len().wrapping_sub(1));
+            let last = last_comma.unwrap_or_else(|| self.brace_open());
+            tt::Token::new(tt::Kind::BraceClose, last.range().end_offset(), 0)
+        } else {
+            tt::Token::new(tt::Kind::BraceClose, self.close as usize, 1)
+        }
+    }
+
+    /// Returns the token of the comma following the i-th field, if there is no
+    /// such comma the position it would have been at is faked.
+    pub fn comma(&self, i: usize) -> Option<tt::Token> {
+        let make_comma = |&o| if o == 0 {
+            let position = self.variants[i].range().end_offset();
+            tt::Token::new(tt::Kind::SignComma, position, 0)
+        } else {
+            tt::Token::new(tt::Kind::SignComma, o as usize, 1)
+        };
+        self.commas.get(i).map(make_comma)
+    }
+
+    /// Returns the range spanned by the enum.
+    pub fn range(&self) -> com::Range {
+        self.keyword().range().extend(self.brace_close().range())
+    }
+}
+
+impl EnumVariant {
+    /// Returns the name of the variant.
+    pub fn name(&self) -> TypeIdentifier {
+        use self::EnumVariant::*;
+
+        match *self {
+            Missing(r) | Unexpected(r) => TypeIdentifier(r),
+            Unit(t) => t,
+        }
+    }
+
+    /// Returns the range spanned by the variant.
+    pub fn range(&self) -> com::Range {
+        use self::EnumVariant::*;
+
+        match *self {
+            Missing(r) | Unexpected(r) => r,
+            Unit(t) => t.0,
         }
     }
 }
@@ -409,6 +508,58 @@ impl<'a, T: 'a + Clone> Tuple<'a, T> {
 mod tests {
     use basic::com;
     use super::*;
+
+    #[test]
+    fn range_enum_empty() {
+        //  " :enum Empty { }"
+        assert_eq!(
+            Enum {
+                name: TypeIdentifier(range(7, 5)),
+                variants: &[],
+                keyword: 1,
+                open: 13,
+                close: 15,
+                commas: &[],
+            }.range(),
+            range(1, 15)
+        );
+    }
+
+    #[test]
+    fn range_enum_minimal() {
+        //  ":enum Minimal"
+        assert_eq!(
+            Enum {
+                name: TypeIdentifier(range(6, 7)),
+                variants: &[],
+                keyword: 0,
+                open: 0,
+                close: 0,
+                commas: &[],
+            }.range(),
+            range(0, 13)
+        );
+    }
+
+    #[test]
+    fn range_enum_simple() {
+        fn unit(offset: usize, length: usize) -> EnumVariant {
+            EnumVariant::Unit(TypeIdentifier(range(offset, length)))
+        }
+
+        //  ":enum Simple { One, Two }"
+        assert_eq!(
+            Enum {
+                name: TypeIdentifier(range(6, 6)),
+                variants: &[ unit(15, 3), unit(20, 3) ],
+                keyword: 0,
+                open: 13,
+                close: 24,
+                commas: &[18, 0],
+            }.range(),
+            range(0, 25)
+        );
+    }
 
     #[test]
     fn range_expression_literal() {

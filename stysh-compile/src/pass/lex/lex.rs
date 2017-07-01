@@ -254,6 +254,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":=" => Kind::SignBind,
             b":and" => Kind::KeywordAnd,
             b":else" => Kind::KeywordElse,
+            b":enum" => Kind::KeywordEnum,
             b":fun" => Kind::KeywordFun,
             b":if" => Kind::KeywordIf,
             b":not" => Kind::KeywordNot,

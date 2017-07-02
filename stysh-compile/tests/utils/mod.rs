@@ -41,13 +41,17 @@ where
     for &node in nodes {
         match node {
             syn::Node::Item(i) => {
+                use self::sem::Prototype::*;
+
                 let code = code.clone();
                 let prototype =
                     create_prototype(&i, code, scope, arena, &mut local_arena);
                 prototypes.push((i, arena.insert(prototype)));
 
                 match prototype {
-                    sem::Prototype::Fun(fun) => scope.add_function(fun),
+                    Enum(_) => unimplemented!(),
+                    Fun(fun) => scope.add_function(fun),
+                    Rec(_) => unimplemented!(),
                 };
             },
             syn::Node::Expr(expr) => {
@@ -63,11 +67,14 @@ where
 
     //  Pull definitions together
     for (i, p) in prototypes {
+        use self::sem::Item::*;
+
         let code = code.clone();
         let item = create_item(&i, p, code, scope, arena, &mut local_arena);
 
         match item {
-            sem::Item::Fun(ref fun) => {
+            Enum(_) => unimplemented!(),
+            Fun(ref fun) => {
                 let c = create_cfg_from_function(fun, arena, &mut local_arena);
                 registry.insert(fun.prototype.name, c);
             },

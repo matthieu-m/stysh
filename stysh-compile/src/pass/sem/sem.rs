@@ -43,10 +43,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         }
     }
 
-    /// Extracts the prototype of an item.
+    /// Extracts the prototypes of an item.
     pub fn prototype(&mut self, item: &syn::Item) -> sem::Prototype<'g> {
         match *item {
-            syn::Item::Enum(_) => unimplemented!(),
+            syn::Item::Enum(e) => self.enum_prototype(e),
             syn::Item::Fun(fun) => self.fun_prototype(fun),
         }
     }
@@ -60,6 +60,9 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn item(&mut self, proto: &'g sem::Prototype<'g>, item: &syn::Item)
         -> sem::Item<'g>
     {
+        use model::syn::Item;
+        use model::sem::Prototype::*;
+
         debug_assert!(
             item.range().offset() == proto.range().offset(),
             "Mismatched item and prototype: {} vs {}",
@@ -68,9 +71,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         match (*item, proto) {
-            (syn::Item::Enum(_), _) => unimplemented!(),
-            (syn::Item::Fun(i), &sem::Prototype::Fun(ref p))
-                => self.fun_item(i, p),
+            (Item::Enum(i), &Enum(ref p)) => self.enum_item(i, p),
+            (Item::Fun(i), &Fun(ref p)) => self.fun_item(i, p),
+            (Item::Enum(_), &p) => panic!("Expected enum {:?}", p),
+            (Item::Fun(_), &p) => panic!("Expected function {:?}", p),
         }
     }
 }
@@ -81,6 +85,15 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn enum_prototype(&mut self, e: syn::Enum) -> sem::Prototype<'g> {
+        sem::Prototype::Enum(
+            sem::EnumProto {
+                name: e.name.into(),
+                range: e.keyword().range().extend(e.name.range()),
+            }
+        )
+    }
+
     fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
         let mut arguments =
             mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
@@ -106,6 +119,32 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
+    fn enum_item(&mut self, e: syn::Enum, p: &'g sem::EnumProto)
+        -> sem::Item<'g>
+    {
+        let mut variants =
+            mem::Array::with_capacity(e.variants.len(), self.global_arena);
+
+        for ev in e.variants {
+            use self::syn::Record::*;
+
+            match *ev {
+                Unit(name) => variants.push(sem::Record {
+                    prototype: sem::RecordProto{
+                        name: name.into(),
+                        enum_: p.name.into()
+                    },
+                }),
+                Missing(_) | Unexpected(_) => (),
+            }
+        }
+
+        sem::Item::Enum(sem::Enum {
+            prototype: p,
+            variants: variants.into_slice(),
+        })
+    }
+
     fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
         -> sem::Item<'g>
     {
@@ -120,7 +159,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     fn function_scope<'b>(
         &'b self,
         parent: &'b scp::Scope<'g>,
-        p: &'b sem::FunctionProto<'b>
+        p: &'b sem::FunctionProto<'b>,
     )
         -> scp::FunctionScope<'b, 'g>
     {
@@ -154,6 +193,91 @@ mod tests {
     use model::syn;
     use model::sem::*;
     use super::scp::BuiltinScope;
+
+    #[test]
+    fn prototype_enum() {
+        fn unit(offset: usize, length: usize) -> syn::Record {
+            syn::Record::Unit(syn::TypeIdentifier(range(offset, length)))
+        }
+
+        let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(
+            b":enum Simple { One, Two }"
+        );
+
+        assert_eq!(
+            protoit(
+                &global_arena,
+                &builtin,
+                &syn::Item::Enum(syn::Enum {
+                    name: syn::TypeIdentifier(range(6, 6)),
+                    variants: &[unit(15, 3), unit(20, 3)],
+                    keyword: 0,
+                    open: 13,
+                    close: 24,
+                    commas: &[18, 0],
+                }),
+            ),
+            Prototype::Enum(EnumProto {
+                name: ItemIdentifier(range(6, 6)),
+                range: range(0, 12)
+            })
+        );
+    }
+
+    #[test]
+    fn item_enum() {
+        fn unit(offset: usize, length: usize) -> syn::Record {
+            syn::Record::Unit(syn::TypeIdentifier(range(offset, length)))
+        }
+
+        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
+            ItemIdentifier(range(offset, length))
+        }
+
+        let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(
+            b":enum Simple { One, Two }"
+        );
+
+        let enum_prototype = EnumProto {
+            name: item_id(6, 6),
+            range: range(0, 12)
+        };
+
+        assert_eq!(
+            itemit(
+                &global_arena,
+                &builtin,
+                &Prototype::Enum(enum_prototype),
+                &syn::Item::Enum(syn::Enum {
+                    name: syn::TypeIdentifier(range(6, 6)),
+                    variants: &[unit(15, 3), unit(20, 3)],
+                    keyword: 0,
+                    open: 13,
+                    close: 24,
+                    commas: &[18, 0],
+                }),
+            ),
+            Item::Enum(Enum {
+                prototype: &enum_prototype,
+                variants: &[
+                    Record {
+                        prototype: RecordProto {
+                            name: item_id(15, 3),
+                            enum_: enum_prototype.name,
+                        },
+                    },
+                    Record {
+                        prototype: RecordProto {
+                            name: item_id(20, 3),
+                            enum_: enum_prototype.name,
+                        },
+                    },
+                ],
+            })
+        );
+    }
 
     #[test]
     fn prototype_fun() {

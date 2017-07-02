@@ -69,7 +69,7 @@ pub struct Enum<'a> {
     /// Name of the enum.
     pub name: TypeIdentifier,
     /// Variants of the enum.
-    pub variants: &'a [EnumVariant],
+    pub variants: &'a [Record],
     /// Offset of the `:enum` keyword.
     pub keyword: u32,
     /// Offset of the opening brace.
@@ -82,14 +82,14 @@ pub struct Enum<'a> {
     pub commas: &'a [u32],
 }
 
-/// An Enum Variant.
+/// A Record.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum EnumVariant {
-    /// A missing variant, when two commas succeed one another.
+pub enum Record {
+    /// A missing record, when two commas succeed one another for example.
     Missing(com::Range),
     /// An unexpected range of tokens.
     Unexpected(com::Range),
-    /// A unit variant, with no argument.
+    /// A unit record, with no argument.
     Unit(TypeIdentifier),
 }
 
@@ -353,10 +353,10 @@ impl<'a> Enum<'a> {
     }
 }
 
-impl EnumVariant {
-    /// Returns the name of the variant.
+impl Record {
+    /// Returns the name of the record.
     pub fn name(&self) -> TypeIdentifier {
-        use self::EnumVariant::*;
+        use self::Record::*;
 
         match *self {
             Missing(r) | Unexpected(r) => TypeIdentifier(r),
@@ -364,9 +364,9 @@ impl EnumVariant {
         }
     }
 
-    /// Returns the range spanned by the variant.
+    /// Returns the range spanned by the record.
     pub fn range(&self) -> com::Range {
-        use self::EnumVariant::*;
+        use self::Record::*;
 
         match *self {
             Missing(r) | Unexpected(r) => r,
@@ -465,6 +465,13 @@ impl<'a> Type<'a> {
     }
 }
 
+impl TypeIdentifier {
+    /// Returns the range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        self.0
+    }
+}
+
 impl<'a, T: 'a + Clone> Tuple<'a, T> {
     /// Returns whether the tuple is empty.
     pub fn is_empty(&self) -> bool { self.fields.is_empty() }
@@ -543,8 +550,8 @@ mod tests {
 
     #[test]
     fn range_enum_simple() {
-        fn unit(offset: usize, length: usize) -> EnumVariant {
-            EnumVariant::Unit(TypeIdentifier(range(offset, length)))
+        fn unit(offset: usize, length: usize) -> Record {
+            Record::Unit(TypeIdentifier(range(offset, length)))
         }
 
         //  ":enum Simple { One, Two }"

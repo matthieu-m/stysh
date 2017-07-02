@@ -67,7 +67,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
     fn type_of_simple(&mut self, t: syn::TypeIdentifier) -> sem::Type<'g> {
-        self.scope.lookup_type(sem::ItemIdentifier(t.0))
+        self.scope.lookup_type(t.into())
     }
 
     fn type_of_tuple(&mut self, t: &syn::Tuple<syn::Type>) -> sem::Type<'g> {
@@ -82,19 +82,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_expr(&mut self, expr: &syn::Expression) -> sem::Value<'g> {
-        use model::syn::Expression;
+        use model::syn::Expression::*;
 
         match *expr {
-            Expression::BinOp(op, _, left, right)
+            BinOp(op, _, left, right)
                  => self.value_of_binary_operator(op, left, right),
-            Expression::Block(s, e, r) => self.value_of_block(s, e, r),
-            Expression::FunctionCall(fun) => self.value_of_call(fun),
-            Expression::If(if_else) => self.value_of_if_else(if_else),
-            Expression::Lit(lit, range) => self.value_of_literal(lit, range),
-            Expression::PreOp(op, _, e)
+            Block(s, e, r) => self.value_of_block(s, e, r),
+            FunctionCall(fun) => self.value_of_call(fun),
+            If(if_else) => self.value_of_if_else(if_else),
+            Lit(lit, range) => self.value_of_literal(lit, range),
+            PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, expr.range()),
-            Expression::Tuple(t) => self.value_of_tuple(&t),
-            Expression::Var(id) => self.value_of_variable(id),
+            Tuple(t) => self.value_of_tuple(&t),
+            Var(id) => self.value_of_variable(id),
         }
     }
 

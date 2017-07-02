@@ -17,11 +17,17 @@ use std;
 use basic::{com, mem};
 use basic::mem::CloneInto;
 
+use model::syn;
+
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
+    /// An enum type.
+    Enum(EnumProto),
+    /// A record type.
+    Rec(RecordProto),
     /// A tuple type.
     Tuple(Tuple<'a, Type<'a>>),
     /// An unresolved type.
@@ -158,18 +164,56 @@ pub struct Tuple<'a, T: 'a> {
 /// An annotated prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Prototype<'a> {
+    /// An enum prototype.
+    Enum(EnumProto),
     /// A function prototype.
     Fun(FunctionProto<'a>),
+    /// An enum variant prototype.
+    Rec(RecordProto),
+}
+
+/// An enum prototype.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct EnumProto {
+    /// The enum identifier.
+    pub name: ItemIdentifier,
+    /// The enum prototype range.
+    pub range: com::Range,
+}
+
+/// A record prototype.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct RecordProto {
+    /// The record identifier.
+    pub name: ItemIdentifier,
+    /// The enum this record is a part of, or undefined.
+    pub enum_: ItemIdentifier,
+}
+
+/// An enum.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Enum<'a> {
+    /// The prototype.
+    pub prototype: &'a EnumProto,
+    /// The variants.
+    pub variants: &'a [Record],
+}
+
+/// A record.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Record {
+    /// The prototype.
+    pub prototype: RecordProto,
 }
 
 /// A function prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionProto<'a> {
-    /// The function's identifier.
+    /// The function identifier.
     pub name: ItemIdentifier,
-    /// The function's prototype range.
+    /// The function prototype range.
     pub range: com::Range,
-    /// The function's arguments (always arguments).
+    /// The function arguments (always arguments).
     pub arguments: &'a [Binding<'a>],
     /// The return type of the function.
     pub result: Type<'a>,
@@ -187,6 +231,8 @@ pub struct Function<'a> {
 /// An full-fledged item.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Item<'a> {
+    /// A full-fledged enum definition.
+    Enum(Enum<'a>),
     /// A full-fledged function definition.
     Fun(Function<'a>),
 }
@@ -235,8 +281,12 @@ impl<'a> Callable<'a> {
 impl<'a> Prototype<'a> {
     /// Returns the range spanned by the prototype.
     pub fn range(&self) -> com::Range {
+        use self::Prototype::*;
+
         match *self {
-            Prototype::Fun(fun) => fun.range,
+            Enum(e) => e.range,
+            Fun(fun) => fun.range,
+            Rec(r) => r.name.0,
         }
     }
 }
@@ -285,10 +335,14 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
     type Output = Type<'target>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Type::*;
+
         match *self {
-            Type::Tuple(t) => Type::Tuple(arena.intern(&t)),
-            Type::Builtin(t) => Type::Builtin(t),
-            Type::Unresolved(n) => Type::Unresolved(n),
+            Builtin(t) => Builtin(t),
+            Enum(e) => Enum(e),
+            Rec(r) => Rec(r),
+            Tuple(t) => Tuple(arena.intern(&t)),
+            Unresolved(n) => Unresolved(n),
         }
     }
 }
@@ -380,9 +434,12 @@ impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
     type Output = Prototype<'target>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Prototype::*;
+
         match *self {
-            Prototype::Fun(fun)
-                => Prototype::Fun(arena.intern(&fun)),
+            Enum(e) => Enum(e),
+            Rec(r) => Rec(r),
+            Fun(fun) => Fun(arena.intern(&fun)),
         }
     }
 }
@@ -397,6 +454,33 @@ impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
             arguments: CloneInto::clone_into(self.arguments, arena),
             result: arena.intern(&self.result),
         }
+    }
+}
+
+impl<'target> CloneInto<'target> for EnumProto {
+    type Output = EnumProto;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output {
+        *self
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Enum<'a> {
+    type Output = Enum<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Enum {
+            prototype: arena.intern_ref(self.prototype),
+            variants: CloneInto::clone_into(self.variants, arena),
+        }
+    }
+}
+
+impl<'target> CloneInto<'target> for Record {
+    type Output = Record;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output {
+        *self
     }
 }
 
@@ -425,11 +509,12 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
     type Output = BuiltinValue<'target>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::BuiltinValue::*;
+
         match *self {
-            BuiltinValue::Bool(b) => BuiltinValue::Bool(b),
-            BuiltinValue::Int(i) => BuiltinValue::Int(i),
-            BuiltinValue::String(s) =>
-                BuiltinValue::String(arena.insert_slice(s)),
+            Bool(b) => Bool(b),
+            Int(i) => Int(i),
+            String(s) => String(arena.insert_slice(s)),
         }
     }
 }
@@ -449,6 +534,12 @@ impl<'a> std::convert::From<BuiltinValue<'a>> for i64 {
             BuiltinValue::Int(i) => i,
             _ => panic!("{} is not an integer", value),
         }
+    }
+}
+
+impl std::convert::From<syn::TypeIdentifier> for ItemIdentifier {
+    fn from(value: syn::TypeIdentifier) -> ItemIdentifier {
+        ItemIdentifier(value.range())
     }
 }
 
@@ -502,7 +593,7 @@ impl<'a> std::fmt::Display for Callable<'a> {
 
         match *self {
             Builtin(b) => write!(f, "{}", b),
-            Function(fun) => write!(f, "<{}>", fun.name.0),
+            Function(fun) => write!(f, "{}", fun.name),
             Unknown(_) => write!(f, "<unknown>"),
             Unresolved(funs) => {
                 write!(f, "<unresolved: ")?;
@@ -513,6 +604,12 @@ impl<'a> std::fmt::Display for Callable<'a> {
                 write!(f, ">")
             },
         }
+    }
+}
+
+impl<'a> std::fmt::Display for ItemIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "<{}>", self.0)
     }
 }
 
@@ -534,8 +631,10 @@ impl<'a> std::fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         match *self {
             Type::Builtin(t) => write!(f, "{}", t),
+            Type::Enum(e) => write!(f, "{}", e.name),
+            Type::Rec(r) => write!(f, "{}", r.name),
             Type::Tuple(t) => write!(f, "{}", t),
-            Type::Unresolved(i) => write!(f, "<{}>", i.0),
+            Type::Unresolved(i) => write!(f, "{}", i),
         }
     }
 }

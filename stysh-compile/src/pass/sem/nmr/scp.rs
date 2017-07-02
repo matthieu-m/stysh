@@ -4,10 +4,7 @@ use std::fmt;
 
 use basic::mem;
 
-use model::sem::{
-    Binding, Callable, Expr, FunctionProto, ItemIdentifier, Type, Value,
-    ValueIdentifier
-};
+use model::sem::*;
 
 /// A Lexical Scope trait.
 pub trait Scope<'g>: fmt::Debug {
@@ -106,6 +103,7 @@ pub struct BlockScope<'a, 'g, 'local>
     source: &'local [u8],
     parent: &'a Scope<'g>,
     functions: SourceMap<'local, Callable<'g>>,
+    types: SourceMap<'local, Type<'g>>,
     values: SourceMap<'local, (ValueIdentifier, Type<'g>)>,
     global_arena: &'g mem::Arena,
 }
@@ -124,14 +122,15 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
             source: source,
             parent: parent,
             functions: SourceMap::new(local_arena),
+            types: SourceMap::new(local_arena),
             values: SourceMap::new(local_arena),
             global_arena: global_arena
         }
     }
 
-    /// Adds a new value identifier to the scope.
-    pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
-        self.values.insert(&self.source[id.0], (id, type_));
+    /// Adds a new enum to the scope.
+    pub fn add_enum(&mut self, proto: EnumProto) {
+        self.types.insert(&self.source[proto.name.0], Type::Enum(proto));
     }
 
     /// Adds a new function identifier to the scope.
@@ -140,6 +139,11 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
             &self.source[proto.name.0],
             Callable::Function(proto)
         );
+    }
+
+    /// Adds a new value identifier to the scope.
+    pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
+        self.values.insert(&self.source[id.0], (id, type_));
     }
 }
 
@@ -230,6 +234,10 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
+        if let Some(&type_) = self.types.get(&&self.source[name.0]) {
+            return type_;
+        }
+
         self.parent.lookup_type(name)
     }
 }

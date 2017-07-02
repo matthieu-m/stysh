@@ -5,7 +5,7 @@
 use basic::com;
 
 use model::tt::{Kind, Node};
-use model::syn::{Enum, EnumVariant, Type, TypeIdentifier, Tuple};
+use model::syn::{Enum, Record, Type, TypeIdentifier, Tuple};
 
 use super::com::RawParser;
 
@@ -67,7 +67,7 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
 
                 let mut variants = self.raw.local_array();
                 let mut commas = self.raw.local_array();
-                while let Some((v, c)) = parser.parse_variant() {
+                while let Some((v, c)) = parser.parse_record() {
                     variants.push(v);
                     commas.push(c);
                 }
@@ -92,7 +92,7 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_variant(&mut self) -> Option<(EnumVariant, u32)> {
+    fn parse_record(&mut self) -> Option<(Record, u32)> {
         if self.raw.peek().is_none() {
             return None;
         }
@@ -100,7 +100,7 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
         let variant =
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|n| EnumVariant::Unit(TypeIdentifier(n.range())));
+                .map(|n| Record::Unit(TypeIdentifier(n.range())));
         let comma =
             self.raw
                 .pop_kind(Kind::SignComma)
@@ -110,7 +110,7 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
             (Some(variant), Some(comma)) => Some((variant, comma)),
             (Some(variant), None) => Some((variant, 0)),
             (None, Some(comma)) => Some((
-                EnumVariant::Missing(com::Range::new(comma as usize, 0)),
+                Record::Missing(com::Range::new(comma as usize, 0)),
                 comma
             )),
             (None, None) => unimplemented!(),
@@ -208,7 +208,7 @@ mod tests {
             enumit(&global, b":enum Simple { First }"),
             Enum {
                 name: typeid(6, 6),
-                variants: &[ EnumVariant::Unit(typeid(15, 5)) ],
+                variants: &[ Record::Unit(typeid(15, 5)) ],
                 keyword: 0,
                 open: 13,
                 close: 21,
@@ -220,7 +220,7 @@ mod tests {
             enumit(&global, b":enum Simple { First ,}"),
             Enum {
                 name: typeid(6, 6),
-                variants: &[ EnumVariant::Unit(typeid(15, 5)) ],
+                variants: &[ Record::Unit(typeid(15, 5)) ],
                 keyword: 0,
                 open: 13,
                 close: 22,
@@ -238,9 +238,9 @@ mod tests {
             Enum {
                 name: typeid(6, 6),
                 variants: &[
-                    EnumVariant::Unit(typeid(15, 5)),
-                    EnumVariant::Unit(typeid(22, 6)),
-                    EnumVariant::Unit(typeid(30, 5)),
+                    Record::Unit(typeid(15, 5)),
+                    Record::Unit(typeid(22, 6)),
+                    Record::Unit(typeid(30, 5)),
                 ],
                 keyword: 0,
                 open: 13,

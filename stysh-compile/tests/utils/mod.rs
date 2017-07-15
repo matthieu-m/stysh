@@ -78,6 +78,7 @@ where
                 let c = create_cfg_from_function(fun, arena, &mut local_arena);
                 registry.insert(fun.prototype.name, c);
             },
+            Rec(_) => unimplemented!(),
         }
     }
 

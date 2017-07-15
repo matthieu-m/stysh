@@ -48,7 +48,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         match *item {
             syn::Item::Enum(e) => self.enum_prototype(e),
             syn::Item::Fun(fun) => self.fun_prototype(fun),
-            syn::Item::Rec(_) => unimplemented!(),
+            syn::Item::Rec(r) => self.rec_prototype(r),
         }
     }
 
@@ -74,6 +74,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         match (*item, proto) {
             (Item::Enum(i), &Enum(ref p)) => self.enum_item(i, p),
             (Item::Fun(i), &Fun(ref p)) => self.fun_item(i, p),
+            (Item::Rec(r), &Rec(ref p)) => self.rec_item(r, p),
             (Item::Enum(_), &p) => panic!("Expected enum {:?}", p),
             (Item::Fun(_), &p) => panic!("Expected function {:?}", p),
             (Item::Rec(_), &p) => panic!("Expected record {:?}", p),
@@ -121,6 +122,14 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
+    fn rec_prototype(&mut self, r: syn::Record) -> sem::Prototype<'g> {
+        sem::Prototype::Rec(sem::RecordProto {
+            name: r.name().into(),
+            range: r.range(),
+            enum_: sem::ItemIdentifier::unresolved(),
+        })
+    }
+
     fn enum_item(&mut self, e: syn::Enum, p: &'g sem::EnumProto)
         -> sem::Item<'g>
     {
@@ -132,8 +141,9 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
             match *ev {
                 Unit(name) => variants.push(sem::Record {
-                    prototype: sem::RecordProto{
+                    prototype: sem::RecordProto {
                         name: name.into(),
+                        range: ev.range(),
                         enum_: p.name.into()
                     },
                 }),
@@ -156,6 +166,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             prototype: p,
             body: self.resolver(&scope).value_of(&fun.body)
         })
+    }
+
+    fn rec_item(&mut self, _: syn::Record, p: &'g sem::RecordProto)
+        -> sem::Item<'g>
+    {
+        sem::Item::Rec(sem::Record { prototype: *p })
     }
 
     fn function_scope<'b>(
@@ -267,17 +283,80 @@ mod tests {
                     Record {
                         prototype: RecordProto {
                             name: item_id(15, 3),
+                            range: range(15, 3),
                             enum_: enum_prototype.name,
                         },
                     },
                     Record {
                         prototype: RecordProto {
                             name: item_id(20, 3),
+                            range: range(20, 3),
                             enum_: enum_prototype.name,
                         },
                     },
                 ],
             })
+        );
+    }
+
+    #[test]
+    fn prototype_rec() {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
+        }
+
+        let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(b":rec Simple;");
+
+        assert_eq!(
+            protoit(
+                &global_arena,
+                &builtin,
+                &syn::Item::Rec(syn::Record {
+                    inner: unit(5, 6),
+                    keyword: 0,
+                    semi_colon: 11,
+                }),
+            ),
+            Prototype::Rec(RecordProto {
+                name: ItemIdentifier(range(5, 6)),
+                range: range(0, 12),
+                enum_: ItemIdentifier::unresolved(),
+            })
+        );
+    }
+
+    #[test]
+    fn item_rec() {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
+        }
+
+        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
+            ItemIdentifier(range(offset, length))
+        }
+
+        let global_arena = mem::Arena::new();
+        let builtin = BuiltinScope::new(b":rec Simple;");
+
+        let rec_prototype = RecordProto {
+            name: item_id(5, 6),
+            range: range(0, 12),
+            enum_: ItemIdentifier::unresolved(),
+        };
+
+        assert_eq!(
+            itemit(
+                &global_arena,
+                &builtin,
+                &Prototype::Rec(rec_prototype),
+                &syn::Item::Rec(syn::Record {
+                    inner: unit(5, 6),
+                    keyword: 0,
+                    semi_colon: 11,
+                }),
+            ),
+            Item::Rec(Record { prototype: rec_prototype })
         );
     }
 

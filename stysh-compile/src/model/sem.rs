@@ -168,7 +168,7 @@ pub enum Prototype<'a> {
     Enum(EnumProto),
     /// A function prototype.
     Fun(FunctionProto<'a>),
-    /// An enum variant prototype.
+    /// A record prototype.
     Rec(RecordProto),
 }
 
@@ -177,7 +177,7 @@ pub enum Prototype<'a> {
 pub struct EnumProto {
     /// The enum identifier.
     pub name: ItemIdentifier,
-    /// The enum prototype range.
+    /// The enum range.
     pub range: com::Range,
 }
 
@@ -186,6 +186,8 @@ pub struct EnumProto {
 pub struct RecordProto {
     /// The record identifier.
     pub name: ItemIdentifier,
+    /// The record range.
+    pub range: com::Range,
     /// The enum this record is a part of, or undefined.
     pub enum_: ItemIdentifier,
 }
@@ -235,6 +237,8 @@ pub enum Item<'a> {
     Enum(Enum<'a>),
     /// A full-fledged function definition.
     Fun(Function<'a>),
+    /// A full-fledged record definition.
+    Rec(Record),
 }
 
 /// An item identifier.
@@ -286,7 +290,7 @@ impl<'a> Prototype<'a> {
         match *self {
             Enum(e) => e.range,
             Fun(fun) => fun.range,
-            Rec(r) => r.name.0,
+            Rec(r) => r.range,
         }
     }
 }

@@ -48,6 +48,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         match *item {
             syn::Item::Enum(e) => self.enum_prototype(e),
             syn::Item::Fun(fun) => self.fun_prototype(fun),
+            syn::Item::Rec(_) => unimplemented!(),
         }
     }
 
@@ -75,6 +76,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             (Item::Fun(i), &Fun(ref p)) => self.fun_item(i, p),
             (Item::Enum(_), &p) => panic!("Expected enum {:?}", p),
             (Item::Fun(_), &p) => panic!("Expected function {:?}", p),
+            (Item::Rec(_), &p) => panic!("Expected record {:?}", p),
         }
     }
 }
@@ -126,7 +128,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             mem::Array::with_capacity(e.variants.len(), self.global_arena);
 
         for ev in e.variants {
-            use self::syn::Record::*;
+            use self::syn::InnerRecord::*;
 
             match *ev {
                 Unit(name) => variants.push(sem::Record {
@@ -196,8 +198,8 @@ mod tests {
 
     #[test]
     fn prototype_enum() {
-        fn unit(offset: usize, length: usize) -> syn::Record {
-            syn::Record::Unit(syn::TypeIdentifier(range(offset, length)))
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 
         let global_arena = mem::Arena::new();
@@ -227,8 +229,8 @@ mod tests {
 
     #[test]
     fn item_enum() {
-        fn unit(offset: usize, length: usize) -> syn::Record {
-            syn::Record::Unit(syn::TypeIdentifier(range(offset, length)))
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 
         fn item_id(offset: usize, length: usize) -> ItemIdentifier {

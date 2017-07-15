@@ -64,6 +64,7 @@ impl<'a, 'g, 'local> iter::Iterator for ParserImpl<'a, 'g, 'local> {
                 match node.front().kind() {
                     tt::Kind::KeywordEnum => Node::Item(self.parse_enum()),
                     tt::Kind::KeywordFun => Node::Item(self.parse_function()),
+                    tt::Kind::KeywordRec => Node::Item(self.parse_record()),
                     tt::Kind::KeywordVar => Node::Stmt(self.parse_variable()),
                     _ => Node::Expr(self.parse_expression()),
                 }
@@ -97,6 +98,10 @@ impl<'a, 'g, 'local> ParserImpl<'a, 'g, 'local> {
 
     fn parse_function(&mut self) -> Item<'g> {
         Item::Fun(fun::parse_function(&mut self.raw))
+    }
+
+    fn parse_record(&mut self) -> Item<'g> {
+        Item::Rec(typ::parse_record(&mut self.raw))
     }
 
     fn parse_variable(&mut self) -> Statement<'g> {

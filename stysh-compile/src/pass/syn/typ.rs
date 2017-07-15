@@ -5,17 +5,26 @@
 use basic::com;
 
 use model::tt::{Kind, Node};
-use model::syn::{Enum, Record, Type, TypeIdentifier, Tuple};
+use model::syn::{Enum, InnerRecord, Record, Type, TypeIdentifier, Tuple};
 
 use super::com::RawParser;
 
 pub fn parse_enum<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     -> Enum<'g>
 {
-    let mut parser = EnumParser::new(*raw);
-    let e = parser.parse();
+    let mut parser = EnumRecParser::new(*raw);
+    let e = parser.parse_enum();
     *raw = parser.into_raw();
     e
+}
+
+pub fn parse_record<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> Record
+{
+    let mut parser = EnumRecParser::new(*raw);
+    let r = parser.parse_record();
+    *raw = parser.into_raw();
+    r
 }
 
 pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
@@ -30,7 +39,7 @@ pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 //
 //  Implementation Details
 //
-struct EnumParser<'a, 'g, 'local> {
+struct EnumRecParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>,
 }
 
@@ -38,14 +47,14 @@ struct TypeParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>,
 }
 
-impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> EnumParser<'a, 'g, 'local> {
-        EnumParser { raw: raw }
+impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> EnumRecParser<'a, 'g, 'local> {
+        EnumRecParser { raw: raw }
     }
 
     fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
-    fn parse(&mut self) -> Enum<'g> {
+    fn parse_enum(&mut self) -> Enum<'g> {
         //  Expects:
         //  -   :enum
         //  -   type-identifier
@@ -63,13 +72,15 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
 
         match self.raw.peek() {
             Some(Node::Braced(o, ns, c)) => {
-                let mut parser = EnumParser::new(self.raw.spawn(ns));
+                let mut parser = EnumRecParser::new(self.raw.spawn(ns));
 
                 let mut variants = self.raw.local_array();
-                let mut commas = self.raw.local_array();
-                while let Some((v, c)) = parser.parse_record() {
+                let mut semis = self.raw.local_array();
+                while let Some((v, c)) =
+                    parser.parse_inner_record(Kind::SignComma)
+                {
                     variants.push(v);
-                    commas.push(c);
+                    semis.push(c);
                 }
 
                 Enum {
@@ -78,7 +89,7 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
                     keyword: keyword.offset() as u32,
                     open: o.offset() as u32,
                     close: c.offset() as u32,
-                    commas: self.raw.intern_slice(commas.into_slice()),
+                    commas: self.raw.intern_slice(semis.into_slice()),
                 }
             },
             _ => Enum {
@@ -92,7 +103,22 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_record(&mut self) -> Option<(Record, u32)> {
+    fn parse_record(&mut self) -> Record {
+        let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
+        let missing = com::Range::new(keyword.range().end_offset(), 0);
+
+        let (inner, semi) =
+            self.parse_inner_record(Kind::SignSemiColon)
+                .unwrap_or((InnerRecord::Missing(missing), 0));
+
+        Record {
+            inner: inner,
+            keyword: keyword.offset() as u32,
+            semi_colon: semi
+        }
+    }
+
+    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord, u32)> {
         if self.raw.peek().is_none() {
             return None;
         }
@@ -100,18 +126,19 @@ impl<'a, 'g, 'local> EnumParser<'a, 'g, 'local> {
         let variant =
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|n| Record::Unit(TypeIdentifier(n.range())));
-        let comma =
+                .map(|n| InnerRecord::Unit(TypeIdentifier(n.range())));
+
+        let semi =
             self.raw
-                .pop_kind(Kind::SignComma)
+                .pop_kind(end)
                 .map(|c| c.offset() as u32);
 
-        match (variant, comma) {
-            (Some(variant), Some(comma)) => Some((variant, comma)),
+        match (variant, semi) {
+            (Some(variant), Some(semi)) => Some((variant, semi)),
             (Some(variant), None) => Some((variant, 0)),
-            (None, Some(comma)) => Some((
-                Record::Missing(com::Range::new(comma as usize, 0)),
-                comma
+            (None, Some(semi)) => Some((
+                InnerRecord::Missing(com::Range::new(semi as usize, 0)),
+                semi
             )),
             (None, None) => unimplemented!(),
         }
@@ -208,7 +235,7 @@ mod tests {
             enumit(&global, b":enum Simple { First }"),
             Enum {
                 name: typeid(6, 6),
-                variants: &[ Record::Unit(typeid(15, 5)) ],
+                variants: &[ InnerRecord::Unit(typeid(15, 5)) ],
                 keyword: 0,
                 open: 13,
                 close: 21,
@@ -220,7 +247,7 @@ mod tests {
             enumit(&global, b":enum Simple { First ,}"),
             Enum {
                 name: typeid(6, 6),
-                variants: &[ Record::Unit(typeid(15, 5)) ],
+                variants: &[ InnerRecord::Unit(typeid(15, 5)) ],
                 keyword: 0,
                 open: 13,
                 close: 22,
@@ -238,14 +265,28 @@ mod tests {
             Enum {
                 name: typeid(6, 6),
                 variants: &[
-                    Record::Unit(typeid(15, 5)),
-                    Record::Unit(typeid(22, 6)),
-                    Record::Unit(typeid(30, 5)),
+                    InnerRecord::Unit(typeid(15, 5)),
+                    InnerRecord::Unit(typeid(22, 6)),
+                    InnerRecord::Unit(typeid(30, 5)),
                 ],
                 keyword: 0,
                 open: 13,
                 close: 36,
                 commas: &[ 20, 28, 0 ]
+            }
+        );
+    }
+
+    #[test]
+    fn rec_unit() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            recit(&global, b":rec Simple;"),
+            Record {
+                inner: InnerRecord::Unit(typeid(5, 6)),
+                keyword: 0,
+                semi_colon: 11,
             }
         );
     }
@@ -368,6 +409,20 @@ mod tests {
         local_arena.recycle();
 
         e
+    }
+
+    fn recit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Record {
+        use super::super::com::RawParser;
+
+        let mut local_arena = mem::Arena::new();
+
+        let r = {
+            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
+            super::parse_record(&mut raw)
+        };
+        local_arena.recycle();
+
+        r
     }
 
     fn typeit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Type<'g> {

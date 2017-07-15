@@ -62,6 +62,8 @@ pub enum Kind {
     KeywordNot,
     /// The :or keyword.
     KeywordOr,
+    /// The :rec keyword.
+    KeywordRec,
     /// The :var keyword.
     KeywordVar,
     /// The :xor keyword.

@@ -259,6 +259,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":if" => Kind::KeywordIf,
             b":not" => Kind::KeywordNot,
             b":or" => Kind::KeywordOr,
+            b":rec" => Kind::KeywordRec,
             b":var" => Kind::KeywordVar,
             b":xor" => Kind::KeywordXor,
             _ => panic!("parse_colon not implemented for {}", tok),

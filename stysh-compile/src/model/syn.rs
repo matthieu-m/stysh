@@ -53,6 +53,8 @@ pub enum Item<'a> {
     Enum(Enum<'a>),
     /// A function.
     Fun(Function<'a>),
+    /// A record.
+    Rec(Record),
 }
 
 /// A Statement.
@@ -69,23 +71,33 @@ pub struct Enum<'a> {
     /// Name of the enum.
     pub name: TypeIdentifier,
     /// Variants of the enum.
-    pub variants: &'a [Record],
+    pub variants: &'a [InnerRecord],
     /// Offset of the `:enum` keyword.
     pub keyword: u32,
     /// Offset of the opening brace.
     pub open: u32,
     /// Offset of the closing brace.
     pub close: u32,
-    /// Offsets of the commas separating the variants, an absent comma is 
-    /// placed at the offset of the last character of the field it would have
-    /// followed.
+    /// Offsets of the comma separating the variants, an absent comma is placed
+    /// at the offset of the last character of the field it would have followed.
     pub commas: &'a [u32],
 }
 
 /// A Record.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Record {
-    /// A missing record, when two commas succeed one another for example.
+pub struct Record {
+    /// Inner representation of the record.
+    pub inner: InnerRecord,
+    /// Offset of the `:rec` keyword.
+    pub keyword: u32,
+    /// Offset of the semi-colon, for unit records.
+    pub semi_colon: u32,
+}
+
+/// An InnerRecord.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum InnerRecord {
+    /// A missing record, when a semi-colon immediately appears for example.
     Missing(com::Range),
     /// An unexpected range of tokens.
     Unexpected(com::Range),
@@ -305,6 +317,7 @@ impl<'a> Item<'a> {
         match *self {
             Enum(e) => e.range(),
             Fun(fun) => fun.range(),
+            Rec(r) => r.range(),
         }
     }
 }
@@ -338,13 +351,13 @@ impl<'a> Enum<'a> {
     /// Returns the token of the comma following the i-th field, if there is no
     /// such comma the position it would have been at is faked.
     pub fn comma(&self, i: usize) -> Option<tt::Token> {
-        let make_comma = |&o| if o == 0 {
+        let make_semi = |&o| if o == 0 {
             let position = self.variants[i].range().end_offset();
             tt::Token::new(tt::Kind::SignComma, position, 0)
         } else {
             tt::Token::new(tt::Kind::SignComma, o as usize, 1)
         };
-        self.commas.get(i).map(make_comma)
+        self.commas.get(i).map(make_semi)
     }
 
     /// Returns the range spanned by the enum.
@@ -354,9 +367,38 @@ impl<'a> Enum<'a> {
 }
 
 impl Record {
+    /// Returns the `:rec` token.
+    pub fn keyword(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::KeywordRec, self.keyword as usize, 4)
+    }
+
     /// Returns the name of the record.
     pub fn name(&self) -> TypeIdentifier {
-        use self::Record::*;
+        self.inner.name()
+    }
+
+    /// Returns the token of the semi-colon following the record declaration,
+    /// if there is no such semi-colon, the position it would have been at is
+    /// faked.
+    pub fn semi_colon(&self) -> tt::Token {
+        let (offset, range) = if self.semi_colon == 0 {
+            (self.inner.range().end_offset(), 0)
+        } else {
+            (self.semi_colon as usize, 1)
+        };
+        tt::Token::new(tt::Kind::SignSemiColon, offset, range)
+    }
+
+    /// Returns the range spanned by the record.
+    pub fn range(&self) -> com::Range {
+        self.keyword().range().extend(self.semi_colon().range())
+    }
+}
+
+impl InnerRecord {
+    /// Returns the name of the inner record.
+    pub fn name(&self) -> TypeIdentifier {
+        use self::InnerRecord::*;
 
         match *self {
             Missing(r) | Unexpected(r) => TypeIdentifier(r),
@@ -364,9 +406,9 @@ impl Record {
         }
     }
 
-    /// Returns the range spanned by the record.
+    /// Returns the range spanned by the inner record.
     pub fn range(&self) -> com::Range {
-        use self::Record::*;
+        use self::InnerRecord::*;
 
         match *self {
             Missing(r) | Unexpected(r) => r,
@@ -550,8 +592,8 @@ mod tests {
 
     #[test]
     fn range_enum_simple() {
-        fn unit(offset: usize, length: usize) -> Record {
-            Record::Unit(TypeIdentifier(range(offset, length)))
+        fn unit(offset: usize, length: usize) -> InnerRecord {
+            InnerRecord::Unit(TypeIdentifier(range(offset, length)))
         }
 
         //  ":enum Simple { One, Two }"

@@ -74,6 +74,8 @@ pub enum Kind {
     LitBoolTrue,
     /// An integral.
     LitIntegral,
+    /// The name of a module.
+    NameModule,
     /// The name of a type.
     NameType,
     /// The name of a value.
@@ -98,6 +100,8 @@ pub enum Kind {
     SignComma,
     /// A '-' sign.
     SignDash,
+    /// A '::' sign.
+    SignDoubleColon,
     /// A '==' sign.
     SignDoubleEqual,
     /// A '//' sign.

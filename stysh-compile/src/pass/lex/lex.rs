@@ -239,8 +239,11 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
                 b'0'...b'9' => self.parse_number(tok),
-                b'A'...b'Z' => self.parse_name(tok),
-                b'a'...b'z' => self.parse_name(tok),
+                b'A'...b'Z' => self.parse_name_type(tok),
+                b'a'...b'z' => {
+                    let peek = self.stream.peek();
+                    self.parse_name_module_value(tok, peek)
+                },
                 b':' => self.parse_colon(tok),
                 b if SIMPLE_SIGNS.contains(b) => self.parse_sign(tok),
                 _ => panic!("parse_token not implemented for {}", tok),
@@ -251,6 +254,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     fn parse_colon(&self, tok: RawToken) -> Option<Token> {
         let kind = match tok.raw {
             b":" => Kind::SignColon,
+            b"::" => Kind::SignDoubleColon,
             b":=" => Kind::SignBind,
             b":and" => Kind::KeywordAnd,
             b":else" => Kind::KeywordElse,
@@ -267,19 +271,25 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 
-    fn parse_name(&self, tok: RawToken) -> Option<Token> {
+    fn parse_name_type(&self, tok: RawToken) -> Option<Token> {
         // TODO(matthieum): validate identifiers.
+        Some(Token::new(Kind::NameType, tok.offset, tok.raw.len()))
+    }
 
-        let kind = match tok.raw[0] {
-            b'A'...b'Z' => Kind::NameType,
-            b'a'...b'z' => if tok.raw == b"false" {
-                Kind::LitBoolFalse
-            } else if tok.raw == b"true" {
-                Kind::LitBoolTrue
-            } else {
-                Kind::NameValue
-            },
-            _ => panic!("parse_name not implemented {}", tok),
+    fn parse_name_module_value(&self, tok: RawToken, peek: Option<RawToken>) 
+        -> Option<Token>
+    {
+        // TODO(matthieum): validate identifiers.
+        let followed_by_double_colon = peek.map_or(false, |t| t.raw == b"::");
+
+        let kind = if followed_by_double_colon {
+            Kind::NameModule
+        }else if tok.raw == b"false" {
+            Kind::LitBoolFalse
+        } else if tok.raw == b"true" {
+            Kind::LitBoolTrue
+        } else {
+            Kind::NameValue
         };
 
         Some(Token::new(kind, tok.offset, tok.raw.len()))
@@ -651,11 +661,31 @@ mod tests {
     }
 
     #[test]
+    fn lex_path() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b"mod::mod::Type::method"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::NameModule, 0, 3),
+                    Token::new(Kind::SignDoubleColon, 3, 2),
+                    Token::new(Kind::NameModule, 5, 3),
+                    Token::new(Kind::SignDoubleColon, 8, 2),
+                    Token::new(Kind::NameType, 10, 4),
+                    Token::new(Kind::SignDoubleColon, 14, 2),
+                    Token::new(Kind::NameValue, 16, 6),
+                ]),
+            ]
+        );
+    }
+
+    #[test]
     fn lex_signs_farandole() {
         let global_arena = mem::Arena::new();
 
         assert_eq!(
-            lexit(&global_arena, b"-> != := : , - == // < <= + > >= ; *"),
+            lexit(&global_arena, b"-> != := : , - :: == // < <= + > >= ; *"),
             &[
                 Node::Run(&[
                     Token::new(Kind::SignArrowSingle, 0, 2),
@@ -664,15 +694,16 @@ mod tests {
                     Token::new(Kind::SignColon, 9, 1),
                     Token::new(Kind::SignComma, 11, 1),
                     Token::new(Kind::SignDash, 13, 1),
-                    Token::new(Kind::SignDoubleEqual, 15, 2),
-                    Token::new(Kind::SignDoubleSlash, 18, 2),
-                    Token::new(Kind::SignLeft, 21, 1),
-                    Token::new(Kind::SignLeftEqual, 23, 2),
-                    Token::new(Kind::SignPlus, 26, 1),
-                    Token::new(Kind::SignRight, 28, 1),
-                    Token::new(Kind::SignRightEqual, 30, 2),
-                    Token::new(Kind::SignSemiColon, 33, 1),
-                    Token::new(Kind::SignStar, 35, 1),
+                    Token::new(Kind::SignDoubleColon, 15, 2),
+                    Token::new(Kind::SignDoubleEqual, 18, 2),
+                    Token::new(Kind::SignDoubleSlash, 21, 2),
+                    Token::new(Kind::SignLeft, 24, 1),
+                    Token::new(Kind::SignLeftEqual, 26, 2),
+                    Token::new(Kind::SignPlus, 29, 1),
+                    Token::new(Kind::SignRight, 31, 1),
+                    Token::new(Kind::SignRightEqual, 33, 2),
+                    Token::new(Kind::SignSemiColon, 36, 1),
+                    Token::new(Kind::SignStar, 38, 1),
                 ]),
             ]
         )

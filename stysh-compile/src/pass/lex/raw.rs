@@ -82,6 +82,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
             b'b' if ASCII_QUOTES.contains_opt(next) => self.lex_string(),
             b'#' if next == Some(b'[') => self.lex_attribute(),
             b'#' => self.lex_comment(),
+            b':' if next == Some(b':') => (RawKind::Generic, self.pop(2)),
             b':' => self.lex_generic(1),
             _ => self.lex_generic(0),
         };

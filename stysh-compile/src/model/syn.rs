@@ -32,6 +32,8 @@ pub enum Expression<'a> {
     BinOp(BinaryOperator, u32, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
+    /// A constructor expression.
+    Constructor(Constructor),
     /// A function call expression.
     FunctionCall(FunctionCall<'a>),
     /// A if expression.
@@ -177,6 +179,13 @@ pub enum PrefixOperator {
     Not,
 }
 
+/// A Constructor.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Constructor {
+    /// Name of the constructor.
+    pub name: TypeIdentifier,
+}
+
 /// A function call expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionCall<'a> {
@@ -298,6 +307,7 @@ impl<'a> Expression<'a> {
         match *self {
             BinOp(_, _, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
+            Constructor(c) => c.range(),
             FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
             Lit(_, range) => range,
@@ -434,6 +444,13 @@ impl<'a> Argument<'a> {
             self.type_.range().end_offset()
         };
         com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl Constructor {
+    /// Returns the range spanned by the function call.
+    pub fn range(&self) -> com::Range {
+        self.name.range()
     }
 }
 

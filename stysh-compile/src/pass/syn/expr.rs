@@ -391,6 +391,10 @@ impl<'g> IntoExpr<'g> for tt::Token {
             tt::Kind::LitBoolFalse => Some(Lit(Bool(false), self.range())),
             tt::Kind::LitBoolTrue => Some(Lit(Bool(true), self.range())),
             tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
+            tt::Kind::NameType => {
+                let name = TypeIdentifier(self.range());
+                Some(Constructor(::model::syn::Constructor { name: name }))
+            },
             tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
@@ -508,6 +512,18 @@ mod tests {
                 ]),
                 range(0, 8)
             )
+        );
+    }
+
+    #[test]
+    fn basic_constructor() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"True"),
+            Expression::Constructor(Constructor {
+                name: TypeIdentifier(range(0, 4)),
+            })
         );
     }
 

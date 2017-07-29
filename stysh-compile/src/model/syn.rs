@@ -524,6 +524,13 @@ impl<'a> Type<'a> {
     }
 }
 
+impl VariableIdentifier {
+    /// Returns the range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        self.0
+    }
+}
+
 impl TypeIdentifier {
     /// Returns the range spanned by the binding.
     pub fn range(&self) -> com::Range {

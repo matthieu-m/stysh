@@ -120,7 +120,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             let (binding, type_, stmt) = match s {
                 syn::Statement::Var(var) => {
                     let value = self.rescope(&scope).value_of_expr(&var.expr);
-                    let id = sem::ValueIdentifier(var.name.0);
+                    let id = var.name.into();
                     (
                         id,
                         value.type_,
@@ -188,7 +188,17 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_constructor(&mut self, _: syn::Constructor) -> sem::Value<'g> {
+    fn value_of_constructor(&mut self, c: syn::Constructor) -> sem::Value<'g> {
+        if let sem::Type::Rec(rec) = self.scope.lookup_type(c.name.into()) {
+            let callable = sem::Callable::ConstructorRec(rec);
+
+            return sem::Value {
+                type_: callable.result_type(),
+                range: c.range(),
+                expr: sem::Expr::Call(callable, &[]),
+            };
+        }
+
         unimplemented!()
     }
 
@@ -203,8 +213,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 values.push(self.value_of(e));
             }
 
-            let callable =
-                self.scope.lookup_callable(sem::ValueIdentifier(id.0));
+            let callable = self.scope.lookup_callable(id.into());
 
             return sem::Value {
                 type_: callable.result_type(),
@@ -359,7 +368,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_variable(&mut self, var: syn::VariableIdentifier)
         -> sem::Value<'g>
     {
-        self.scope.lookup_binding(sem::ValueIdentifier(var.0))
+        self.scope.lookup_binding(var.into())
     }
 
     fn catenate_fragments(&self, f: &[syn::StringFragment]) -> &'g [u8] {
@@ -446,6 +455,42 @@ mod tests {
                 &syn::Expression::Lit(syn::Literal::Bool(true), range(0, 4))
             ),
             boolean(true, range(0, 4))
+        );
+    }
+
+    #[test]
+    fn value_basic_constructor() {
+        let global_arena = mem::Arena::new();
+
+        let fragment = b"Rec";
+
+        let registered = ItemIdentifier(range(0, 3));
+        let basic_rec_prototype = RecordProto {
+            name: registered,
+            range: range(45, 3),
+            enum_: ItemIdentifier::unresolved()
+        };
+
+        let mut scope = MockScope::new(fragment, &global_arena);
+        scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+
+        assert_eq!(
+            valueit_with_scope(
+                &global_arena,
+                fragment,
+                &scope,
+                &syn::Expression::Constructor(syn::Constructor {
+                    name: syn::TypeIdentifier(registered.0),
+                }),
+            ),
+            Value {
+                type_: Type::Rec(basic_rec_prototype),
+                range: range(0, 3),
+                expr: Expr::Call(
+                    Callable::ConstructorRec(basic_rec_prototype),
+                    &[],
+                ),
+            }
         );
     }
 

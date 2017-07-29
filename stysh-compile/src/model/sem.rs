@@ -110,6 +110,8 @@ pub enum Stmt<'a> {
 pub enum Callable<'a> {
     /// A built-in function.
     Builtin(BuiltinFunction),
+    /// A record constructor.
+    ConstructorRec(RecordProto),
     /// A static user-defined function.
     Function(FunctionProto<'a>),
     /// An unknown callable binding.
@@ -276,6 +278,7 @@ impl<'a> Callable<'a> {
 
         match *self {
             Builtin(fun) => fun.result_type(),
+            ConstructorRec(rec) => Type::Rec(rec),
             Function(fun) => fun.result,
             Unknown(_) | Unresolved(_) => Type::unresolved(),
         }
@@ -427,6 +430,7 @@ impl<'a, 'target> CloneInto<'target> for Callable<'a> {
 
         match *self {
             Builtin(f) => Builtin(f),
+            ConstructorRec(r) => ConstructorRec(r),
             Function(ref f) => Function(arena.intern(f)),
             Unknown(v) => Unknown(v),
             Unresolved(c) => Unresolved(CloneInto::clone_into(c, arena)),
@@ -541,6 +545,12 @@ impl<'a> std::convert::From<BuiltinValue<'a>> for i64 {
     }
 }
 
+impl std::convert::From<syn::VariableIdentifier> for ValueIdentifier {
+    fn from(value: syn::VariableIdentifier) -> ValueIdentifier {
+        ValueIdentifier(value.range())
+    }
+}
+
 impl std::convert::From<syn::TypeIdentifier> for ItemIdentifier {
     fn from(value: syn::TypeIdentifier) -> ItemIdentifier {
         ItemIdentifier(value.range())
@@ -597,6 +607,7 @@ impl<'a> std::fmt::Display for Callable<'a> {
 
         match *self {
             Builtin(b) => write!(f, "{}", b),
+            ConstructorRec(rec) => write!(f, "{}", rec.name),
             Function(fun) => write!(f, "{}", fun.name),
             Unknown(_) => write!(f, "<unknown>"),
             Unresolved(funs) => {

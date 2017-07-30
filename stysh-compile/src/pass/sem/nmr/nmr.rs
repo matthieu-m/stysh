@@ -49,7 +49,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         match *t {
             Type::Missing(_) => unimplemented!(),
-            Type::Nested(..) => unimplemented!(),
+            Type::Nested(t, p) => self.type_of_nested(t, p),
             Type::Simple(t) => self.type_of_simple(t),
             Type::Tuple(ref t) => self.type_of_tuple(t),
         }
@@ -67,7 +67,21 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
-    fn type_of_simple(&mut self, t: syn::TypeIdentifier) -> sem::Type<'g> {
+    fn type_of_nested(&self, t: syn::TypeIdentifier, p: syn::Path)
+        -> sem::Type<'g>
+    {
+        //  TODO: need a type repository, and to handle nesting properly.
+        assert_eq!(p.components.len(), 1);
+
+        if let sem::Type::Rec(rec) = self.scope.lookup_type(t.into()) {
+            if self.source(rec.enum_.0) == self.source(p.components[0].0) {
+                return sem::Type::Rec(rec);
+            }
+        }
+        sem::Type::unresolved()
+    }
+
+    fn type_of_simple(&self, t: syn::TypeIdentifier) -> sem::Type<'g> {
         self.scope.lookup_type(t.into())
     }
 
@@ -190,18 +204,17 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_constructor(&mut self, c: syn::Constructor) -> sem::Value<'g> {
-        if let Some(name) = c.type_.name() {
-            if let sem::Type::Rec(rec) = self.scope.lookup_type(name.into()) {
-                let callable = sem::Callable::ConstructorRec(rec);
+        if let sem::Type::Rec(rec) = self.type_of(&c.type_) {
+            let callable = sem::Callable::ConstructorRec(rec);
 
-                return sem::Value {
-                    type_: callable.result_type(),
-                    range: c.range(),
-                    expr: sem::Expr::Call(callable, &[]),
-                };
-            }
+            return sem::Value {
+                type_: callable.result_type(),
+                range: c.range(),
+                expr: sem::Expr::Call(callable, &[]),
+            };
         }
 
+        println!("Unimplemented - {:?} -> {:?}", c, self.type_of(&c.type_));
         unimplemented!()
     }
 
@@ -489,6 +502,49 @@ mod tests {
             Value {
                 type_: Type::Rec(basic_rec_prototype),
                 range: range(0, 3),
+                expr: Expr::Call(
+                    Callable::ConstructorRec(basic_rec_prototype),
+                    &[],
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn value_basic_nested_constructor() {
+        let global_arena = mem::Arena::new();
+
+        let fragment = b":enum Simple { Unit }         Simple::Unit";
+
+        let registered = ItemIdentifier(range(38, 4));
+
+        let basic_rec_prototype = RecordProto {
+            name: ItemIdentifier(range(15, 4)),
+            range: range(15, 4),
+            enum_: ItemIdentifier(range(6, 6)),
+        };
+
+        let mut scope = MockScope::new(fragment, &global_arena);
+        scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+
+        assert_eq!(
+            valueit_with_scope(
+                &global_arena,
+                fragment,
+                &scope,
+                &syn::Expression::Constructor(syn::Constructor {
+                    type_: syn::Type::Nested(
+                        syn::TypeIdentifier(range(38, 4)),
+                        syn::Path {
+                            components: &[syn::TypeIdentifier(range(30, 6))],
+                            colons: &[36],
+                        },
+                    ),
+                }),
+            ),
+            Value {
+                type_: Type::Rec(basic_rec_prototype),
+                range: range(30, 12),
                 expr: Expr::Call(
                     Callable::ConstructorRec(basic_rec_prototype),
                     &[],

@@ -33,7 +33,7 @@ pub enum Expression<'a> {
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A constructor expression.
-    Constructor(Constructor),
+    Constructor(Constructor<'a>),
     /// A function call expression.
     FunctionCall(FunctionCall<'a>),
     /// A if expression.
@@ -181,9 +181,9 @@ pub enum PrefixOperator {
 
 /// A Constructor.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Constructor {
-    /// Name of the constructor.
-    pub name: TypeIdentifier,
+pub struct Constructor<'a> {
+    /// Type of the constructor.
+    pub type_: Type<'a>,
 }
 
 /// A function call expression.
@@ -257,10 +257,23 @@ pub struct VariableBinding<'a> {
 pub enum Type<'a> {
     /// A missing type.
     Missing(com::Range),
+    /// A nested nominal type.
+    Nested(TypeIdentifier, Path<'a>),
     /// A simple nominal type.
     Simple(TypeIdentifier),
     /// A tuple.
     Tuple(Tuple<'a, Type<'a>>),
+}
+
+/// A Path.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Path<'a> {
+    /// Components of the path.
+    pub components: &'a [TypeIdentifier],
+    /// Offsets of the double colons separating the arguments, an absent double
+    /// colon is placed at the offset of the last character of the field it
+    /// would have followed.
+    pub colons: &'a [u32],
 }
 
 /// A Type Identifier.
@@ -447,10 +460,10 @@ impl<'a> Argument<'a> {
     }
 }
 
-impl Constructor {
+impl<'a> Constructor<'a> {
     /// Returns the range spanned by the function call.
     pub fn range(&self) -> com::Range {
-        self.name.range()
+        self.type_.range()
     }
 }
 
@@ -514,25 +527,55 @@ impl<'a> VariableBinding<'a> {
 }
 
 impl<'a> Type<'a> {
-    /// Returns the range spanned by the binding.
-    pub fn range(&self) -> com::Range {
+    /// Returns the name of the type.
+    pub fn name(&self) -> Option<TypeIdentifier> {
+        use self::Type::*;
+
         match *self {
-            Type::Missing(r) => r,
-            Type::Simple(t) => t.0,
-            Type::Tuple(t) => t.range(),
+            Nested(t, _) | Simple(t) => Some(t),
+            Missing(_) | Tuple(_) => None,
+        }
+    }
+
+    /// Returns the range spanned by the type.
+    pub fn range(&self) -> com::Range {
+        use self::Type::*;
+
+        match *self {
+            Missing(r) => r,
+            Nested(t, p) => p.range().extend(t.range()),
+            Simple(t) => t.range(),
+            Tuple(t) => t.range(),
         }
     }
 }
 
+impl<'a> Path<'a> {
+    /// Returns the token of the comma following the i-th field, if there is no
+    /// such comma the position it would have been at is faked.
+    pub fn double_colon(&self, i: usize) -> Option<tt::Token> {
+        self.colons
+            .get(i)
+            .map(|&o| tt::Token::new(tt::Kind::SignDoubleColon, o as usize, 2))
+    }
+
+    /// Returns the range spanned by the path.
+    pub fn range(&self) -> com::Range {
+        self.components[0]
+            .range()
+            .extend(self.double_colon(self.colons.len() - 1).unwrap().range())
+    }
+}
+
 impl VariableIdentifier {
-    /// Returns the range spanned by the binding.
+    /// Returns the range spanned by the variable identifier.
     pub fn range(&self) -> com::Range {
         self.0
     }
 }
 
 impl TypeIdentifier {
-    /// Returns the range spanned by the binding.
+    /// Returns the range spanned by the type identifier.
     pub fn range(&self) -> com::Range {
         self.0
     }

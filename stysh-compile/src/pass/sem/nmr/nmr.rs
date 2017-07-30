@@ -49,6 +49,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         match *t {
             Type::Missing(_) => unimplemented!(),
+            Type::Nested(..) => unimplemented!(),
             Type::Simple(t) => self.type_of_simple(t),
             Type::Tuple(ref t) => self.type_of_tuple(t),
         }
@@ -189,14 +190,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_constructor(&mut self, c: syn::Constructor) -> sem::Value<'g> {
-        if let sem::Type::Rec(rec) = self.scope.lookup_type(c.name.into()) {
-            let callable = sem::Callable::ConstructorRec(rec);
+        if let Some(name) = c.type_.name() {
+            if let sem::Type::Rec(rec) = self.scope.lookup_type(name.into()) {
+                let callable = sem::Callable::ConstructorRec(rec);
 
-            return sem::Value {
-                type_: callable.result_type(),
-                range: c.range(),
-                expr: sem::Expr::Call(callable, &[]),
-            };
+                return sem::Value {
+                    type_: callable.result_type(),
+                    range: c.range(),
+                    expr: sem::Expr::Call(callable, &[]),
+                };
+            }
         }
 
         unimplemented!()
@@ -480,7 +483,7 @@ mod tests {
                 fragment,
                 &scope,
                 &syn::Expression::Constructor(syn::Constructor {
-                    name: syn::TypeIdentifier(registered.0),
+                    type_: syn::Type::Simple(syn::TypeIdentifier(registered.0)),
                 }),
             ),
             Value {

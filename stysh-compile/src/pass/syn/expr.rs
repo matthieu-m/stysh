@@ -7,6 +7,7 @@ use std;
 use basic::mem;
 use model::tt;
 use model::syn::*;
+use pass::syn::typ;
 
 use super::com::RawParser;
 
@@ -143,10 +144,15 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                             continue;
                         },
                         _ => {
-                            self.raw.pop_tokens(1);
-                            tokens[0]
-                                .into_expr()
-                                .expect(&format!("FIXME: {:?}", tokens[0]))
+                            let ty = typ::try_parse_type(&mut self.raw);
+                            if let Some(ty) = ty {
+                                self.parse_constructor(ty)
+                            } else {
+                                self.raw.pop_tokens(1);
+                                tokens[0]
+                                    .into_expr()
+                                    .expect(&format!("FIXME: {:?}", tokens[0]))
+                            }
                         },
                     }
                 },
@@ -248,6 +254,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             open: o.offset() as u32,
             close: c.offset() as u32,
         })
+    }
+
+    fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
+        Expression::Constructor(Constructor { type_: ty })
     }
 
     fn parse_if_else(&mut self) -> Expression<'g> {
@@ -391,10 +401,6 @@ impl<'g> IntoExpr<'g> for tt::Token {
             tt::Kind::LitBoolFalse => Some(Lit(Bool(false), self.range())),
             tt::Kind::LitBoolTrue => Some(Lit(Bool(true), self.range())),
             tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
-            tt::Kind::NameType => {
-                let name = TypeIdentifier(self.range());
-                Some(Constructor(::model::syn::Constructor { name: name }))
-            },
             tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
@@ -522,7 +528,25 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"True"),
             Expression::Constructor(Constructor {
-                name: TypeIdentifier(range(0, 4)),
+                type_: Type::Simple(typeid(0, 4)),
+            })
+        );
+    }
+
+    #[test]
+    fn basic_nested_constructor() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"Bool::True"),
+            Expression::Constructor(Constructor {
+                type_: Type::Nested(
+                    typeid(6, 4),
+                    Path {
+                        components: &[typeid(0, 4)],
+                        colons: &[4],
+                    }
+                ),
             })
         );
     }
@@ -730,6 +754,10 @@ mod tests {
 
     fn range(offset: usize, length: usize) -> com::Range {
         com::Range::new(offset, length)
+    }
+
+    fn typeid(offset: usize, length: usize) -> TypeIdentifier {
+        TypeIdentifier(range(offset, length))
     }
 
     fn exprit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Expression<'g> {

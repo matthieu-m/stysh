@@ -5,7 +5,7 @@
 use basic::com;
 
 use model::tt::{Kind, Node};
-use model::syn::{Enum, InnerRecord, Record, Type, TypeIdentifier, Tuple};
+use model::syn::{Enum, InnerRecord, Path, Record, Type, TypeIdentifier, Tuple};
 
 use super::com::RawParser;
 
@@ -32,6 +32,15 @@ pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 {
     let mut parser = TypeParser::new(*raw);
     let t = parser.parse();
+    *raw = parser.into_raw();
+    t
+}
+
+pub fn try_parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> Option<Type<'g>>
+{
+    let mut parser = TypeParser::new(*raw);
+    let t = parser.try_parse();
     *raw = parser.into_raw();
     t
 }
@@ -153,7 +162,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
     fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
 
     fn parse(&mut self) -> Type<'g> {
-        self.maybe_parse()
+        self.try_parse()
             .or_else(||
                 self.raw.peek().map(|n|
                     Type::Missing(com::Range::new(n.range().offset(), 0))
@@ -162,12 +171,39 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
             .unwrap_or(Type::Missing(com::Range::new(0, 0)))
     }
 
-    fn maybe_parse(&mut self) -> Option<Type<'g>> {
-        self.raw.peek().map(|node| {
+    fn try_parse(&mut self) -> Option<Type<'g>> {
+        self.raw.peek().and_then(|node| {
             match node {
-                Node::Run(_) => {
-                    let t = self.raw.pop_kind(Kind::NameType).expect("Type");
-                    Type::Simple(TypeIdentifier(t.range()))
+                Node::Run(run) => {
+                    let mut components = self.raw.local_array();
+                    let mut colons = self.raw.local_array();
+
+                    if run[0].kind() != Kind::NameType {
+                        return None;
+                    }
+
+                    let mut t =
+                        self.raw.pop_kind(Kind::NameType).expect("Type");
+
+                    while let Some(c) =
+                        self.raw.pop_kind(Kind::SignDoubleColon)
+                    {
+                        components.push(TypeIdentifier(t.range()));
+                        colons.push(c.offset() as u32);
+
+                        t = self.raw.pop_kind(Kind::NameType).expect("Type");
+                    }
+
+                    if components.is_empty() {
+                        Some(Type::Simple(TypeIdentifier(t.range())))
+                    } else {
+                        let path = Path {
+                            components:
+                                self.raw.intern_slice(components.into_slice()),
+                            colons: self.raw.intern_slice(colons.into_slice()),
+                        };
+                        Some(Type::Nested(TypeIdentifier(t.range()), path))
+                    }
                 },
                 Node::Braced(o, ns, c) => {
                     self.raw.pop_node();
@@ -178,7 +214,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                     let mut fields = self.raw.local_array();
                     let mut commas = self.raw.local_array();
 
-                    while let Some(t) = inner.maybe_parse() {
+                    while let Some(t) = inner.try_parse() {
                         fields.push(t);
                         if let Some(c) = inner.raw.pop_kind(Kind::SignComma) {
                             commas.push(c.range().offset() as u32)
@@ -189,12 +225,12 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 
                     assert!(inner.into_raw().peek().is_none());
 
-                    Type::Tuple(Tuple {
+                    Some(Type::Tuple(Tuple {
                         fields: self.raw.intern_slice(fields.into_slice()),
                         commas: self.raw.intern_slice(commas.into_slice()),
                         open: o.offset() as u32,
                         close: c.offset() as u32,
-                    })
+                    }))
                 },
                 _ => unimplemented!()
             }
@@ -288,6 +324,43 @@ mod tests {
                 keyword: 0,
                 semi_colon: 11,
             }
+        );
+    }
+
+    #[test]
+    fn type_simple() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            typeit(&global, b"Int"),
+            Type::Simple(typeid(0, 3))
+        );
+    }
+
+    #[test]
+    fn type_nested() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            typeit(&global, b"Enum::Variant"),
+            Type::Nested(
+                typeid(6, 7),
+                Path {
+                    components: &[typeid(0, 4)],
+                    colons: &[4],
+                },
+            )
+        );
+
+        assert_eq!(
+            typeit(&global, b"Enum::Other::Variant"),
+            Type::Nested(
+                typeid(13, 7),
+                Path {
+                    components: &[typeid(0, 4), typeid(6, 5)],
+                    colons: &[4, 11],
+                },
+            )
         );
     }
 

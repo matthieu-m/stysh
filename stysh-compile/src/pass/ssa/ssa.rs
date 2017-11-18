@@ -540,6 +540,37 @@ mod tests {
     }
 
     #[test]
+    fn enum_simple() {
+        let global_arena = mem::Arena::new();
+
+        let basic_rec_prototype = RecordProto {
+            name: ItemIdentifier(range(15, 4)),
+            range: range(15, 4),
+            enum_: ItemIdentifier(range(6, 6)),
+        };
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: Type::Rec(basic_rec_prototype),
+                    range: range(30, 12),
+                    expr: Expr::Call(
+                        Callable::ConstructorRec(basic_rec_prototype),
+                        &[],
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := <4@15>() ; 12@30",
+                "    return $0",
+                ""
+            ])
+        );
+    }
+
+    #[test]
     fn block_simple() {
         let global_arena = mem::Arena::new();
         let int = Type::Builtin(BuiltinType::Int);

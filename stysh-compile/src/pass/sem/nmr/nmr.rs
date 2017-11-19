@@ -73,14 +73,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn type_of_nested(&self, t: syn::TypeIdentifier, p: syn::Path)
         -> sem::Type<'g>
     {
-        //  TODO: need a type repository, and to handle nesting properly.
+        //  TODO: need to handle multi-level nesting.
         assert_eq!(p.components.len(), 1);
 
-        if let sem::Type::Rec(rec) = self.scope.lookup_type(t.into()) {
-            if self.source(rec.enum_.0) == self.source(p.components[0].0) {
-                return sem::Type::Rec(rec);
+        if let sem::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
+            if let Some(e) = self.registry.lookup_enum(e.name) {
+                for r in e.variants {
+                    if self.source(r.prototype.name.0) == self.source(t.0) {
+                        return sem::Type::Rec(r.prototype);
+                    }
+                }
             }
         }
+
         sem::Type::unresolved()
     }
 
@@ -515,15 +520,31 @@ mod tests {
         let global_arena = mem::Arena::new();
         let mut env = Env::new(b":enum Simple { Unit }         Simple::Unit", &global_arena);
 
-        let registered = ItemIdentifier(range(38, 4));
-
-        let basic_rec_prototype = RecordProto {
-            name: ItemIdentifier(range(15, 4)),
-            range: range(15, 4),
-            enum_: ItemIdentifier(range(6, 6)),
+        let enum_prototype = EnumProto {
+            name: ItemIdentifier(range(6, 6)),
+            range: range(0, 21),
         };
 
-        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+        env.scope.types.insert(
+            ItemIdentifier(range(30, 6)),
+            Type::Enum(enum_prototype)
+        );
+
+        let rec_prototype = RecordProto {
+            name: ItemIdentifier(range(15, 4)),
+            range: range(15, 4),
+            enum_: enum_prototype.name,
+        };
+
+        env.registry.enums.insert(
+            enum_prototype.name,
+            Enum {
+                prototype: global_arena.intern_ref(&enum_prototype),
+                variants: global_arena.insert_slice(&[
+                    Record { prototype: rec_prototype }
+                ])
+            }
+        );
 
         assert_eq!(
             env.value_of(
@@ -538,10 +559,10 @@ mod tests {
                 }),
             ),
             Value {
-                type_: Type::Rec(basic_rec_prototype),
+                type_: Type::Rec(rec_prototype),
                 range: range(30, 12),
                 expr: Expr::Call(
-                    Callable::ConstructorRec(basic_rec_prototype),
+                    Callable::ConstructorRec(rec_prototype),
                     &[],
                 ),
             }

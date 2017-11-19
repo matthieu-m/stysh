@@ -270,6 +270,65 @@ impl<'a, 'g, 'local> fmt::Debug for BlockScope<'a, 'g, 'local> {
     }
 }
 
+/// Mocks for the traits.
+pub mod mocks {
+    use basic::mem;
+    use model::sem::*;
+
+    use super::{Scope, BuiltinScope};
+
+    /// A mock for the Scope trait.
+    #[derive(Debug)]
+    pub struct MockScope<'g> {
+        /// Map of callables for lookup_callable.
+        pub callables: mem::ArrayMap<'g, ValueIdentifier, Callable<'g>>,
+        /// Map of types for lookup_type.
+        pub types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
+        /// Map of values for lookup_binding.
+        pub values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
+        /// Parent scope, automatically get all builtins.
+        pub parent: BuiltinScope<'g>,
+    }
+
+    impl<'g> MockScope<'g> {
+        /// Creates a new MockScope.
+        pub fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> MockScope<'g> {
+            MockScope {
+                callables: mem::ArrayMap::new(arena),
+                types: mem::ArrayMap::new(arena),
+                values: mem::ArrayMap::new(arena),
+                parent: BuiltinScope::new(fragment),
+            }
+        }
+    }
+
+    impl<'g> Scope<'g> for MockScope<'g> {
+        fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
+            if let Some(&v) = self.values.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_binding(name)
+        }
+
+        fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+            if let Some(&v) = self.callables.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_callable(name)
+        }
+
+        fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
+            if let Some(&v) = self.types.get(&name) {
+                return v;
+            }
+
+            self.parent.lookup_type(name)
+        }
+    }
+}
+
 //
 //  Tests
 //

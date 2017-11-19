@@ -16,6 +16,7 @@ pub struct NameResolver<'a, 'g, 'local>
 {
     code_fragment: &'a [u8],
     scope: &'a Scope<'g>,
+    registry: &'a sem::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -30,6 +31,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     pub fn new(
         source: &'a [u8],
         scope: &'a Scope<'g>,
+        registry: &'a sem::Registry<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
@@ -38,6 +40,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         NameResolver {
             code_fragment: source,
             scope: scope,
+            registry: registry,
             global_arena: global,
             local_arena: local,
         }
@@ -411,6 +414,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         NameResolver {
             code_fragment: self.code_fragment,
             scope: scope,
+            registry: self.registry,
             global_arena: self.global_arena,
             local_arena: self.local_arena,
         }
@@ -429,11 +433,13 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::sem::*;
-    use super::super::scp;
+    use model::sem::mocks::MockRegistry;
+    use super::super::scp::mocks::MockScope;
 
     #[test]
     fn value_basic_add() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(b"1 + 2", &global_arena);
 
         let (left_range, right_range) = (range(0, 1), range(4, 1));
 
@@ -448,7 +454,7 @@ mod tests {
         );
 
         assert_eq!(
-            valueit(&global_arena, b"1 + 2", &expr),
+            env.value_of(&expr),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 5),
@@ -463,11 +469,10 @@ mod tests {
     #[test]
     fn value_basic_boolean() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                b"true",
+            env.value_of(
                 &syn::Expression::Lit(syn::Literal::Bool(true), range(0, 4))
             ),
             boolean(true, range(0, 4))
@@ -477,8 +482,7 @@ mod tests {
     #[test]
     fn value_basic_constructor() {
         let global_arena = mem::Arena::new();
-
-        let fragment = b"Rec";
+        let mut env = Env::new(b"Rec", &global_arena);
 
         let registered = ItemIdentifier(range(0, 3));
         let basic_rec_prototype = RecordProto {
@@ -487,14 +491,10 @@ mod tests {
             enum_: ItemIdentifier::unresolved()
         };
 
-        let mut scope = MockScope::new(fragment, &global_arena);
-        scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
 
         assert_eq!(
-            valueit_with_scope(
-                &global_arena,
-                fragment,
-                &scope,
+            env.value_of(
                 &syn::Expression::Constructor(syn::Constructor {
                     type_: syn::Type::Simple(syn::TypeIdentifier(registered.0)),
                 }),
@@ -513,8 +513,7 @@ mod tests {
     #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
-
-        let fragment = b":enum Simple { Unit }         Simple::Unit";
+        let mut env = Env::new(b":enum Simple { Unit }         Simple::Unit", &global_arena);
 
         let registered = ItemIdentifier(range(38, 4));
 
@@ -524,14 +523,10 @@ mod tests {
             enum_: ItemIdentifier(range(6, 6)),
         };
 
-        let mut scope = MockScope::new(fragment, &global_arena);
-        scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
 
         assert_eq!(
-            valueit_with_scope(
-                &global_arena,
-                fragment,
-                &scope,
+            env.value_of(
                 &syn::Expression::Constructor(syn::Constructor {
                     type_: syn::Type::Nested(
                         syn::TypeIdentifier(range(38, 4)),
@@ -556,8 +551,7 @@ mod tests {
     #[test]
     fn value_basic_call() {
         let global_arena = mem::Arena::new();
-
-        let fragment = b"basic(1, 2)";
+        let mut env = Env::new(b"basic(1, 2)", &global_arena);
 
         let fragment_range = range(0, 5);
         let (arg0, arg1) = (range(6, 1), range(9, 1));
@@ -570,17 +564,13 @@ mod tests {
             result: Type::Builtin(BuiltinType::Int),
         };
 
-        let mut scope = MockScope::new(fragment, &global_arena);
-        scope.callables.insert(
+        env.scope.callables.insert(
             ValueIdentifier(fragment_range),
             Callable::Function(basic_fun_prototype),
         );
 
         assert_eq!(
-            valueit_with_scope(
-                &global_arena,
-                fragment,
-                &scope,
+            env.value_of(
                 &syn::Expression::FunctionCall(syn::FunctionCall {
                     function: &var(fragment_range),
                     arguments: &[ lit_integral(arg0), lit_integral(arg1), ],
@@ -603,15 +593,14 @@ mod tests {
     #[test]
     fn value_basic_if_else() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
         let condition_range = range(0, 4);
         let true_branch_range = range(9, 5);
         let false_branch_range = range(21, 5);
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                b":if true { 1 } :else { 0 }",
+            env.value_of(
                 &syn::Expression::If(syn::IfElse {
                     condition: &lit_boolean(true, condition_range),
                     true_expr: &syn::Expression::Block(
@@ -645,11 +634,10 @@ mod tests {
         use model::tt;
 
         let global_arena = mem::Arena::new();
+        let env = Env::new(b"'Hello, World!'", &global_arena);
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                b"'Hello, World!'",
+            env.value_of(
                 &syn::Expression::Lit(
                     syn::Literal::String(&[
                         tt::StringFragment::Text(
@@ -672,6 +660,7 @@ mod tests {
     #[test]
     fn value_basic_var() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
         let complete_range = range(0, 35);
         let (a, b) = (range(7, 1), range(20, 1));
@@ -679,9 +668,7 @@ mod tests {
         let (a_ref, b_ref) = (range(28, 1), range(32, 1));
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                b"{ :var a := 1; :var b := 2; a + b }",
+            env.value_of(
                 &syn::Expression::Block(
                     &[
                         syn::Statement::Var(syn::VariableBinding {
@@ -741,81 +728,41 @@ mod tests {
         );
     }
 
-    #[derive(Debug)]
-    struct MockScope<'g> {
-        callables: mem::ArrayMap<'g, ValueIdentifier, Callable<'g>>,
-        types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
-        values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
-        parent: scp::BuiltinScope<'g>,
-    }
-
-    impl<'g> MockScope<'g> {
-        fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> MockScope<'g> {
-            MockScope {
-                callables: mem::ArrayMap::new(arena),
-                types: mem::ArrayMap::new(arena),
-                values: mem::ArrayMap::new(arena),
-                parent: scp::BuiltinScope::new(fragment),
-            }
-        }
-    }
-
-    impl<'g> scp::Scope<'g> for MockScope<'g> {
-        fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-            if let Some(&v) = self.values.get(&name) {
-                return v;
-            }
-
-            self.parent.lookup_binding(name)
-        }
-
-        fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
-            if let Some(&v) = self.callables.get(&name) {
-                return v;
-            }
-
-            self.parent.lookup_callable(name)
-        }
-
-        fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
-            if let Some(&v) = self.types.get(&name) {
-                return v;
-            }
-
-            self.parent.lookup_type(name)
-        }
-    }
-
-    fn valueit<'g>(
-        global_arena: &'g mem::Arena,
+    struct Env<'g> {
+        scope: MockScope<'g>,
+        registry: MockRegistry<'g>,
         fragment: &'g [u8],
-        expr: &syn::Expression
-    )
-        -> Value<'g>
-    {
-        let builtin = scp::BuiltinScope::new(fragment);
-
-        valueit_with_scope(global_arena, fragment, &builtin, expr)
+        arena: &'g mem::Arena,
     }
 
-    fn valueit_with_scope<'g>(
-        global_arena: &'g mem::Arena,
-        fragment: &'g [u8],
-        scope: &scp::Scope<'g>,
-        expr: &syn::Expression,
-    )
-        -> Value<'g>
-    {
-        use super::NameResolver;
+    impl<'g> Env<'g> {
+        fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
+            Env {
+                scope: MockScope::new(fragment, arena),
+                registry: MockRegistry::new(arena),
+                fragment: fragment,
+                arena: arena,
+            }
+        }
 
-        let mut local_arena = mem::Arena::new();
+        fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)
+            -> super::NameResolver<'a, 'g, 'local>
+        {
+            super::NameResolver::new(
+                self.fragment,
+                &self.scope,
+                &self.registry, 
+                self.arena, 
+                local
+            )
+        }
 
-        let result =
-            NameResolver::new(fragment, scope, global_arena, &local_arena)
-                .value_of(expr);
-        local_arena.recycle();
-
-        result
+        fn value_of(&self, expr: &syn::Expression) -> Value<'g> {
+            let mut local_arena = mem::Arena::new();
+            let result = self.resolver(&local_arena).value_of(expr);
+            local_arena.recycle();
+            result
+        }
     }
 
     fn lit_boolean(value: bool, range: com::Range) -> syn::Expression<'static> {

@@ -9,10 +9,10 @@ pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> sem::Value<'g> {
     let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new(raw);
     let mut scope = scp::BlockScope::new(raw, &builtin, arena, &scope_arena);
+    let mut def_registry = sem::mocks::MockRegistry::new(arena);
+    let mut cfg_registry = int::SimpleRegistry::new(arena);
 
-    let mut registry = int::SimpleRegistry::new(arena);
-
-    interpret_impl(raw, &mut scope, &mut registry, &arena)
+    interpret_impl(raw, &mut scope, &mut def_registry, &mut cfg_registry, &arena)
 }
 
 //
@@ -21,7 +21,8 @@ pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> sem::Value<'g> {
 fn interpret_impl<'a, 'g, 's>(
     raw: &'g [u8],
     scope: &mut scp::BlockScope<'a, 'g, 's>,
-    registry: &mut int::SimpleRegistry<'g>,
+    def_registry: &mut sem::mocks::MockRegistry<'g>,
+    cfg_registry: &mut int::SimpleRegistry<'g>,
     arena: &'g mem::Arena
 )
     -> sem::Value<'g>
@@ -45,7 +46,7 @@ where
 
                 let code = code.clone();
                 let prototype =
-                    create_prototype(&i, code, scope, arena, &mut local_arena);
+                    create_prototype(&i, code, scope, def_registry, arena, &mut local_arena);
                 prototypes.push((i, arena.insert(prototype)));
 
                 match prototype {
@@ -70,13 +71,13 @@ where
         use self::sem::Item::*;
 
         let code = code.clone();
-        let item = create_item(&i, p, code, scope, arena, &mut local_arena);
+        let item = create_item(&i, p, code, scope, def_registry, arena, &mut local_arena);
 
         match item {
             Enum(_) => unimplemented!(),
             Fun(ref fun) => {
                 let c = create_cfg_from_function(fun, arena, &mut local_arena);
-                registry.insert(fun.prototype.name, c);
+                cfg_registry.insert(fun.prototype.name, c);
             },
             Rec(_) => unimplemented!(),
         }
@@ -87,12 +88,13 @@ where
         &expression.expect("One expression is necessary!"),
         code,
         scope,
+        def_registry,
         arena,
         &mut local_arena
     );
 
     let cfg = create_cfg_from_value(&value, arena, &mut local_arena);
-    evaluate(&cfg, registry, arena, &mut local_arena)
+    evaluate(&cfg, cfg_registry, arena, &mut local_arena)
 }
 
 fn create_ast<'g>(
@@ -114,6 +116,7 @@ fn create_prototype<'a, 'g>(
     item: &syn::Item,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
+    registry: &'a sem::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
@@ -121,7 +124,7 @@ fn create_prototype<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, global_arena, local_arena)
+    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
         .prototype(item);
     local_arena.recycle();
 
@@ -133,6 +136,7 @@ fn create_item<'a, 'g>(
     proto: &'g sem::Prototype<'g>,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
+    registry: &'a sem::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
@@ -140,7 +144,7 @@ fn create_item<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, global_arena, local_arena)
+    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
         .item(proto, item);
     local_arena.recycle();
 
@@ -151,6 +155,7 @@ fn create_value<'a, 'g>(
     expr: &syn::Expression,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
+    registry: &'a sem::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
@@ -158,7 +163,7 @@ fn create_value<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, global_arena, local_arena)
+    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
         .expression(expr);
     local_arena.recycle();
 

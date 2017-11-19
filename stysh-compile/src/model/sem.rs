@@ -19,6 +19,12 @@ use basic::mem::CloneInto;
 
 use model::syn;
 
+/// A registry of the definitions
+pub trait Registry<'a> {
+    /// Get the definition of the enum.
+    fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'a>>;
+}
+
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Type<'a> {
@@ -650,6 +656,34 @@ impl<'a> std::fmt::Display for Type<'a> {
             Type::Rec(r) => write!(f, "{}", r.name),
             Type::Tuple(t) => write!(f, "{}", t),
             Type::Unresolved(i) => write!(f, "{}", i),
+        }
+    }
+}
+
+/// Mocks for the traits.
+pub mod mocks {
+    use basic::mem;
+    use super::{Enum, ItemIdentifier, Registry};
+
+    /// A mock for the Regitry trait.
+    #[derive(Debug)]
+    pub struct MockRegistry<'g> {
+        /// Map of enums to be returned from lookup_enum.
+        pub enums: mem::ArrayMap<'g, ItemIdentifier, Enum<'g>>,
+    }
+
+    impl<'g> MockRegistry<'g> {
+        /// Creates a new instance of MockRegistry.
+        pub fn new(arena: &'g mem::Arena) -> MockRegistry<'g> {
+            MockRegistry { 
+                enums: mem::ArrayMap::new(arena)
+            }
+        }
+    }
+
+    impl<'g> Registry<'g> for MockRegistry<'g> {
+        fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'g>> {
+            self.enums.get(&id).cloned()
         }
     }
 }

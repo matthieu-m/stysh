@@ -16,6 +16,7 @@ pub struct GraphBuilder<'a, 'g, 'local>
 {
     code_fragment: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
+    registry: &'a sem::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -30,6 +31,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn new(
         source: com::CodeFragment,
         scope: &'a scp::Scope<'g>,
+        registry: &'a sem::Registry<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
@@ -38,6 +40,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         GraphBuilder {
             code_fragment: source,
             scope: scope,
+            registry: registry,
             global_arena: global,
             local_arena: local
         }
@@ -196,6 +199,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         nmr::NameResolver::new(
             &*self.code_fragment,
             scope,
+            self.registry,
             self.global_arena,
             self.local_arena
         )
@@ -210,7 +214,8 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::sem::*;
-    use super::scp::BuiltinScope;
+    use model::sem::mocks::MockRegistry;
+    use super::scp::mocks::MockScope;
 
     #[test]
     fn prototype_enum() {
@@ -219,14 +224,10 @@ mod tests {
         }
 
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(
-            b":enum Simple { One, Two }"
-        );
+        let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         assert_eq!(
-            protoit(
-                &global_arena,
-                &builtin,
+            env.proto_of(
                 &syn::Item::Enum(syn::Enum {
                     name: syn::TypeIdentifier(range(6, 6)),
                     variants: &[unit(15, 3), unit(20, 3)],
@@ -254,9 +255,7 @@ mod tests {
         }
 
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(
-            b":enum Simple { One, Two }"
-        );
+        let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let enum_prototype = EnumProto {
             name: item_id(6, 6),
@@ -264,9 +263,7 @@ mod tests {
         };
 
         assert_eq!(
-            itemit(
-                &global_arena,
-                &builtin,
+            env.item_of(
                 &Prototype::Enum(enum_prototype),
                 &syn::Item::Enum(syn::Enum {
                     name: syn::TypeIdentifier(range(6, 6)),
@@ -306,12 +303,10 @@ mod tests {
         }
 
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(b":rec Simple;");
+        let env = Env::new(b":rec Simple;", &global_arena);
 
         assert_eq!(
-            protoit(
-                &global_arena,
-                &builtin,
+            env.proto_of(
                 &syn::Item::Rec(syn::Record {
                     inner: unit(5, 6),
                     keyword: 0,
@@ -337,7 +332,7 @@ mod tests {
         }
 
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(b":rec Simple;");
+        let env = Env::new(b":rec Simple;", &global_arena);
 
         let rec_prototype = RecordProto {
             name: item_id(5, 6),
@@ -346,9 +341,7 @@ mod tests {
         };
 
         assert_eq!(
-            itemit(
-                &global_arena,
-                &builtin,
+            env.item_of(
                 &Prototype::Rec(rec_prototype),
                 &syn::Item::Rec(syn::Record {
                     inner: unit(5, 6),
@@ -363,15 +356,14 @@ mod tests {
     #[test]
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(
-            b":fun add(a: Int, b: Int) -> Int { 1 + 2 }"
+        let env = Env::new(
+            b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
+            &global_arena
         );
         let int = Type::Builtin(BuiltinType::Int);
 
         assert_eq!(
-            protoit(
-                &global_arena,
-                &builtin,
+            env.proto_of(
                 &syn::Item::Fun(
                     syn::Function {
                         name: syn::VariableIdentifier(range(5, 3)),
@@ -425,8 +417,9 @@ mod tests {
     #[test]
     fn item_fun() {
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(
-            b":fun add(a: Int, b: Int) -> Int { a + b }"
+        let env = Env::new(
+            b":fun add(a: Int, b: Int) -> Int { a + b }",
+            &global_arena,
         );
         let int = Type::Builtin(BuiltinType::Int);
 
@@ -445,9 +438,7 @@ mod tests {
         let arg = resolved_argument;
 
         assert_eq!(
-            itemit(
-                &global_arena,
-                &builtin,
+            env.item_of(
                 &prototype,
                 &syn::Item::Fun(
                     syn::Function {
@@ -515,8 +506,9 @@ mod tests {
     #[test]
     fn item_fun_tuple() {
         let global_arena = mem::Arena::new();
-        let builtin = BuiltinScope::new(
-            b":fun add() -> (Int, Int) { (1, 2) }"
+        let env = Env::new(
+            b":fun add() -> (Int, Int) { (1, 2) }",
+            &global_arena,
         );
 
         fn lit_int(offset: usize, length: usize) -> syn::Expression<'static> {
@@ -547,9 +539,7 @@ mod tests {
         let prototype = Prototype::Fun(function_proto);
 
         assert_eq!(
-            itemit(
-                &global_arena,
-                &builtin,
+            env.item_of(
                 &prototype,
                 &syn::Item::Fun(
                     syn::Function {
@@ -601,47 +591,49 @@ mod tests {
         );
     }
 
-    fn protoit<'g>(
-        global_arena: &'g mem::Arena,
-        builtin: &'g BuiltinScope<'g>,
-        item: &syn::Item
-    )
-        -> Prototype<'g>
-    {
-        use super::GraphBuilder;
-
-        let mut local_arena = mem::Arena::new();
-
-        let fragment = com::CodeFragment::new(builtin.source().to_vec());
-
-        let result =
-            GraphBuilder::new(fragment, builtin, global_arena, &local_arena)
-                .prototype(item);
-        local_arena.recycle();
-
-        result
+    struct Env<'g> {
+        scope: MockScope<'g>,
+        registry: MockRegistry<'g>,
+        fragment: &'g [u8],
+        arena: &'g mem::Arena,
     }
 
-    fn itemit<'g>(
-        global_arena: &'g mem::Arena,
-        builtin: &'g BuiltinScope<'g>,
-        proto: &'g Prototype,
-        item: &syn::Item
-    )
-        -> Item<'g>
-    {
-        use super::GraphBuilder;
+    impl<'g> Env<'g> {
+        fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
+            Env {
+                scope: MockScope::new(fragment, arena),
+                registry: MockRegistry::new(arena),
+                fragment: fragment,
+                arena: arena,
+            }
+        }
 
-        let mut local_arena = mem::Arena::new();
+        fn builder<'a, 'local>(&'a self, local: &'local mem::Arena)
+            -> super::GraphBuilder<'a, 'g, 'local>
+        {
+            super::GraphBuilder::new(
+                com::CodeFragment::new(self.fragment.to_vec()),
+                &self.scope,
+                &self.registry, 
+                self.arena, 
+                local
+            )
+        }
 
-        let fragment = com::CodeFragment::new(builtin.source().to_vec());
+        fn proto_of(&self, item: &syn::Item) -> Prototype<'g> {
+            let mut local_arena = mem::Arena::new();
+            let result = self.builder(&local_arena).prototype(item);
+            local_arena.recycle();
+            result
+        }
 
-        let result =
-            GraphBuilder::new(fragment, builtin, global_arena, &local_arena)
-                .item(proto, item);
-        local_arena.recycle();
-
-        result
+        fn item_of(&self, proto: &Prototype, item: &syn::Item) -> Item<'g> {
+            let mut local_arena = mem::Arena::new();
+            let proto = self.arena.intern_ref(proto);
+            let result = self.builder(&local_arena).item(proto, item);
+            local_arena.recycle();
+            result
+        }
     }
 
     fn resolved_argument<'a>(

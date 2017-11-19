@@ -147,6 +147,9 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     }
 }
 
+//
+//  Implementations of Scope
+//
 impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
         self.unresolved_binding(name)

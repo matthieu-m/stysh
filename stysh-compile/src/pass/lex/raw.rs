@@ -211,8 +211,6 @@ impl<'a> RawStream<'a> {
     }
 
     fn lex_string(&mut self) -> (RawKind, &'a [u8]) {
-        use std::str;
-
         fn first_from<F: Fn(u8) -> bool>(raw: &[u8], start: usize, f: F)
             -> Option<usize>
         {

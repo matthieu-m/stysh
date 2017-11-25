@@ -84,6 +84,8 @@ pub enum Expr<'a> {
     Call(Callable<'a>, &'a [Value<'a>]),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
+    /// An implicit cast (variant to enum, anonymous to named, ...).
+    Implicit(Implicit<'a>),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved reference.
@@ -127,6 +129,13 @@ pub enum Callable<'a> {
     /// Note: this variant only contains possible resolutions.
     /// Note: this variant contains at least two possible resolutions.
     Unresolved(&'a [Callable<'a>]),
+}
+
+/// An Implicit cast.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Implicit<'a> {
+    /// An enumerator to enum cast.
+    ToEnum(EnumProto, &'a Value<'a>),
 }
 
 /// A built-in function.
@@ -394,6 +403,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
                 arena.intern_ref(t),
                 arena.intern_ref(f),
             ),
+            Implicit(i) => Implicit(arena.intern(&i)),
             Tuple(t) => Tuple(arena.intern(&t)),
             VariableRef(v) => VariableRef(v),
             _ => panic!("not yet implement for {:?}", self),
@@ -440,6 +450,18 @@ impl<'a, 'target> CloneInto<'target> for Callable<'a> {
             Function(ref f) => Function(arena.intern(f)),
             Unknown(v) => Unknown(v),
             Unresolved(c) => Unresolved(CloneInto::clone_into(c, arena)),
+        }
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Implicit<'a> {
+    type Output = Implicit<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Implicit::*;
+
+        match *self {
+            ToEnum(e, v) => ToEnum(e, arena.intern_ref(v)),
         }
     }
 }

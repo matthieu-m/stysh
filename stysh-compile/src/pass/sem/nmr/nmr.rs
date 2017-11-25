@@ -251,8 +251,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
         let condition = self.value_of_expr(if_else.condition);
-        let true_branch = self.value_of_expr(if_else.true_expr);
-        let false_branch = self.value_of_expr(if_else.false_expr);
+        let mut true_branch = self.value_of_expr(if_else.true_expr);
+        let mut false_branch = self.value_of_expr(if_else.false_expr);
+
+        if true_branch.type_ != false_branch.type_ {
+            let common = self.common_type(
+                &[true_branch.type_, false_branch.type_]
+            );
+
+            if let Some(common) = common {
+                true_branch = self.implicit_cast(true_branch, common);
+                false_branch = self.implicit_cast(false_branch, common);
+            }
+        }
 
         sem::Value {
             type_: true_branch.type_,
@@ -413,6 +424,116 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         self.global_arena.insert_slice(buffer.into_slice())
     }
 
+    fn common_type(&self, types: &[sem::Type<'g>]) -> Option<sem::Type<'g>> {
+        let original = types[0];
+
+        types[1..].iter().fold(Some(original), |acc, current| {
+            self.common_type_impl(acc?, *current)
+        })
+    }
+
+    fn common_type_impl(&self, left: sem::Type<'g>, right: sem::Type<'g>)
+        -> Option<sem::Type<'g>>
+    {
+        use model::sem::*;
+
+        fn extract_enum_record<'a>(left: Type<'a>, right: Type<'a>)
+            -> Option<(EnumProto, RecordProto)>
+        {
+            if let Type::Enum(e) = left {
+                if let Type::Rec(r) = right {
+                    return Some((e, r));
+                }
+            }
+
+            if let Type::Enum(e) = right {
+                if let Type::Rec(r) = left {
+                    return Some((e, r));
+                }
+            }
+
+            None
+        }
+
+        if left == right {
+            return Some(left);
+        }
+
+        if let Type::Rec(left) = left {
+            if let Type::Rec(right) = right {
+                if left.enum_ == right.enum_ {
+                    if let Some(e) = self.registry.lookup_enum(left.enum_) {
+                        return Some(Type::Enum(*e.prototype));
+                    }
+                }
+            }
+        }
+
+        let (e, r) = extract_enum_record(left, right)?;
+
+        if e.name == r.enum_ {
+            Some(Type::Enum(e))
+        } else {
+            None
+        }
+    }
+
+    fn implicit_cast(&self, original: sem::Value<'g>, target: sem::Type<'g>)
+        -> sem::Value<'g>
+    {
+        use model::sem::Type::*;
+
+        match target {
+            Enum(e) => self.implicit_to_enum(original, e),
+            _ => unimplemented!("Conversion to {:?}", target),
+        }
+    }
+
+    fn implicit_to_enum(&self, original: sem::Value<'g>, e: sem::EnumProto)
+        -> sem::Value<'g>
+    {
+        use model::sem::*;
+
+        if let Type::Enum(o) = original.type_ {
+            debug_assert!(o == e);
+            return original;
+        }
+
+        if let Type::Rec(r) = original.type_ {
+            debug_assert!(r.enum_ == e.name);
+
+            return self.implicit_cast_impl(original, |v| {
+                let v = self.global_arena.insert(v);
+                Value {
+                    type_: Type::Enum(e),
+                    range: v.range,
+                    expr: Expr::Implicit(Implicit::ToEnum(e, v)),
+                }
+            });
+        }
+
+        unreachable!("Should not cast anything but Enum or Rec: {:?}", original);
+    }
+
+    fn implicit_cast_impl<F>(&self, original: sem::Value<'g>, f: F)
+        -> sem::Value<'g>
+        where F: FnOnce(sem::Value<'g>) -> sem::Value<'g>
+    {
+        use model::sem::*;
+
+        match original.expr {
+            Expr::Block(stmts, v) => {
+                let v = self.global_arena.insert(f(*v));
+                Value {
+                    type_: v.type_,
+                    range: original.range,
+                    expr: Expr::Block(stmts, v), 
+                }
+            },
+            _ => f(original),
+        }
+    }
+
     fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
         where 'a: 'b
     {
@@ -520,30 +641,12 @@ mod tests {
         let global_arena = mem::Arena::new();
         let mut env = Env::new(b":enum Simple { Unit }         Simple::Unit", &global_arena);
 
-        let enum_prototype = EnumProto {
-            name: ItemIdentifier(range(6, 6)),
-            range: range(0, 21),
-        };
+        let enum_ = env.add_enum_unit(range(6, 6), range(0, 21), &[range(15, 4)]);
+        let rec_prototype = enum_.variants[0].prototype;
 
         env.scope.types.insert(
             ItemIdentifier(range(30, 6)),
-            Type::Enum(enum_prototype)
-        );
-
-        let rec_prototype = RecordProto {
-            name: ItemIdentifier(range(15, 4)),
-            range: range(15, 4),
-            enum_: enum_prototype.name,
-        };
-
-        env.registry.enums.insert(
-            enum_prototype.name,
-            Enum {
-                prototype: global_arena.intern_ref(&enum_prototype),
-                variants: global_arena.insert_slice(&[
-                    Record { prototype: rec_prototype }
-                ])
-            }
+            Type::Enum(*enum_.prototype)
         );
 
         assert_eq!(
@@ -558,14 +661,7 @@ mod tests {
                     ),
                 }),
             ),
-            Value {
-                type_: Type::Rec(rec_prototype),
-                range: range(30, 12),
-                expr: Expr::Call(
-                    Callable::ConstructorRec(rec_prototype),
-                    &[],
-                ),
-            }
+            rec(rec_prototype, range(30, 12))
         );
     }
 
@@ -749,6 +845,85 @@ mod tests {
         );
     }
 
+    #[test]
+    fn value_implicit_cast_to_enum() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(
+            b":enum B { T, F } :if true { B::T } else { B::F }", 
+            &global_arena
+        );
+
+        let b = env.add_enum_unit(
+            range(6, 1),
+            range(0, 16),
+            &[range(10, 1), range(13, 1)]
+        );
+
+        let t = b.variants[0].prototype;
+        let f = b.variants[1].prototype;
+
+        env.scope.types.insert(
+            ItemIdentifier(range(28, 1)),
+            Type::Enum(*b.prototype)
+        );
+
+        env.scope.types.insert(
+            ItemIdentifier(range(42, 1)),
+            Type::Enum(*b.prototype)
+        );
+
+        assert_eq!(
+            env.value_of(
+                &syn::Expression::If(syn::IfElse {
+                    condition: &lit_boolean(true, range(21, 4)),
+                    true_expr: &syn::Expression::Block(
+                        &[],
+                        &syn::Expression::Constructor(syn::Constructor {
+                            type_: syn::Type::Nested(
+                                syn::TypeIdentifier(range(31, 1)),
+                                syn::Path {
+                                    components: &[syn::TypeIdentifier(range(28, 1))],
+                                    colons: &[29],
+                                },
+                            ),
+                        }),
+                        range(26, 8)
+                    ),
+                    false_expr: &syn::Expression::Block(
+                        &[],
+                        &syn::Expression::Constructor(syn::Constructor {
+                            type_: syn::Type::Nested(
+                                syn::TypeIdentifier(range(45, 1)),
+                                syn::Path {
+                                    components: &[syn::TypeIdentifier(range(42, 1))],
+                                    colons: &[43],
+                                },
+                            ),
+                        }),
+                        range(40, 8)
+                    ),
+                    if_: 17,
+                    else_: 35,
+                })
+            ),
+            Value {
+                type_: Type::Enum(*b.prototype),
+                range: range(17, 31),
+                expr: Expr::If(
+                    &boolean(true, range(21, 4)),
+                    &block(
+                        &implicit_to_enum(*b.prototype, &rec(t, range(28, 4))),
+                        range(26, 8)
+                    ),
+                    &block(
+                        &implicit_to_enum(*b.prototype, &rec(f, range(42, 4))),
+                        range(40, 8)
+                    ),
+                )
+            }
+        )
+    }
+
     struct Env<'g> {
         scope: MockScope<'g>,
         registry: MockRegistry<'g>,
@@ -784,6 +959,41 @@ mod tests {
             local_arena.recycle();
             result
         }
+
+        fn add_enum_unit(
+            &mut self,
+            name: com::Range,
+            range: com::Range,
+            units: &[com::Range],
+        )
+            -> Enum<'g>
+        {
+            let enum_prototype = EnumProto {
+                name: ItemIdentifier(name),
+                range: range,
+            };
+
+            let mut records = mem::Array::with_capacity(units.len(), self.arena);
+
+            for u in units {
+                records.push(Record {
+                    prototype: RecordProto {
+                        name: ItemIdentifier(*u),
+                        range: *u,
+                        enum_: enum_prototype.name,
+                    }
+                });
+            }
+
+            let enum_ = Enum {
+                prototype: self.arena.intern_ref(&enum_prototype),
+                variants: records.into_slice(),
+            };
+
+            self.registry.enums.insert(enum_prototype.name, enum_);
+
+            enum_
+        }
     }
 
     fn lit_boolean(value: bool, range: com::Range) -> syn::Expression<'static> {
@@ -814,6 +1024,14 @@ mod tests {
         }
     }
 
+    fn implicit_to_enum<'a>(enum_: EnumProto, value: &'a Value<'a>) -> Value<'a> {
+        Value {
+            type_: Type::Enum(enum_),
+            range: value.range,
+            expr: Expr::Implicit(Implicit::ToEnum(enum_, value))
+        }
+    }
+
     fn int(value: i64, range: com::Range) -> Value<'static> {
         Value {
             type_: Type::Builtin(BuiltinType::Int),
@@ -827,6 +1045,17 @@ mod tests {
             type_: Type::Builtin(BuiltinType::Int),
             range: range,
             expr: Expr::VariableRef(ValueIdentifier(name)),
+        }
+    }
+
+    fn rec(name: RecordProto, range: com::Range) -> Value<'static> {
+        Value {
+            type_: Type::Rec(name),
+            range: range,
+            expr: Expr::Call(
+                Callable::ConstructorRec(name),
+                &[],
+            ),
         }
     }
 

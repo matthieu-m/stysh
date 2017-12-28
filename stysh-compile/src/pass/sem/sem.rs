@@ -143,6 +143,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             use self::syn::InnerRecord::*;
 
             match *ev {
+                Tuple(..) => unimplemented!("InnerRecord::Tuple"),
                 Unit(name) => variants.push(sem::Record {
                     prototype: sem::RecordProto {
                         name: name.into(),
@@ -219,7 +220,7 @@ mod tests {
 
     #[test]
     fn prototype_enum() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
             syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 
@@ -246,7 +247,7 @@ mod tests {
 
     #[test]
     fn item_enum() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
             syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 
@@ -298,7 +299,7 @@ mod tests {
 
     #[test]
     fn prototype_rec() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
             syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 
@@ -323,7 +324,7 @@ mod tests {
 
     #[test]
     fn item_rec() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord {
+        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
             syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
 

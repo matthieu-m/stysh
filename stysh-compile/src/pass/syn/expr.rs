@@ -534,6 +534,25 @@ mod tests {
     }
 
     #[test]
+    fn basic_constructor_arguments() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"Some(1)"),
+            Expression::FunctionCall(FunctionCall {
+                function: &Expression::Constructor(Constructor {
+                    type_: Type::Simple(typeid(0, 4)),
+                }),
+                arguments: &[int(5, 1)],
+                commas: &[5],
+                open: 4,
+                close: 6,
+            })
+        );
+
+    }
+
+    #[test]
     fn basic_nested_constructor() {
         let global_arena = mem::Arena::new();
 

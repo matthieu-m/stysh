@@ -56,7 +56,7 @@ pub enum Item<'a> {
     /// A function.
     Fun(Function<'a>),
     /// A record.
-    Rec(Record),
+    Rec(Record<'a>),
 }
 
 /// A Statement.
@@ -73,7 +73,7 @@ pub struct Enum<'a> {
     /// Name of the enum.
     pub name: TypeIdentifier,
     /// Variants of the enum.
-    pub variants: &'a [InnerRecord],
+    pub variants: &'a [InnerRecord<'a>],
     /// Offset of the `:enum` keyword.
     pub keyword: u32,
     /// Offset of the opening brace.
@@ -87,9 +87,9 @@ pub struct Enum<'a> {
 
 /// A Record.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Record {
+pub struct Record<'a> {
     /// Inner representation of the record.
-    pub inner: InnerRecord,
+    pub inner: InnerRecord<'a>,
     /// Offset of the `:rec` keyword.
     pub keyword: u32,
     /// Offset of the semi-colon, for unit records.
@@ -98,9 +98,11 @@ pub struct Record {
 
 /// An InnerRecord.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum InnerRecord {
+pub enum InnerRecord<'a> {
     /// A missing record, when a semi-colon immediately appears for example.
     Missing(com::Range),
+    /// A tuple record, where fields are identified by index.
+    Tuple(TypeIdentifier, Tuple<'a, Type<'a>>),
     /// An unexpected range of tokens.
     Unexpected(com::Range),
     /// A unit record, with no argument.
@@ -389,7 +391,7 @@ impl<'a> Enum<'a> {
     }
 }
 
-impl Record {
+impl<'a> Record<'a> {
     /// Returns the `:rec` token.
     pub fn keyword(&self) -> tt::Token {
         tt::Token::new(tt::Kind::KeywordRec, self.keyword as usize, 4)
@@ -418,14 +420,14 @@ impl Record {
     }
 }
 
-impl InnerRecord {
+impl<'a> InnerRecord<'a> {
     /// Returns the name of the inner record.
     pub fn name(&self) -> TypeIdentifier {
         use self::InnerRecord::*;
 
         match *self {
             Missing(r) | Unexpected(r) => TypeIdentifier(r),
-            Unit(t) => t,
+            Tuple(t, _) | Unit(t) => t,
         }
     }
 
@@ -435,6 +437,7 @@ impl InnerRecord {
 
         match *self {
             Missing(r) | Unexpected(r) => r,
+            Tuple(t, tup) => t.0.extend(tup.range()),
             Unit(t) => t.0,
         }
     }
@@ -659,7 +662,7 @@ mod tests {
 
     #[test]
     fn range_enum_simple() {
-        fn unit(offset: usize, length: usize) -> InnerRecord {
+        fn unit(offset: usize, length: usize) -> InnerRecord<'static> {
             InnerRecord::Unit(TypeIdentifier(range(offset, length)))
         }
 

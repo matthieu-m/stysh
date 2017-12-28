@@ -19,7 +19,7 @@ pub fn parse_enum<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 }
 
 pub fn parse_record<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Record
+    -> Record<'g>
 {
     let mut parser = EnumRecParser::new(*raw);
     let r = parser.parse_record();
@@ -84,12 +84,12 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
                 let mut parser = EnumRecParser::new(self.raw.spawn(ns));
 
                 let mut variants = self.raw.local_array();
-                let mut semis = self.raw.local_array();
+                let mut commas = self.raw.local_array();
                 while let Some((v, c)) =
                     parser.parse_inner_record(Kind::SignComma)
                 {
                     variants.push(v);
-                    semis.push(c);
+                    commas.push(c);
                 }
 
                 Enum {
@@ -98,7 +98,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
                     keyword: keyword.offset() as u32,
                     open: o.offset() as u32,
                     close: c.offset() as u32,
-                    commas: self.raw.intern_slice(semis.into_slice()),
+                    commas: self.raw.intern_slice(commas.into_slice()),
                 }
             },
             _ => Enum {
@@ -112,7 +112,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_record(&mut self) -> Record {
+    fn parse_record(&mut self) -> Record<'g> {
         let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
         let missing = com::Range::new(keyword.range().end_offset(), 0);
 
@@ -127,15 +127,12 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord, u32)> {
+    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord<'g>, u32)> {
         if self.raw.peek().is_none() {
             return None;
         }
 
-        let variant =
-            self.raw
-                .pop_kind(Kind::NameType)
-                .map(|n| InnerRecord::Unit(TypeIdentifier(n.range())));
+        let variant = self.parse_inner_record_variant();
 
         let semi =
             self.raw
@@ -151,6 +148,27 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
             )),
             (None, None) => unimplemented!(),
         }
+    }
+
+    fn parse_inner_record_variant(&mut self) -> Option<InnerRecord<'g>> {
+        let identifier =
+            self.raw
+                .pop_kind(Kind::NameType)
+                .map(|n| TypeIdentifier(n.range()));
+
+        if let Some(identifier) = identifier {
+            if let Some(Node::Braced(..)) = self.raw.peek() {
+                let mut inner = TypeParser::new(self.raw.clone());
+                let tuple = inner.parse_tuple();
+                self.raw = inner.into_raw();
+
+                return Some(InnerRecord::Tuple(identifier, tuple));
+            }
+
+            return Some(InnerRecord::Unit(identifier));
+        }
+
+        None
     }
 }
 
@@ -169,6 +187,38 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                 )
             )
             .unwrap_or(Type::Missing(com::Range::new(0, 0)))
+    }
+
+    fn parse_tuple(&mut self) -> Tuple<'g, Type<'g>> {
+        if let Some(Node::Braced(o, ns, c)) = self.raw.peek() {
+            self.raw.pop_node();
+
+            assert_eq!(o.kind(), Kind::ParenthesisOpen);
+            let mut inner = TypeParser { raw: self.raw.spawn(ns) };
+
+            let mut fields = self.raw.local_array();
+            let mut commas = self.raw.local_array();
+
+            while let Some(t) = inner.try_parse() {
+                fields.push(t);
+                if let Some(c) = inner.raw.pop_kind(Kind::SignComma) {
+                    commas.push(c.range().offset() as u32)
+                } else {
+                    commas.push(t.range().end_offset() as u32 - 1)
+                };
+            }
+
+            assert!(inner.into_raw().peek().is_none());
+
+            return Tuple {
+                fields: self.raw.intern_slice(fields.into_slice()),
+                commas: self.raw.intern_slice(commas.into_slice()),
+                open: o.offset() as u32,
+                close: c.offset() as u32,
+            };
+        }
+
+        panic!("Unreachable: should only be called on Node::Braced");
     }
 
     fn try_parse(&mut self) -> Option<Type<'g>> {
@@ -205,33 +255,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                         Some(Type::Nested(TypeIdentifier(t.range()), path))
                     }
                 },
-                Node::Braced(o, ns, c) => {
-                    self.raw.pop_node();
-
-                    assert_eq!(o.kind(), Kind::ParenthesisOpen);
-                    let mut inner = TypeParser { raw: self.raw.spawn(ns) };
-
-                    let mut fields = self.raw.local_array();
-                    let mut commas = self.raw.local_array();
-
-                    while let Some(t) = inner.try_parse() {
-                        fields.push(t);
-                        if let Some(c) = inner.raw.pop_kind(Kind::SignComma) {
-                            commas.push(c.range().offset() as u32)
-                        } else {
-                            commas.push(t.range().end_offset() as u32 - 1)
-                        };
-                    }
-
-                    assert!(inner.into_raw().peek().is_none());
-
-                    Some(Type::Tuple(Tuple {
-                        fields: self.raw.intern_slice(fields.into_slice()),
-                        commas: self.raw.intern_slice(commas.into_slice()),
-                        open: o.offset() as u32,
-                        close: c.offset() as u32,
-                    }))
-                },
+                Node::Braced(..) => Some(Type::Tuple(self.parse_tuple())),
                 _ => unimplemented!()
             }
         })
@@ -309,6 +333,28 @@ mod tests {
                 open: 13,
                 close: 36,
                 commas: &[ 20, 28, 0 ]
+            }
+        );
+    }
+
+    #[test]
+    fn rec_tuple() {
+        let global = mem::Arena::new();
+
+        assert_eq!(
+            recit(&global, b":rec Tup(Int, String);"),
+            Record {
+                inner: InnerRecord::Tuple(
+                    typeid(5, 3),
+                    Tuple {
+                        fields: &[simple_type(9, 3), simple_type(14, 6)],
+                        commas: &[12, 19],
+                        open: 8,
+                        close: 20,
+                    }
+                ),
+                keyword: 0,
+                semi_colon: 21,
             }
         );
     }
@@ -484,7 +530,7 @@ mod tests {
         e
     }
 
-    fn recit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Record {
+    fn recit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Record<'g> {
         use super::super::com::RawParser;
 
         let mut local_arena = mem::Arena::new();

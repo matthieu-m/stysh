@@ -145,11 +145,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             match *ev {
                 Tuple(..) => unimplemented!("InnerRecord::Tuple"),
                 Unit(name) => variants.push(sem::Record {
-                    prototype: sem::RecordProto {
+                    prototype: self.global_arena.insert(sem::RecordProto {
                         name: name.into(),
                         range: ev.range(),
                         enum_: p.name.into()
-                    },
+                    }),
+                    fields: &[],
                 }),
                 Missing(_) | Unexpected(_) => (),
             }
@@ -172,10 +173,26 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         })
     }
 
-    fn rec_item(&mut self, _: syn::Record, p: &'g sem::RecordProto)
+    fn rec_item(&mut self, r: syn::Record, p: &'g sem::RecordProto)
         -> sem::Item<'g>
     {
-        sem::Item::Rec(sem::Record { prototype: *p })
+        use self::syn::InnerRecord::*;
+
+        let fields: &'g [sem::Type<'g>] = match r.inner {
+            Missing(_) | Unexpected(_) | Unit(_) => &[],
+            Tuple(_, tup) => {
+                let mut fields =
+                    mem::Array::with_capacity(tup.len(), self.global_arena);
+                
+                for f in tup.fields {
+                    fields.push(self.resolver(self.scope).type_of(f));
+                }
+
+                fields.into_slice()
+            },
+        };
+
+        sem::Item::Rec(sem::Record { prototype: p, fields: fields })
     }
 
     fn function_scope<'b>(
@@ -279,18 +296,20 @@ mod tests {
                 prototype: &enum_prototype,
                 variants: &[
                     Record {
-                        prototype: RecordProto {
+                        prototype: &RecordProto {
                             name: item_id(15, 3),
                             range: range(15, 3),
                             enum_: enum_prototype.name,
                         },
+                        fields: &[],
                     },
                     Record {
-                        prototype: RecordProto {
+                        prototype: &RecordProto {
                             name: item_id(20, 3),
                             range: range(20, 3),
                             enum_: enum_prototype.name,
                         },
+                        fields: &[],
                     },
                 ],
             })
@@ -323,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn item_rec() {
+    fn item_rec_unit() {
         fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
             syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
         }
@@ -350,7 +369,60 @@ mod tests {
                     semi_colon: 11,
                 }),
             ),
-            Item::Rec(Record { prototype: rec_prototype })
+            Item::Rec(Record {
+                 prototype: &rec_prototype,
+                 fields: &[],
+            })
+        );
+    }
+
+    #[test]
+    fn item_rec_tuple() {
+        fn simple_type(offset: usize, length: usize) -> syn::Type<'static> {
+            syn::Type::Simple(type_id(offset, length))
+        }
+
+        fn type_id(offset: usize, length: usize) -> syn::TypeIdentifier {
+            syn::TypeIdentifier(range(offset, length))
+        }
+
+        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
+            ItemIdentifier(range(offset, length))
+        }
+
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b":rec Tup(Int, String);", &global_arena);
+
+        let rec_prototype = RecordProto {
+            name: item_id(5, 3),
+            range: range(0, 22),
+            enum_: ItemIdentifier::unresolved(),
+        };
+
+        assert_eq!(
+            env.item_of(
+                &Prototype::Rec(rec_prototype),
+                &syn::Item::Rec(syn::Record {
+                    inner: syn::InnerRecord::Tuple(
+                        type_id(5, 3),
+                        syn::Tuple {
+                            fields: &[simple_type(9, 3), simple_type(14, 6)],
+                            commas: &[12, 19],
+                            open: 8,
+                            close: 20,
+                        }
+                    ),
+                    keyword: 0,
+                    semi_colon: 21,
+                }),
+            ),
+            Item::Rec(Record {
+                 prototype: &rec_prototype,
+                 fields: &[
+                     Type::Builtin(BuiltinType::Int),
+                     Type::Builtin(BuiltinType::String),
+                 ],
+            })
         );
     }
 

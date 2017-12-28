@@ -215,14 +215,16 @@ pub struct Enum<'a> {
     /// The prototype.
     pub prototype: &'a EnumProto,
     /// The variants.
-    pub variants: &'a [Record],
+    pub variants: &'a [Record<'a>],
 }
 
 /// A record.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Record {
+pub struct Record<'a> {
     /// The prototype.
-    pub prototype: RecordProto,
+    pub prototype: &'a RecordProto,
+    /// The fields.
+    pub fields: &'a [Type<'a>],
 }
 
 /// A function prototype.
@@ -255,7 +257,7 @@ pub enum Item<'a> {
     /// A full-fledged function definition.
     Fun(Function<'a>),
     /// A full-fledged record definition.
-    Rec(Record),
+    Rec(Record<'a>),
 }
 
 /// An item identifier.
@@ -512,11 +514,22 @@ impl<'a, 'target> CloneInto<'target> for Enum<'a> {
     }
 }
 
-impl<'target> CloneInto<'target> for Record {
-    type Output = Record;
+impl<'target> CloneInto<'target> for RecordProto {
+    type Output = RecordProto;
 
     fn clone_into(&self, _: &'target mem::Arena) -> Self::Output {
         *self
+    }
+}
+
+impl<'a, 'target> CloneInto<'target> for Record<'a> {
+    type Output = Record<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Record {
+            prototype: arena.intern_ref(self.prototype),
+            fields: CloneInto::clone_into(self.fields, arena),
+        }
     }
 }
 

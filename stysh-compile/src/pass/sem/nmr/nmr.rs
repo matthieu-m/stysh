@@ -80,7 +80,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             if let Some(e) = self.registry.lookup_enum(e.name) {
                 for r in e.variants {
                     if self.source(r.prototype.name.0) == self.source(t.0) {
-                        return sem::Type::Rec(r.prototype);
+                        return sem::Type::Rec(*r.prototype);
                     }
                 }
             }
@@ -222,31 +222,37 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             };
         }
 
-        println!("Unimplemented - {:?} -> {:?}", c, self.type_of(&c.type_));
-        unimplemented!()
+        unimplemented!("Unimplemented - {:?} -> {:?}", c, self.type_of(&c.type_));
     }
 
     fn value_of_call(&mut self, fun: syn::FunctionCall) -> sem::Value<'g> {
-        if let &syn::Expression::Var(id) = fun.function {
-            let mut values = mem::Array::with_capacity(
-                fun.arguments.len(),
-                self.global_arena
-            );
+        use self::syn::Expression::*;
 
-            for e in fun.arguments {
-                values.push(self.value_of(e));
-            }
+        let callable = match fun.function {
+            &Constructor(c) =>
+                if let sem::Type::Rec(r) = self.type_of(&c.type_) {
+                    sem::Callable::ConstructorRec(r)
+                } else {
+                    unimplemented!("Unknown type {:?}", c.type_)
+                },
+            &Var(id) => self.scope.lookup_callable(id.into()),
+            _ => unimplemented!(),
+        };
 
-            let callable = self.scope.lookup_callable(id.into());
+        let mut values = mem::Array::with_capacity(
+            fun.arguments.len(),
+            self.global_arena
+        );
 
-            return sem::Value {
-                type_: callable.result_type(),
-                range: fun.range(),
-                expr: sem::Expr::Call(callable, values.into_slice()),
-            };
+        for e in fun.arguments {
+            values.push(self.value_of(e));
         }
 
-        unimplemented!()
+        sem::Value {
+            type_: callable.result_type(),
+            range: fun.range(),
+            expr: sem::Expr::Call(callable, values.into_slice()),
+        }
     }
 
     fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
@@ -637,6 +643,47 @@ mod tests {
     }
 
     #[test]
+    fn value_basic_constructor_arguments() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(b"Rec(1)", &global_arena);
+
+        let arg = range(4, 1);
+
+        let registered = ItemIdentifier(range(0, 3));
+        let basic_rec_prototype = RecordProto {
+            name: registered,
+            range: range(45, 3),
+            enum_: ItemIdentifier::unresolved()
+        };
+
+        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+
+        assert_eq!(
+            env.value_of(
+                &syn::Expression::FunctionCall(syn::FunctionCall {
+                    function: &syn::Expression::Constructor(syn::Constructor {
+                        type_: syn::Type::Simple(
+                            syn::TypeIdentifier(registered.0)
+                        ),
+                    }),
+                    arguments: &[ lit_integral(arg) ],
+                    commas: &[],
+                    open: 3,
+                    close: 5,
+                }),
+            ),
+            Value {
+                type_: Type::Rec(basic_rec_prototype),
+                range: range(0, 6),
+                expr: Expr::Call(
+                    Callable::ConstructorRec(basic_rec_prototype),
+                    &[ int(1, arg) ],
+                ),
+            }
+        );
+    }
+
+    #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
         let mut env = Env::new(b":enum Simple { Unit }         Simple::Unit", &global_arena);
@@ -661,7 +708,7 @@ mod tests {
                     ),
                 }),
             ),
-            rec(rec_prototype, range(30, 12))
+            rec(*rec_prototype, range(30, 12))
         );
     }
 
@@ -912,11 +959,11 @@ mod tests {
                 expr: Expr::If(
                     &boolean(true, range(21, 4)),
                     &block(
-                        &implicit_to_enum(*b.prototype, &rec(t, range(28, 4))),
+                        &implicit_to_enum(*b.prototype, &rec(*t, range(28, 4))),
                         range(26, 8)
                     ),
                     &block(
-                        &implicit_to_enum(*b.prototype, &rec(f, range(42, 4))),
+                        &implicit_to_enum(*b.prototype, &rec(*f, range(42, 4))),
                         range(40, 8)
                     ),
                 )
@@ -977,11 +1024,12 @@ mod tests {
 
             for u in units {
                 records.push(Record {
-                    prototype: RecordProto {
+                    prototype: self.arena.insert(RecordProto {
                         name: ItemIdentifier(*u),
                         range: *u,
                         enum_: enum_prototype.name,
-                    }
+                    }),
+                    fields: &[],
                 });
             }
 

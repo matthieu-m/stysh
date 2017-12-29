@@ -589,6 +589,41 @@ mod tests {
     }
 
     #[test]
+    fn record_arguments() {
+        //  ":rec Args(Int);    Args(42)"
+        let global_arena = mem::Arena::new();
+
+        let basic_rec_prototype = RecordProto {
+            name: ItemIdentifier(range(5, 4)),
+            range: range(0, 15),
+            enum_: ItemIdentifier::unresolved(),
+        };
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: Type::Rec(basic_rec_prototype),
+                    range: range(19, 8),
+                    expr: Expr::Constructor(
+                        basic_rec_prototype,
+                        &[
+                            lit_integral(42, 24, 2)
+                        ]
+                    ),
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 2a ; 2@24",
+                "    $1 := new <4@5> ($0) ; 8@19",
+                "    return $1",
+                ""
+            ])
+        );
+    }
+
+    #[test]
     fn block_simple() {
         let global_arena = mem::Arena::new();
         let int = Type::Builtin(BuiltinType::Int);

@@ -23,6 +23,9 @@ use model::syn;
 pub trait Registry<'a> {
     /// Get the definition of the enum.
     fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'a>>;
+
+    /// Get the definition of the record.
+    fn lookup_record(&self, id: ItemIdentifier) -> Option<Record<'a>>;
 }
 
 /// A Type.
@@ -84,12 +87,16 @@ pub enum Expr<'a> {
     Call(Callable<'a>, &'a [Value<'a>]),
     /// A constructor call.
     Constructor(RecordProto, &'a [Value<'a>]),
+    /// A field access.
+    FieldAccess(&'a Value<'a>, u16),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// An implicit cast (variant to enum, anonymous to named, ...).
     Implicit(Implicit<'a>),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
+    /// An unresolved field access.
+    UnresolvedField(&'a Value<'a>, ValueIdentifier),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
@@ -695,20 +702,23 @@ impl<'a> std::fmt::Display for Type<'a> {
 /// Mocks for the traits.
 pub mod mocks {
     use basic::mem;
-    use super::{Enum, ItemIdentifier, Registry};
+    use super::{Enum, ItemIdentifier, Record, Registry};
 
     /// A mock for the Regitry trait.
     #[derive(Debug)]
     pub struct MockRegistry<'g> {
         /// Map of enums to be returned from lookup_enum.
         pub enums: mem::ArrayMap<'g, ItemIdentifier, Enum<'g>>,
+        /// Map of records to be returned from lookup_record.
+        pub records: mem::ArrayMap<'g, ItemIdentifier, Record<'g>>,
     }
 
     impl<'g> MockRegistry<'g> {
         /// Creates a new instance of MockRegistry.
         pub fn new(arena: &'g mem::Arena) -> MockRegistry<'g> {
             MockRegistry { 
-                enums: mem::ArrayMap::new(arena)
+                enums: mem::ArrayMap::new(arena),
+                records: mem::ArrayMap::new(arena),
             }
         }
     }
@@ -716,6 +726,10 @@ pub mod mocks {
     impl<'g> Registry<'g> for MockRegistry<'g> {
         fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'g>> {
             self.enums.get(&id).cloned()
+        }
+
+        fn lookup_record(&self, id: ItemIdentifier) -> Option<Record<'g>> {
+            self.records.get(&id).cloned()
         }
     }
 }

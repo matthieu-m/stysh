@@ -70,6 +70,23 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
+        -> sem::Type<'g>
+    {
+        let index = index as usize;
+
+        let type_ = match value.type_ {
+            sem::Type::Rec(rec) =>
+                self.registry
+                    .lookup_record(rec.name)
+                    .and_then(|r| r.fields.get(index)),
+            sem::Type::Tuple(tup) => tup.fields.get(index),
+            _ => None,
+        };
+
+        type_.cloned().unwrap_or(sem::Type::unresolved())
+    }
+
     fn type_of_nested(&self, t: syn::TypeIdentifier, p: syn::Path)
         -> sem::Type<'g>
     {
@@ -112,7 +129,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                  => self.value_of_binary_operator(op, left, right),
             Block(s, e, r) => self.value_of_block(s, e, r),
             Constructor(c) => self.value_of_constructor(c),
-            FieldAccess(_) => unimplemented!("TODO: implement FieldAccess"),
+            FieldAccess(f) => self.value_of_field(f),
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit, range) => self.value_of_literal(lit, range),
@@ -256,6 +273,28 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    fn value_of_field(&mut self, field: syn::FieldAccess) -> sem::Value<'g> {
+        let accessed = self.global_arena.insert(self.value_of(field.accessed));
+
+        if let Some(index) = self.parse_integral(field.field.0, 1, false) {
+            let index = index as _;
+
+            sem::Value {
+                type_: self.type_of_field_index(accessed, index),
+                range: field.range(),
+                expr: sem::Expr::FieldAccess(accessed, index),
+            }
+        } else {
+            let id = sem::ValueIdentifier(field.field.0);
+
+            sem::Value {
+                type_: sem::Type::unresolved(),
+                range: field.range(),
+                expr: sem::Expr::UnresolvedField(accessed, id)
+            }
+        }
+    }
+
     fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
         let condition = self.value_of_expr(if_else.condition);
         let mut true_branch = self.value_of_expr(if_else.true_expr);
@@ -328,14 +367,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_literal_integral(&mut self, range: com::Range)
         -> sem::Value<'g>
     {
-        let mut value = 0;
-        for byte in self.source(range) {
-            match *byte {
-                b'0'...b'9' => value += (byte - b'0') as i64,
-                b'_' => (),
-                _ => unimplemented!(),
-            }
-        }
+        let value = self.parse_integral(range, 0, true).expect("TODO: handle");
 
         sem::Value {
             type_: sem::Type::Builtin(sem::BuiltinType::Int),
@@ -541,6 +573,29 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    fn parse_integral(
+        &self,
+        range: com::Range,
+        offset: usize,
+        underscores: bool
+    )
+        -> Option<i64> 
+    {
+        let mut value = 0;
+        for byte in &self.source(range)[offset..] {
+            match *byte {
+                b'0'...b'9' => {
+                    value *= 10;
+                    value += (byte - b'0') as i64;
+                },
+                b'_' if underscores => (),
+                _ => return None,
+            }
+        }
+
+        Some(value)
+    }
+
     fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
         where 'a: 'b
     {
@@ -669,6 +724,93 @@ mod tests {
             ),
             rec(basic_rec_prototype, &[ int(1, arg) ], range(0, 6))
         );
+    }
+
+    #[test]
+    fn value_basic_record_field_access() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
+
+        let registered = range(15, 3);
+
+        let record = env.insert_record(
+            RecordProto {
+                name: ItemIdentifier(range(5, 3)),
+                range: range(0, 14),
+                enum_: ItemIdentifier::unresolved(),
+            },
+            &[Type::Builtin(BuiltinType::Int)],
+            &[registered],
+        );
+
+        let arg = range(19, 2);
+
+        assert_eq!(
+            env.value_of(
+                &syn::Expression::FieldAccess(syn::FieldAccess {
+                    accessed: &syn::Expression::Constructor(syn::Constructor {
+                        type_: syn::Type::Simple(
+                            syn::TypeIdentifier(registered)
+                        ),
+                        arguments: syn::Tuple {
+                            fields: &[ lit_integral(arg) ],
+                            commas: &[],
+                            open: 18,
+                            close: 21,
+                        },
+                    }),
+                    field: syn::FieldIdentifier(range(22, 2)),
+                }),
+            ),
+            Value {
+                type_: Type::Builtin(BuiltinType::Int),
+                range: range(15, 9),
+                expr: Expr::FieldAccess(
+                    &rec(*record.prototype, &[ int(42, arg) ], range(15, 7)),
+                    0
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn value_basic_tuple_field_access() {
+        let int_type = Type::Builtin(BuiltinType::Int);
+
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b"(42, 43).1", &global_arena);
+
+        let (arg0, arg1) = (range(1, 2), range(5, 2));
+
+        assert_eq!(
+            env.value_of(
+                &syn::Expression::FieldAccess(syn::FieldAccess {
+                    accessed: &syn::Expression::Tuple(syn::Tuple {
+                        fields: &[ lit_integral(arg0), lit_integral(arg1) ],
+                        commas: &[ 3 ],
+                        open: 0,
+                        close: 7,
+                    }),
+                    field: syn::FieldIdentifier(range(8, 2)),
+                }),
+            ),
+            Value {
+                type_: int_type,
+                range: range(0, 10),
+                expr: Expr::FieldAccess(
+                    &Value {
+                        type_: Type::Tuple(Tuple {
+                            fields: &[int_type, int_type]
+                        }),
+                        range: range(0, 8),
+                        expr: Expr::Tuple(Tuple {
+                            fields: &[ int(42, arg0), int(43, arg1) ],
+                        }),
+                    },
+                    1
+                )
+            }
+        )
     }
 
     #[test]
@@ -982,6 +1124,28 @@ mod tests {
                 fragment: fragment,
                 arena: arena,
             }
+        }
+
+        fn insert_record(
+            &mut self,
+            proto: RecordProto,
+            fields: &[Type],
+            ranges: &[com::Range],
+        )
+            -> Record<'g>
+        {
+            let proto = self.arena.insert(proto);
+            let record = Record {
+                prototype: proto,
+                fields: mem::CloneInto::clone_into(fields, self.arena),
+            };
+
+            for r in ranges {
+                self.scope.types.insert(ItemIdentifier(*r), Type::Rec(*proto));
+            }
+            self.registry.records.insert(proto.name, record);
+
+            record
         }
 
         fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)

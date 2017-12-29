@@ -112,6 +112,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                  => self.value_of_binary_operator(op, left, right),
             Block(s, e, r) => self.value_of_block(s, e, r),
             Constructor(c) => self.value_of_constructor(c),
+            FieldAccess(_) => unimplemented!("TODO: implement FieldAccess"),
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit, range) => self.value_of_literal(lit, range),

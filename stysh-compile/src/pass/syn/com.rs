@@ -65,6 +65,10 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
     pub fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
 
+    pub fn peek_kind(&self) -> Option<tt::Kind> {
+        self.state.peek_token().map(|tok| tok.kind())
+    }
+
     pub fn pop_node(&mut self) { self.state.pop_node(); }
 
     pub fn pop_kind(&mut self, kind: tt::Kind) -> Option<tt::Token> {
@@ -119,6 +123,7 @@ impl<'a> ParserState<'a> {
     fn peek_token(&self) -> Option<tt::Token> {
         match self.nodes.first().cloned() {
             Some(tt::Node::Run(run)) => Some(run[self.run_start]),
+            Some(tt::Node::Braced(o, _, _)) => Some(o),
             _ => None,
         }
     }

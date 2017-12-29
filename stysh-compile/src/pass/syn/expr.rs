@@ -120,7 +120,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         //  operator and another expression.
 
         //  Note:   an expression immediatelly followed by a tuple expression is
-        //          a function call expression.
+        //          a constructor or function call expression.
 
         //  Use the Shunting Yard algorithm to parse this "expr [op expr]" into
         //  an expression tree.
@@ -131,6 +131,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             let expr = match node {
                 tt::Node::Run(tokens) => {
                     let kind = tokens[0].kind();
+                    let range = tokens[0].range();
 
                     match kind {
                         K::KeywordIf => self.parse_if_else(),
@@ -141,6 +142,11 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                                 tokens[0].offset() as u32,
                                 Precedence(8)
                             );
+                            continue;
+                        },
+                        K::NameField => {
+                            self.raw.pop_tokens(1);
+                            yard.push_field(FieldIdentifier(range));
                             continue;
                         },
                         _ => {
@@ -182,15 +188,6 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
             yard.push_expression(expr);
 
-            //  It might be a function call expression.
-            if let Some(tt::Node::Braced(o, n, c)) = self.raw.peek() {
-                if o.kind() == K::ParenthesisOpen {
-                    self.raw.pop_node();
-
-                    yard.push_expression(self.parse_parens(n, o, c));
-                }
-            }
-
             //  Optionally followed by a binary operator and another expression.
             if let Some(tt::Node::Run(tokens)) = self.raw.peek() {
                 if let Some((op, prec)) = binop(tokens[0].kind()) {
@@ -200,7 +197,13 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                 }
             }
 
-            break;
+            match self.raw.peek_kind() {
+                //  It might be a field access
+                Some(K::NameField) |
+                //  It might be a constructor or function call.
+                Some(K::ParenthesisOpen) => continue,
+                _ => break,
+            };
         }
 
         yard.pop_expression()
@@ -332,6 +335,20 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
         self.expr_stack.push(expr);
     }
 
+    fn push_field(&mut self, field: FieldIdentifier) {
+        if let Some(accessed) = self.pop_trailing_expression() {
+            self.expr_stack.push(
+                Expression::FieldAccess(FieldAccess {
+                    accessed: self.global_arena.insert(accessed),
+                    field: field,
+                })
+            );
+            return;
+        }
+
+        unimplemented!("{:?} -> {:?}", field, self);
+    }
+
     fn push_operator(
         &mut self,
         op: Operator,
@@ -405,14 +422,15 @@ trait IntoExpr<'g> {
 
 impl<'g> IntoExpr<'g> for tt::Token {
     fn into_expr(self) -> Option<Expression<'g>> {
+        use self::tt::Kind::*;
         use self::Expression::*;
         use self::Literal::*;
 
         match self.kind() {
-            tt::Kind::LitBoolFalse => Some(Lit(Bool(false), self.range())),
-            tt::Kind::LitBoolTrue => Some(Lit(Bool(true), self.range())),
-            tt::Kind::LitIntegral => Some(Lit(Integral, self.range())),
-            tt::Kind::NameValue => Some(Var(VariableIdentifier(self.range()))),
+            LitBoolFalse => Some(Lit(Bool(false), self.range())),
+            LitBoolTrue => Some(Lit(Bool(true), self.range())),
+            LitIntegral => Some(Lit(Integral, self.range())),
+            NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
     }
@@ -676,6 +694,35 @@ mod tests {
     }
 
     #[test]
+    fn field_access_basic() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"tup.42"),
+            Expression::FieldAccess(FieldAccess {
+                accessed: &Expression::Var(var(0, 3)),
+                field: field(3, 3),
+            })
+        );
+    }
+
+    #[test]
+    fn field_access_recursive() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            exprit(&global_arena, b"tup.42.53"),
+            Expression::FieldAccess(FieldAccess {
+                accessed: &Expression::FieldAccess(FieldAccess {
+                    accessed: &Expression::Var(var(0, 3)),
+                    field: field(3, 3),
+                }),
+                field: field(6, 3),
+            })
+        );
+    }
+
+    #[test]
     fn shunting_yard_prefix() {
         let global_arena = mem::Arena::new();
 
@@ -778,6 +825,10 @@ mod tests {
         -> Expression<'static>
     {
         Expression::Lit(Literal::Bool(value), range(offset, length))
+    }
+
+    fn field(offset: usize, length: usize) -> FieldIdentifier {
+        FieldIdentifier(range(offset, length))
     }
     
     fn int(offset: usize, length: usize) -> Expression<'static> {

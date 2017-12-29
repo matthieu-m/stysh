@@ -34,6 +34,8 @@ pub enum Expression<'a> {
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A constructor expression.
     Constructor(Constructor<'a>),
+    /// A field access expression.
+    FieldAccess(FieldAccess<'a>),
     /// A function call expression.
     FunctionCall(FunctionCall<'a>),
     /// A if expression.
@@ -190,6 +192,15 @@ pub struct Constructor<'a> {
     pub arguments: Tuple<'a, Expression<'a>>,
 }
 
+/// A Field Access such .0 or .name.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct FieldAccess<'a> {
+    /// Record or Tuple accessed.
+    pub accessed: &'a Expression<'a>,
+    /// Field identifier.
+    pub field: FieldIdentifier,
+}
+
 /// A function call expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionCall<'a> {
@@ -290,6 +301,10 @@ pub struct Tuple<'a, T: 'a> {
     pub close: u32,
 }
 
+/// A Field Identifier.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct FieldIdentifier(pub com::Range);
+
 /// A Value Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct VariableIdentifier(pub com::Range);
@@ -316,6 +331,7 @@ impl<'a> Expression<'a> {
             BinOp(_, _, left, right) => left.range().extend(right.range()),
             Block(_, _, range) => range,
             Constructor(c) => c.range(),
+            FieldAccess(f) => f.range(),
             FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
             Lit(_, range) => range,
@@ -464,6 +480,13 @@ impl<'a> Constructor<'a> {
         } else {
             self.type_.range().extend(self.arguments.range())
         }
+    }
+}
+
+impl<'a> FieldAccess<'a> {
+    /// Returns the range spanned by the constructor.
+    pub fn range(&self) -> com::Range {
+        self.accessed.range().extend(self.field.0)
     }
 }
 

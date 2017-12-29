@@ -230,6 +230,12 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn parse_parens(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
         -> Expression<'g>
     {
+        Expression::Tuple(self.parse_tuple(ns, o, c))
+    }
+
+    fn parse_tuple(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
+        -> Tuple<'g, Expression<'g>>
+    {
         let mut inner = ExprParser::new(self.raw.spawn(ns));
 
         let mut fields = self.raw.local_array();
@@ -248,16 +254,24 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
         assert!(inner.into_raw().peek().is_none());
 
-        Expression::Tuple(Tuple {
+        Tuple {
             fields: self.raw.intern_slice(fields.into_slice()),
             commas: self.raw.intern_slice(commas.into_slice()),
             open: o.offset() as u32,
             close: c.offset() as u32,
-        })
+        }
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
-        Expression::Constructor(Constructor { type_: ty })
+        let tuple = if let Some(tt::Node::Braced(o, ns, c)) = self.raw.peek() {
+            assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
+
+            self.raw.pop_node();
+            self.parse_tuple(ns, o, c)
+        } else {
+            Default::default()
+        };
+        Expression::Constructor(Constructor { type_: ty, arguments: tuple })
     }
 
     fn parse_if_else(&mut self) -> Expression<'g> {
@@ -308,10 +322,7 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
                     Expression::FunctionCall(
                         FunctionCall {
                             function: self.global_arena.insert(callee),
-                            arguments: tuple.fields,
-                            commas: tuple.commas,
-                            open: tuple.open,
-                            close: tuple.close,
+                            arguments: tuple,
                         }
                     )
                 );
@@ -529,6 +540,7 @@ mod tests {
             exprit(&global_arena, b"True"),
             Expression::Constructor(Constructor {
                 type_: Type::Simple(typeid(0, 4)),
+                arguments: Default::default(),
             })
         );
     }
@@ -539,14 +551,14 @@ mod tests {
 
         assert_eq!(
             exprit(&global_arena, b"Some(1)"),
-            Expression::FunctionCall(FunctionCall {
-                function: &Expression::Constructor(Constructor {
-                    type_: Type::Simple(typeid(0, 4)),
-                }),
-                arguments: &[int(5, 1)],
-                commas: &[5],
-                open: 4,
-                close: 6,
+            Expression::Constructor(Constructor {
+                type_: Type::Simple(typeid(0, 4)),
+                arguments: Tuple {
+                    fields: &[int(5, 1)],
+                    commas: &[5],
+                    open: 4,
+                    close: 6,
+                },
             })
         );
 
@@ -566,6 +578,7 @@ mod tests {
                         colons: &[4],
                     }
                 ),
+                arguments: Default::default()
             })
         );
     }
@@ -578,10 +591,12 @@ mod tests {
             exprit(&global_arena, b"basic(1, 2)"),
             Expression::FunctionCall(FunctionCall {
                 function: &Expression::Var(var(0, 5)),
-                arguments: &[ int(6, 1), int(9, 1) ],
-                commas: &[7, 9],
-                open: 5,
-                close: 10,
+                arguments: Tuple {
+                    fields: &[ int(6, 1), int(9, 1) ],
+                    commas: &[7, 9],
+                    open: 5,
+                    close: 10,
+                },
             })
         );
 
@@ -592,10 +607,12 @@ mod tests {
                 type_: None,
                 expr: Expression::FunctionCall(FunctionCall {
                     function: &Expression::Var(var(10, 5)),
-                    arguments: &[ int(16, 1), int(19, 1) ],
-                    commas: &[17, 19],
-                    open: 15,
-                    close: 20,
+                    arguments: Tuple {
+                        fields: &[ int(16, 1), int(19, 1) ],
+                        commas: &[17, 19],
+                        open: 15,
+                        close: 20,
+                    },
                 }),
                 var: 0,
                 colon: 0,

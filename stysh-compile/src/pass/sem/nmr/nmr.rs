@@ -212,31 +212,31 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_constructor(&mut self, c: syn::Constructor) -> sem::Value<'g> {
-        if let sem::Type::Rec(rec) = self.type_of(&c.type_) {
-            let callable = sem::Callable::ConstructorRec(rec);
+        if let sem::Type::Rec(record) = self.type_of(&c.type_) {
+            let mut values = mem::Array::with_capacity(
+                c.arguments.len(),
+                self.global_arena
+            );
+
+            for e in c.arguments.fields {
+                values.push(self.value_of(e));
+            }
 
             return sem::Value {
-                type_: callable.result_type(),
+                type_: sem::Type::Rec(record),
                 range: c.range(),
-                expr: sem::Expr::Call(callable, &[]),
+                expr: sem::Expr::Constructor(record, values.into_slice()),
             };
         }
 
-        unimplemented!("Unimplemented - {:?} -> {:?}", c, self.type_of(&c.type_));
+        unimplemented!("Unknown constructor call {:?}", c);
     }
 
     fn value_of_call(&mut self, fun: syn::FunctionCall) -> sem::Value<'g> {
-        use self::syn::Expression::*;
-
-        let callable = match fun.function {
-            &Constructor(c) =>
-                if let sem::Type::Rec(r) = self.type_of(&c.type_) {
-                    sem::Callable::ConstructorRec(r)
-                } else {
-                    unimplemented!("Unknown type {:?}", c.type_)
-                },
-            &Var(id) => self.scope.lookup_callable(id.into()),
-            _ => unimplemented!(),
+        let callable = if let syn::Expression::Var(id) = *fun.function {
+            self.scope.lookup_callable(id.into())
+        } else {
+            unimplemented!()
         };
 
         let mut values = mem::Array::with_capacity(
@@ -244,7 +244,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             self.global_arena
         );
 
-        for e in fun.arguments {
+        for e in fun.arguments.fields {
             values.push(self.value_of(e));
         }
 
@@ -629,16 +629,10 @@ mod tests {
             env.value_of(
                 &syn::Expression::Constructor(syn::Constructor {
                     type_: syn::Type::Simple(syn::TypeIdentifier(registered.0)),
+                    arguments: Default::default()
                 }),
             ),
-            Value {
-                type_: Type::Rec(basic_rec_prototype),
-                range: range(0, 3),
-                expr: Expr::Call(
-                    Callable::ConstructorRec(basic_rec_prototype),
-                    &[],
-                ),
-            }
+            rec(basic_rec_prototype, &[], range(0, 3))
         );
     }
 
@@ -660,33 +654,29 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::FunctionCall(syn::FunctionCall {
-                    function: &syn::Expression::Constructor(syn::Constructor {
-                        type_: syn::Type::Simple(
-                            syn::TypeIdentifier(registered.0)
-                        ),
-                    }),
-                    arguments: &[ lit_integral(arg) ],
-                    commas: &[],
-                    open: 3,
-                    close: 5,
+                &syn::Expression::Constructor(syn::Constructor {
+                    type_: syn::Type::Simple(
+                        syn::TypeIdentifier(registered.0)
+                    ),
+                    arguments: syn::Tuple {
+                        fields: &[ lit_integral(arg) ],
+                        commas: &[],
+                        open: 3,
+                        close: 5,
+                    },
                 }),
             ),
-            Value {
-                type_: Type::Rec(basic_rec_prototype),
-                range: range(0, 6),
-                expr: Expr::Call(
-                    Callable::ConstructorRec(basic_rec_prototype),
-                    &[ int(1, arg) ],
-                ),
-            }
+            rec(basic_rec_prototype, &[ int(1, arg) ], range(0, 6))
         );
     }
 
     #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
-        let mut env = Env::new(b":enum Simple { Unit }         Simple::Unit", &global_arena);
+        let mut env = Env::new(
+            b":enum Simple { Unit }         Simple::Unit",
+            &global_arena
+        );
 
         let enum_ = env.add_enum_unit(range(6, 6), range(0, 21), &[range(15, 4)]);
         let rec_prototype = enum_.variants[0].prototype;
@@ -706,9 +696,10 @@ mod tests {
                             colons: &[36],
                         },
                     ),
+                    arguments: Default::default(),
                 }),
             ),
-            rec(*rec_prototype, range(30, 12))
+            rec(*rec_prototype, &[], range(30, 12))
         );
     }
 
@@ -737,10 +728,12 @@ mod tests {
             env.value_of(
                 &syn::Expression::FunctionCall(syn::FunctionCall {
                     function: &var(fragment_range),
-                    arguments: &[ lit_integral(arg0), lit_integral(arg1), ],
-                    commas: &[7, 9],
-                    open: 5,
-                    close: 10,
+                    arguments: syn::Tuple {
+                        fields: &[ lit_integral(arg0), lit_integral(arg1), ],
+                        commas: &[7, 9],
+                        open: 5,
+                        close: 10,
+                    },
                 }),
             ),
             Value {
@@ -933,6 +926,7 @@ mod tests {
                                     colons: &[29],
                                 },
                             ),
+                            arguments: Default::default(),
                         }),
                         range(26, 8)
                     ),
@@ -946,6 +940,7 @@ mod tests {
                                     colons: &[43],
                                 },
                             ),
+                            arguments: Default::default(),
                         }),
                         range(40, 8)
                     ),
@@ -959,11 +954,11 @@ mod tests {
                 expr: Expr::If(
                     &boolean(true, range(21, 4)),
                     &block(
-                        &implicit_to_enum(*b.prototype, &rec(*t, range(28, 4))),
+                        &implicit_to_enum(*b.prototype, &rec(*t, &[], range(28, 4))),
                         range(26, 8)
                     ),
                     &block(
-                        &implicit_to_enum(*b.prototype, &rec(*f, range(42, 4))),
+                        &implicit_to_enum(*b.prototype, &rec(*f, &[], range(42, 4))),
                         range(40, 8)
                     ),
                 )
@@ -1096,14 +1091,13 @@ mod tests {
         }
     }
 
-    fn rec(name: RecordProto, range: com::Range) -> Value<'static> {
+    fn rec<'a>(name: RecordProto, args: &'a [Value<'a>], range: com::Range)
+        -> Value<'a>
+    {
         Value {
             type_: Type::Rec(name),
             range: range,
-            expr: Expr::Call(
-                Callable::ConstructorRec(name),
-                &[],
-            ),
+            expr: Expr::Constructor(name, args),
         }
     }
 

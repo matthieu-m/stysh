@@ -216,7 +216,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
         let mut collection = mem::Array::new(self.functions.arena());
 
         match self.parent.lookup_callable(name) {
-            ConstructorRec(_) | Unknown(_) => (),
+            Unknown(_) => (),
             Builtin(fun) => collection.push(Builtin(fun)),
             Function(fun) => collection.push(Function(fun)),
             Unresolved(slice) => collection.extend(slice),

@@ -162,6 +162,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => self.convert_literal(current, val, range),
             sem::Expr::Call(callable, args)
                 => self.convert_call(current, callable, args, range),
+            sem::Expr::Constructor(rec, args)
+                => self.convert_constructor(current, rec, args, range),
             sem::Expr::If(cond, true_, false_)
                 => self.convert_if(current, cond, true_, false_, range),
             sem::Expr::Tuple(tuple)
@@ -224,6 +226,25 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             self.convert_array_of_values(current, args);
 
         current.push_instr(sir::Instruction::Call(callable, arguments, range));
+
+        current
+    }
+
+    fn convert_constructor(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        rec: sem::RecordProto,
+        args: &[sem::Value<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let (mut current, arguments) =
+            self.convert_array_of_values(current, args);
+
+        current.push_instr(
+            sir::Instruction::New(sem::Type::Rec(rec), arguments, range)
+        );
 
         current
     }
@@ -555,15 +576,12 @@ mod tests {
                 &Value {
                     type_: Type::Rec(basic_rec_prototype),
                     range: range(30, 12),
-                    expr: Expr::Call(
-                        Callable::ConstructorRec(basic_rec_prototype),
-                        &[],
-                    )
+                    expr: Expr::Constructor(basic_rec_prototype, &[]),
                 }
             ).to_string(),
             cat(&[
                 "0 ():",
-                "    $0 := <4@15>() ; 12@30",
+                "    $0 := new <4@15> () ; 12@30",
                 "    return $0",
                 ""
             ])

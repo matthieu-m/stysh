@@ -83,7 +83,7 @@ impl<'a> iter::Iterator for RawStream<'a> {
             b'#' if next == Some(b'[') => self.lex_attribute(),
             b'#' => self.lex_comment(),
             b':' if next == Some(b':') => (RawKind::Generic, self.pop(2)),
-            b':' => self.lex_generic(1),
+            b':' | b'.' => self.lex_generic(1),
             _ => self.lex_generic(0),
         };
 
@@ -182,6 +182,7 @@ impl<'a> RawStream<'a> {
             c <= b' ' ||
             c >= 0x7f ||
             c == b':' ||
+            c == b'.' ||
             ASCII_SINGLETONS.contains(c)
         };
 
@@ -482,6 +483,24 @@ mod tests {
                 RawToken::new_generic(b"1", 0, 0, 0),
                 RawToken::new_generic(b"+", 2, 2, 0),
                 RawToken::new_generic(b"2", 5, 5, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_tuple_field() {
+        assert_eq!(
+            lexit(b"t.0"),
+            vec![
+                RawToken::new_generic(b"t", 0, 0, 0),
+                RawToken::new_generic(b".0", 1, 1, 0),
+            ]
+        );
+        assert_eq!(
+            lexit(b"tup.42"),
+            vec![
+                RawToken::new_generic(b"tup", 0, 0, 0),
+                RawToken::new_generic(b".42", 3, 3, 0),
             ]
         );
     }

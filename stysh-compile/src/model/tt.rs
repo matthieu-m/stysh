@@ -74,6 +74,8 @@ pub enum Kind {
     LitBoolTrue,
     /// An integral.
     LitIntegral,
+    /// The name of a field.
+    NameField,
     /// The name of a module.
     NameModule,
     /// The name of a type.

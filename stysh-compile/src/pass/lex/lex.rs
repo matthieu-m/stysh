@@ -244,6 +244,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
                     let peek = self.stream.peek();
                     self.parse_name_module_value(tok, peek)
                 },
+                b'.' => self.parse_name_field(tok),
                 b':' => self.parse_colon(tok),
                 b if SIMPLE_SIGNS.contains(b) => self.parse_sign(tok),
                 _ => panic!("parse_token not implemented for {}", tok),
@@ -271,9 +272,11 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 
-    fn parse_name_type(&self, tok: RawToken) -> Option<Token> {
+    fn parse_name_field(&self, tok: RawToken) -> Option<Token> {
         // TODO(matthieum): validate identifiers.
-        Some(Token::new(Kind::NameType, tok.offset, tok.raw.len()))
+        debug_assert!(tok.raw.len() > 1);
+
+        Some(Token::new(Kind::NameField, tok.offset, tok.raw.len()))
     }
 
     fn parse_name_module_value(&self, tok: RawToken, peek: Option<RawToken>) 
@@ -284,7 +287,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
 
         let kind = if followed_by_double_colon {
             Kind::NameModule
-        }else if tok.raw == b"false" {
+        } else if tok.raw == b"false" {
             Kind::LitBoolFalse
         } else if tok.raw == b"true" {
             Kind::LitBoolTrue
@@ -293,6 +296,11 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         };
 
         Some(Token::new(kind, tok.offset, tok.raw.len()))
+    }
+
+    fn parse_name_type(&self, tok: RawToken) -> Option<Token> {
+        // TODO(matthieum): validate identifiers.
+        Some(Token::new(Kind::NameType, tok.offset, tok.raw.len()))
     }
 
     fn parse_number(&self, tok: RawToken) -> Option<Token> {
@@ -707,6 +715,21 @@ mod tests {
                 ]),
             ]
         )
+    }
+
+    #[test]
+    fn lex_tuple_index() {
+        let global_arena = mem::Arena::new();
+
+        assert_eq!(
+            lexit(&global_arena, b"tup.42"),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::NameValue, 0, 3),
+                    Token::new(Kind::NameField, 3, 3),
+                ])
+            ]
+        );
     }
 
     fn lexit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> List<'g> {

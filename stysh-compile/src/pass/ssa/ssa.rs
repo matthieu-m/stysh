@@ -151,7 +151,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        let range = value.range;
+        let r = value.range;
 
         match value.expr {
             sem::Expr::ArgumentRef(id)
@@ -159,15 +159,17 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
             sem::Expr::BuiltinVal(val)
-                => self.convert_literal(current, val, range),
+                => self.convert_literal(current, val, r),
             sem::Expr::Call(callable, args)
-                => self.convert_call(current, callable, args, range),
+                => self.convert_call(current, callable, args, r),
             sem::Expr::Constructor(rec, args)
-                => self.convert_constructor(current, rec, args, range),
+                => self.convert_constructor(current, rec, args, r),
+            sem::Expr::FieldAccess(v, i)
+                => self.convert_field_access(current, value.type_, v, i, r),
             sem::Expr::If(cond, true_, false_)
-                => self.convert_if(current, cond, true_, false_, range),
+                => self.convert_if(current, cond, true_, false_, r),
             sem::Expr::Tuple(tuple)
-                => self.convert_tuple(current, value.type_, tuple, range),
+                => self.convert_tuple(current, value.type_, tuple, r),
             sem::Expr::VariableRef(id)
                 => self.convert_identifier(current, id),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
@@ -230,25 +232,6 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         current
     }
 
-    fn convert_constructor(
-        &mut self,
-        current: ProtoBlock<'g, 'local>,
-        rec: sem::RecordProto,
-        args: &[sem::Value<'g>],
-        range: com::Range,
-    )
-        -> ProtoBlock<'g, 'local>
-    {
-        let (mut current, arguments) =
-            self.convert_array_of_values(current, args);
-
-        current.push_instr(
-            sir::Instruction::New(sem::Type::Rec(rec), arguments, range)
-        );
-
-        current
-    }
-
     fn convert_call_shortcircuit(
         &mut self,
         current: ProtoBlock<'g, 'local>,
@@ -281,6 +264,45 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
         }
+    }
+
+    fn convert_constructor(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        rec: sem::RecordProto,
+        args: &[sem::Value<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let (mut current, arguments) =
+            self.convert_array_of_values(current, args);
+
+        current.push_instr(
+            sir::Instruction::New(sem::Type::Rec(rec), arguments, range)
+        );
+
+        current
+    }
+
+    fn convert_field_access(
+        &mut self,
+        current: ProtoBlock<'g, 'local>,
+        type_: sem::Type<'g>,
+        value: &'g sem::Value<'g>,
+        field: u16,
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let mut current = self.convert_value(current, value);
+        let value_id = current.last_value();
+
+        current.push_instr(
+            sir::Instruction::Field(type_, value_id, field, range)
+        );
+
+        current
     }
 
     fn convert_identifier(
@@ -618,6 +640,51 @@ mod tests {
                 "    $0 := load 2a ; 2@24",
                 "    $1 := new <4@5> ($0) ; 8@19",
                 "    return $1",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn record_field() {
+        //  ":rec Args(Int, Int);   Args(4, 42).1"
+        let global_arena = mem::Arena::new();
+
+        let basic_rec_prototype = RecordProto {
+            name: ItemIdentifier(range(5, 4)),
+            range: range(0, 20),
+            enum_: ItemIdentifier::unresolved(),
+        };
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: Type::Builtin(BuiltinType::Int),
+                    range: range(23, 13),
+                    expr: Expr::FieldAccess(
+                        &Value {
+                            type_: Type::Rec(basic_rec_prototype),
+                            range: range(23, 11),
+                            expr: Expr::Constructor(
+                                basic_rec_prototype,
+                                &[
+                                    lit_integral(4, 28, 2),
+                                    lit_integral(42, 31, 3),
+                                ]
+                            ),
+                        },
+                        1
+                    ),
+                },
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 4 ; 2@28",
+                "    $1 := load 2a ; 3@31",
+                "    $2 := new <4@5> ($0, $1) ; 11@23",
+                "    $3 := field 1 of $2 ; 13@23",
+                "    return $3",
                 ""
             ])
         );

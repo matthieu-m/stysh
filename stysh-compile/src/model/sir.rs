@@ -66,8 +66,10 @@ pub struct ValueId(u16);
 /// An instruction.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Instruction<'a> {
-    /// A built-in function call.
+    /// A function call.
     Call(sem::Callable<'a>, &'a [ValueId], com::Range),
+    /// A field load.
+    Field(sem::Type<'a>, ValueId, u16, com::Range),
     /// A value load.
     Load(sem::BuiltinValue<'a>, com::Range),
     /// A composite creation.
@@ -129,6 +131,7 @@ impl<'a> Instruction<'a> {
 
         match *self {
             Call(_, _, r) => r,
+            Field(_, _, _, r) => r,
             Load(_, r) => r,
             New(_, _, r) => r,
         }
@@ -140,6 +143,7 @@ impl<'a> Instruction<'a> {
 
         match *self {
             Call(fun, _, _) => fun.result_type(),
+            Field(type_, _, _, _) => type_,
             Load(builtin, _) => builtin.result_type(),
             New(type_, _, _) => type_,
         }
@@ -227,6 +231,7 @@ impl<'a, 'target> mem::CloneInto<'target> for Instruction<'a> {
                 mem::CloneInto::clone_into(a, arena),
                 r
             ),
+            Field(t, v, f, r) => Field(arena.intern(&t), v, f, r),
             Load(v, r) => Load(arena.intern(&v), r),
             New(t, a, r) => New(
                 arena.intern(&t),
@@ -311,6 +316,9 @@ impl<'a> std::fmt::Display for Instruction<'a> {
                     write!(f, "{}", v)?;
                 }
                 write!(f, ") ; {}", r)
+            },
+            Instruction::Field(_, val, i, r) => {
+                write!(f, "field {} of {} ; {}", i, val, r)
             },
             Instruction::Load(val, r) => {
                 write!(f, "load {} ; {}", val, r)

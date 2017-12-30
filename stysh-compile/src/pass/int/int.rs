@@ -171,6 +171,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
 
         match *instr {
             Call(fun, args, _) => self.eval_call(fun, args),
+            Field(_, value, index, _) => self.eval_field(value, index),
             Load(value, range) => self.load(value, range),
             New(type_, fields, range) => self.eval_new(type_, fields, range),
         }
@@ -190,6 +191,20 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         -> sem::Value<'local>
     {
         self.eval_binary_fun(fun, args)
+    }
+
+    fn eval_field(&self, value: sir::ValueId, index: u16)
+        -> sem::Value<'local>
+    {
+        use self::sem::Expr::*;
+
+        let index = index as usize;
+
+        match self.get_value(value).expr {
+            Constructor(_, fields) => self.arena.intern(&fields[index]),
+            Tuple(tup) => self.arena.intern(&tup.fields[index]),
+            _ => unreachable!(),
+        }
     }
 
     fn eval_function(
@@ -531,6 +546,37 @@ mod tests {
     }
 
     #[test]
+    fn record_field() {
+        let global_arena = mem::Arena::new();
+
+        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let rec = sem::Type::Rec(sem::RecordProto {
+            name: sem::ItemIdentifier(range(5, 4)),
+            range: range(0, 20),
+            enum_: sem::ItemIdentifier::unresolved(),
+        });
+
+        assert_eq!(
+            eval(
+                &global_arena,
+                &[],
+                &sir::ControlFlowGraph {
+                    blocks: &[block_return(
+                        &[],
+                        &[
+                            instr_load_int(4),
+                            instr_load_int(42),
+                            instr_new(rec, &[val_instr(0), val_instr(1)]),
+                            instr_field(int, val_instr(2), 1)
+                        ]
+                    )]
+                }
+            ),
+            sem_int(42)
+        );
+    }
+
+    #[test]
     fn return_helloworld() {
         let global_arena = mem::Arena::new();
 
@@ -612,6 +658,12 @@ mod tests {
         -> sir::Instruction<'a>
     {
         sir::Instruction::Call(sem::Callable::Builtin(fun), args, range(0, 0))
+    }
+
+    fn instr_field<'a>(type_: sem::Type<'a>, value: sir::ValueId, index: u16)
+        -> sir::Instruction<'a>
+    {
+        sir::Instruction::Field(type_, value, index, range(0, 0))
     }
 
     fn instr_load_bool(value: bool) -> sir::Instruction<'static> {

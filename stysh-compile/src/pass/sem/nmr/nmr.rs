@@ -132,7 +132,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             FieldAccess(f) => self.value_of_field(f),
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
-            Lit(lit, range) => self.value_of_literal(lit, range),
+            Lit(lit) => self.value_of_literal(lit),
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, expr.range()),
             Tuple(t) => self.value_of_tuple(&t),
@@ -322,14 +322,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal(&mut self, lit: syn::Literal, range: com::Range)
+    fn value_of_literal(&mut self, lit: syn::Literal)
         -> sem::Value<'g>
     {
         match lit {
-            syn::Literal::Bool(b) => self.value_of_literal_bool(b, range),
-            syn::Literal::Bytes(b) => self.value_of_literal_bytes(b, range),
-            syn::Literal::Integral => self.value_of_literal_integral(range),
-            syn::Literal::String(s) => self.value_of_literal_string(s, range),
+            syn::Literal::Bool(b, r) => self.value_of_literal_bool(b, r),
+            syn::Literal::Bytes(b, r) => self.value_of_literal_bytes(b, r),
+            syn::Literal::Integral(r) => self.value_of_literal_integral(r),
+            syn::Literal::String(s, r) => self.value_of_literal_string(s, r),
         }
     }
 
@@ -620,6 +620,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 mod tests {
     use basic::{com, mem};
     use model::syn;
+    use model::syn_builder::Factory as SynFactory;
     use model::sem::*;
     use model::sem::mocks::MockRegistry;
     use super::super::scp::mocks::MockScope;
@@ -627,28 +628,17 @@ mod tests {
     #[test]
     fn value_basic_add() {
         let global_arena = mem::Arena::new();
+        let e = SynFactory::new(&global_arena).expr();
         let env = Env::new(b"1 + 2", &global_arena);
 
-        let (left_range, right_range) = (range(0, 1), range(4, 1));
-
-        let left_hand = lit_integral(left_range);
-        let right_hand = lit_integral(right_range);
-
-        let expr = syn::Expression::BinOp(
-            syn::BinaryOperator::Plus,
-            2,
-            &left_hand,
-            &right_hand,
-        );
-
         assert_eq!(
-            env.value_of(&expr),
+            env.value_of(&e.bin_op(e.int(0, 1), e.int(4, 1)).build()),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 5),
                 expr: Expr::Call(
                     Callable::Builtin(BuiltinFunction::Add),
-                    &[ int(1, left_range), int(2, right_range) ],
+                    &[ int(1, range(0, 1)), int(2, range(4, 1)) ],
                 )
             }
         );
@@ -657,12 +647,11 @@ mod tests {
     #[test]
     fn value_basic_boolean() {
         let global_arena = mem::Arena::new();
+        let e = SynFactory::new(&global_arena).expr();
         let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
-            env.value_of(
-                &syn::Expression::Lit(syn::Literal::Bool(true), range(0, 4))
-            ),
+            env.value_of(&e.bool_(0, 4)),
             boolean(true, range(0, 4))
         );
     }
@@ -670,6 +659,7 @@ mod tests {
     #[test]
     fn value_basic_constructor() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let mut env = Env::new(b"Rec", &global_arena);
 
         let registered = ItemIdentifier(range(0, 3));
@@ -683,10 +673,7 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::Constructor(syn::Constructor {
-                    type_: syn::Type::Simple(syn::TypeIdentifier(registered.0)),
-                    arguments: Default::default()
-                }),
+                &syn.expr().constructor(syn.type_().simple(0, 3)).build()
             ),
             rec(basic_rec_prototype, &[], range(0, 3))
         );
@@ -695,9 +682,9 @@ mod tests {
     #[test]
     fn value_basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
         let mut env = Env::new(b"Rec(1)", &global_arena);
-
-        let arg = range(4, 1);
 
         let registered = ItemIdentifier(range(0, 3));
         let basic_rec_prototype = RecordProto {
@@ -710,28 +697,22 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::Constructor(syn::Constructor {
-                    type_: syn::Type::Simple(
-                        syn::TypeIdentifier(registered.0)
-                    ),
-                    arguments: syn::Tuple {
-                        fields: &[ lit_integral(arg) ],
-                        commas: &[],
-                        open: 3,
-                        close: 5,
-                    },
-                }),
+                &e.constructor(syn.type_().simple(0, 3))
+                    .parens(3, 5)
+                    .push_argument(e.int(4, 1))
+                    .build()
             ),
-            rec(basic_rec_prototype, &[ int(1, arg) ], range(0, 6))
+            rec(basic_rec_prototype, &[ int(1, range(4, 1)) ], range(0, 6))
         );
     }
 
     #[test]
     fn value_basic_record_field_access() {
         let global_arena = mem::Arena::new();
-        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
 
-        let registered = range(15, 3);
+        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
 
         let record = env.insert_record(
             RecordProto {
@@ -740,33 +721,27 @@ mod tests {
                 enum_: ItemIdentifier::unresolved(),
             },
             &[Type::Builtin(BuiltinType::Int)],
-            &[registered],
+            &[range(15, 3)],
         );
-
-        let arg = range(19, 2);
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::FieldAccess(syn::FieldAccess {
-                    accessed: &syn::Expression::Constructor(syn::Constructor {
-                        type_: syn::Type::Simple(
-                            syn::TypeIdentifier(registered)
-                        ),
-                        arguments: syn::Tuple {
-                            fields: &[ lit_integral(arg) ],
-                            commas: &[],
-                            open: 18,
-                            close: 21,
-                        },
-                    }),
-                    field: syn::FieldIdentifier(range(22, 2)),
-                }),
+                &e.field_access(
+                    e.constructor(syn.type_().simple(15, 3))
+                        .parens(18, 21)
+                        .push_argument(e.int(19, 2))
+                        .build(),
+                ).build()
             ),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(15, 9),
                 expr: Expr::FieldAccess(
-                    &rec(*record.prototype, &[ int(42, arg) ], range(15, 7)),
+                    &rec(
+                        *record.prototype,
+                        &[ int(42, range(19, 2)) ],
+                        range(15, 7)
+                    ),
                     0
                 )
             }
@@ -778,21 +753,17 @@ mod tests {
         let int_type = Type::Builtin(BuiltinType::Int);
 
         let global_arena = mem::Arena::new();
+        let e = SynFactory::new(&global_arena).expr();
+
         let env = Env::new(b"(42, 43).1", &global_arena);
 
         let (arg0, arg1) = (range(1, 2), range(5, 2));
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::FieldAccess(syn::FieldAccess {
-                    accessed: &syn::Expression::Tuple(syn::Tuple {
-                        fields: &[ lit_integral(arg0), lit_integral(arg1) ],
-                        commas: &[ 3 ],
-                        open: 0,
-                        close: 7,
-                    }),
-                    field: syn::FieldIdentifier(range(8, 2)),
-                }),
+                &e.field_access(
+                    e.tuple().push(e.int(1, 2)).push(e.int(5, 2)).build(),
+                ).build()
             ),
             Value {
                 type_: int_type,
@@ -816,6 +787,9 @@ mod tests {
     #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
             &global_arena
@@ -831,16 +805,9 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::Constructor(syn::Constructor {
-                    type_: syn::Type::Nested(
-                        syn::TypeIdentifier(range(38, 4)),
-                        syn::Path {
-                            components: &[syn::TypeIdentifier(range(30, 6))],
-                            colons: &[36],
-                        },
-                    ),
-                    arguments: Default::default(),
-                }),
+                &e.constructor(
+                    syn.type_().nested(38, 4).push(30, 6).build()
+                ).build()
             ),
             rec(*rec_prototype, &[], range(30, 12))
         );
@@ -849,10 +816,9 @@ mod tests {
     #[test]
     fn value_basic_call() {
         let global_arena = mem::Arena::new();
-        let mut env = Env::new(b"basic(1, 2)", &global_arena);
+        let e = SynFactory::new(&global_arena).expr();
 
-        let fragment_range = range(0, 5);
-        let (arg0, arg1) = (range(6, 1), range(9, 1));
+        let mut env = Env::new(b"basic(1, 2)", &global_arena);
 
         let registered = ItemIdentifier(range(42, 5));
         let basic_fun_prototype = FunctionProto {
@@ -863,28 +829,23 @@ mod tests {
         };
 
         env.scope.callables.insert(
-            ValueIdentifier(fragment_range),
+            ValueIdentifier(range(0, 5)),
             Callable::Function(basic_fun_prototype),
         );
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::FunctionCall(syn::FunctionCall {
-                    function: &var(fragment_range),
-                    arguments: syn::Tuple {
-                        fields: &[ lit_integral(arg0), lit_integral(arg1), ],
-                        commas: &[7, 9],
-                        open: 5,
-                        close: 10,
-                    },
-                }),
+                &e.function_call(e.var(0, 5), 5, 10)
+                    .push_argument(e.int(6, 1))
+                    .push_argument(e.int(9, 1))
+                    .build()
             ),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 11),
                 expr: Expr::Call(
                     Callable::Function(basic_fun_prototype),
-                    &[ int(1, arg0), int(2, arg1), ]
+                    &[ int(1, range(6, 1)), int(2, range(9, 1)), ]
                 )
             }
         )
@@ -893,37 +854,25 @@ mod tests {
     #[test]
     fn value_basic_if_else() {
         let global_arena = mem::Arena::new();
-        let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
+        let e = SynFactory::new(&global_arena).expr();
 
-        let condition_range = range(0, 4);
-        let true_branch_range = range(9, 5);
-        let false_branch_range = range(21, 5);
+        let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::If(syn::IfElse {
-                    condition: &lit_boolean(true, condition_range),
-                    true_expr: &syn::Expression::Block(
-                        &[],
-                        &lit_integral(range(11, 1)),
-                        true_branch_range
-                    ),
-                    false_expr: &syn::Expression::Block(
-                        &[],
-                        &lit_integral(range(23, 1)),
-                        false_branch_range
-                    ),
-                    if_: 0,
-                    else_: 15,
-                })
+                &e.if_else(
+                    e.bool_(4, 4),
+                    e.block(e.int(11, 1)).build(),
+                    e.block(e.int(23, 1)).build(),
+                ).build()
             ),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
                 range: range(0, 26),
                 expr: Expr::If(
-                    &boolean(true, condition_range),
-                    &block(&int(1, range(11, 1)), true_branch_range),
-                    &block(&int(0, range(23, 1)), false_branch_range),
+                    &boolean(true, range(4, 4)),
+                    &block(&int(1, range(11, 1)), range(9, 5)),
+                    &block(&int(0, range(23, 1)), range(21, 5)),
                 )
             }
         )
@@ -931,22 +880,13 @@ mod tests {
 
     #[test]
     fn value_basic_helloworld() {
-        use model::tt;
-
         let global_arena = mem::Arena::new();
+        let e = SynFactory::new(&global_arena).expr();
+
         let env = Env::new(b"'Hello, World!'", &global_arena);
 
         assert_eq!(
-            env.value_of(
-                &syn::Expression::Lit(
-                    syn::Literal::String(&[
-                        tt::StringFragment::Text(
-                            tt::Token::new(tt::Kind::StringText, 1, 13)
-                        ),
-                    ]),
-                    range(0, 15)
-                )
-            ),
+            env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
             Value {
                 type_: Type::Builtin(BuiltinType::String),
                 range: range(0, 15),
@@ -960,58 +900,34 @@ mod tests {
     #[test]
     fn value_basic_var() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let s = syn.stmt();
+
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
-        let complete_range = range(0, 35);
         let (a, b) = (range(7, 1), range(20, 1));
-        let (a_lit, b_lit) = (range(12, 1), range(25, 1));
-        let (a_ref, b_ref) = (range(28, 1), range(32, 1));
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::Block(
-                    &[
-                        syn::Statement::Var(syn::VariableBinding {
-                            name: syn::VariableIdentifier(a),
-                            type_: None,
-                            expr: lit_integral(a_lit),
-                            var: 2,
-                            colon: 0,
-                            bind: 9,
-                            semi: 13,
-                        }),
-                        syn::Statement::Var(syn::VariableBinding {
-                            name: syn::VariableIdentifier(b),
-                            type_: None,
-                            expr: lit_integral(b_lit),
-                            var: 15,
-                            colon: 0,
-                            bind: 22,
-                            semi: 26,
-                        }),
-                    ],
-                    &syn::Expression::BinOp(
-                        syn::BinaryOperator::Plus,
-                        30,
-                        &var(a_ref),
-                        &var(b_ref),
-                    ),
-                    complete_range
-                )
+                &e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
+                    .push_stmt(s.var(7, 1, e.int(12, 1)).build())
+                    .push_stmt(s.var(20, 1, e.int(25, 1)).build())
+                    .build()
             ),
             Value {
                 type_: Type::Builtin(BuiltinType::Int),
-                range: complete_range,
+                range: range(0, 35),
                 expr: Expr::Block(
                     &[
                         Stmt::Var(Binding::Variable(
                             ValueIdentifier(a),
-                            int(1, a_lit),
+                            int(1, range(12, 1)),
                             range(2, 12)
                         )),
                         Stmt::Var(Binding::Variable(
                             ValueIdentifier(b),
-                            int(2, b_lit),
+                            int(2, range(25, 1)),
                             range(15, 12)
                         )),
                     ],
@@ -1020,7 +936,7 @@ mod tests {
                         range: range(28, 5),
                         expr: Expr::Call(
                             Callable::Builtin(BuiltinFunction::Add),
-                            &[ int_ref(a, a_ref), int_ref(b, b_ref) ]
+                            &[ int_ref(a, range(28, 1)), int_ref(b, range(32, 1)) ]
                         ),
                     }
                 )
@@ -1031,6 +947,10 @@ mod tests {
     #[test]
     fn value_implicit_cast_to_enum() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let ty = syn.type_();
+
         let mut env = Env::new(
             b":enum B { T, F } :if true { B::T } else { B::F }", 
             &global_arena
@@ -1057,39 +977,17 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn::Expression::If(syn::IfElse {
-                    condition: &lit_boolean(true, range(21, 4)),
-                    true_expr: &syn::Expression::Block(
-                        &[],
-                        &syn::Expression::Constructor(syn::Constructor {
-                            type_: syn::Type::Nested(
-                                syn::TypeIdentifier(range(31, 1)),
-                                syn::Path {
-                                    components: &[syn::TypeIdentifier(range(28, 1))],
-                                    colons: &[29],
-                                },
-                            ),
-                            arguments: Default::default(),
-                        }),
-                        range(26, 8)
-                    ),
-                    false_expr: &syn::Expression::Block(
-                        &[],
-                        &syn::Expression::Constructor(syn::Constructor {
-                            type_: syn::Type::Nested(
-                                syn::TypeIdentifier(range(45, 1)),
-                                syn::Path {
-                                    components: &[syn::TypeIdentifier(range(42, 1))],
-                                    colons: &[43],
-                                },
-                            ),
-                            arguments: Default::default(),
-                        }),
-                        range(40, 8)
-                    ),
-                    if_: 17,
-                    else_: 35,
-                })
+                &e.if_else(
+                    e.bool_(21, 4),
+                    e.block(
+                        e.constructor(ty.nested(31, 1).push(28, 1).build())
+                            .build(),
+                    ).build(),
+                    e.block(
+                        e.constructor(ty.nested(45, 1).push(42, 1).build())
+                            .build(),
+                    ).build(),
+                ).build()
             ),
             Value {
                 type_: Type::Enum(*b.prototype),
@@ -1202,18 +1100,6 @@ mod tests {
 
             enum_
         }
-    }
-
-    fn lit_boolean(value: bool, range: com::Range) -> syn::Expression<'static> {
-        syn::Expression::Lit(syn::Literal::Bool(value), range)
-    }
-
-    fn lit_integral(range: com::Range) -> syn::Expression<'static> {
-        syn::Expression::Lit(syn::Literal::Integral, range)
-    }
-
-    fn var(range: com::Range) -> syn::Expression<'static> {
-        syn::Expression::Var(syn::VariableIdentifier(range))
     }
 
     fn block<'a>(value: &'a Value<'a>, range: com::Range) -> Value<'a> {

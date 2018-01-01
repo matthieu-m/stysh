@@ -99,7 +99,8 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             let type_ = typ::parse_type(&mut raw);
 
             let comma = raw.pop_kind(SignComma)
-                .map(|t| t.offset() as u32).unwrap_or(0);
+                .map(|t| t.offset() as u32)
+                .unwrap_or(type_.range().end_offset() as u32 - 1);
 
             buffer.push(Argument {
                 name: VariableIdentifier(name.range()),
@@ -122,86 +123,46 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
+    use basic::mem;
     use model::syn::*;
+    use model::syn_builder::Factory;
 
     #[test]
     fn basic_argument_less() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
 
         assert_eq!(
             funit(&global_arena, b":fun add() -> Int { 1 + 2 }"),
-            Function {
-                name: VariableIdentifier(range(5, 3)),
-                arguments: &[],
-                result: Type::Simple(TypeIdentifier(range(14, 3))),
-                body: Expression::Block(
-                    &[],
-                    &Expression::BinOp(
-                        BinaryOperator::Plus,
-                        22,
-                        &Expression::Lit(
-                            Literal::Integral,
-                            range(20, 1)
-                        ),
-                        &Expression::Lit(
-                            Literal::Integral,
-                            range(24, 1)
-                        ),
-                    ),
-                    range(18, 9),
-                ),
-                keyword: 0,
-                open: 8,
-                close: 9,
-                arrow: 11,
-            }
+            syn.item().function(
+                5,
+                3,
+                syn.type_().simple(14, 3),
+                e.block(e.bin_op(e.int(20, 1), e.int(24, 1)).build()).build(),
+            ).build()
         );
     }
 
     #[test]
     fn basic_add() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
+        let t = syn.type_();
 
         assert_eq!(
             funit(&global_arena, b":fun add(a: Int, b: Int) -> Int { a + b }"),
-            Function {
-                name: VariableIdentifier(range(5, 3)),
-                arguments: &[
-                    Argument {
-                        name: VariableIdentifier(range(9, 1)),
-                        type_: Type::Simple(TypeIdentifier(range(12, 3))),
-                        colon: 10,
-                        comma: 15,
-                    },
-                    Argument {
-                        name: VariableIdentifier(range(17, 1)),
-                        type_: Type::Simple(TypeIdentifier(range(20, 3))),
-                        colon: 18,
-                        comma: 0,
-                    }
-                ],
-                result: Type::Simple(TypeIdentifier(range(28, 3))),
-                body: Expression::Block(
-                    &[],
-                    &Expression::BinOp(
-                        BinaryOperator::Plus,
-                        36,
-                        &Expression::Var( VariableIdentifier(range(34, 1)) ),
-                        &Expression::Var( VariableIdentifier(range(38, 1)) ),
-                    ),
-                    range(32, 9),
-                ),
-                keyword: 0,
-                open: 8,
-                close: 23,
-                arrow: 25,
-            }
+            syn.item().function(
+                5,
+                3,
+                syn.type_().simple(28, 3),
+                e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
+            )
+            .push_argument(9, 1, t.simple(12, 3))
+            .push_argument(17, 1, t.simple(20, 3))
+            .build()
         );
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
     }
 
     fn funit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Function<'g> {

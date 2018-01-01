@@ -141,7 +141,8 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
 
         match (variant, semi) {
             (Some(variant), Some(semi)) => Some((variant, semi)),
-            (Some(variant), None) => Some((variant, 0)),
+            (Some(variant), None)
+                => Some((variant, variant.range().end_offset() as u32 - 1)),
             (None, Some(semi)) => Some((
                 InnerRecord::Missing(com::Range::new(semi as usize, 0)),
                 semi
@@ -267,252 +268,186 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
+    use basic::mem;
     use model::syn::*;
+    use model::syn_builder::Factory;
 
     #[test]
     fn enum_empty() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let i = Factory::new(&global_arena).item();
 
         assert_eq!(
-            enumit(&global, b":enum Empty {}"),
-            Enum {
-                name: typeid(6, 5),
-                variants: &[],
-                keyword: 0,
-                open: 12,
-                close: 13,
-                commas: &[]
-            }
+            enumit(&global_arena, b":enum Empty {}"),
+            i.enum_(6, 5).braces(12, 13).build()
         );
     }
 
     #[test]
     fn enum_unit_single() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let i = Factory::new(&global_arena).item();
 
         assert_eq!(
-            enumit(&global, b":enum Simple { First }"),
-            Enum {
-                name: typeid(6, 6),
-                variants: &[ InnerRecord::Unit(typeid(15, 5)) ],
-                keyword: 0,
-                open: 13,
-                close: 21,
-                commas: &[ 0 ]
-            }
+            enumit(&global_arena, b":enum Simple { First }"),
+            i.enum_(6, 6).push_unit(15, 5).build()
         );
 
         assert_eq!(
-            enumit(&global, b":enum Simple { First ,}"),
-            Enum {
-                name: typeid(6, 6),
-                variants: &[ InnerRecord::Unit(typeid(15, 5)) ],
-                keyword: 0,
-                open: 13,
-                close: 22,
-                commas: &[ 21 ]
-            }
+            enumit(&global_arena, b":enum Simple { First ,}"),
+            i.enum_(6, 6).braces(13, 22).push_unit(15, 5).comma(21).build()
         );
     }
 
     #[test]
     fn enum_unit_multiple() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let i = Factory::new(&global_arena).item();
 
         assert_eq!(
-            enumit(&global, b":enum Simple { First, Second, Third }"),
-            Enum {
-                name: typeid(6, 6),
-                variants: &[
-                    InnerRecord::Unit(typeid(15, 5)),
-                    InnerRecord::Unit(typeid(22, 6)),
-                    InnerRecord::Unit(typeid(30, 5)),
-                ],
-                keyword: 0,
-                open: 13,
-                close: 36,
-                commas: &[ 20, 28, 0 ]
-            }
+            enumit(&global_arena, b":enum Simple { First, Second, Third }"),
+            i.enum_(6, 6)
+                .push_unit(15, 5)
+                .push_unit(22, 6)
+                .push_unit(30, 5)
+                .build()
         );
     }
 
     #[test]
     fn rec_tuple() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let i = syn.item();
+        let t = syn.type_();
 
         assert_eq!(
-            recit(&global, b":rec Tup(Int, String);"),
-            Record {
-                inner: InnerRecord::Tuple(
-                    typeid(5, 3),
-                    Tuple {
-                        fields: &[simple_type(9, 3), simple_type(14, 6)],
-                        commas: &[12, 19],
-                        open: 8,
-                        close: 20,
-                    }
-                ),
-                keyword: 0,
-                semi_colon: 21,
-            }
+            recit(&global_arena, b":rec Tup(Int, String);"),
+            i.record(5, 3).tuple(
+                syn.type_tuple()
+                    .push(t.simple(9, 3))
+                    .push(t.simple(14, 6))
+                    .build()
+            ).build()
         );
     }
 
     #[test]
     fn rec_unit() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let i = Factory::new(&global_arena).item();
 
         assert_eq!(
-            recit(&global, b":rec Simple;"),
-            Record {
-                inner: InnerRecord::Unit(typeid(5, 6)),
-                keyword: 0,
-                semi_colon: 11,
-            }
+            recit(&global_arena, b":rec Simple;"),
+            i.record(5, 6).build()
         );
     }
 
     #[test]
     fn type_simple() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"Int"),
-            Type::Simple(typeid(0, 3))
+            typeit(&global_arena, b"Int"),
+            t.simple(0, 3)
         );
     }
 
     #[test]
     fn type_nested() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"Enum::Variant"),
-            Type::Nested(
-                typeid(6, 7),
-                Path {
-                    components: &[typeid(0, 4)],
-                    colons: &[4],
-                },
-            )
+            typeit(&global_arena, b"Enum::Variant"),
+            t.nested(6, 7).push(0, 4).build()
         );
 
         assert_eq!(
-            typeit(&global, b"Enum::Other::Variant"),
-            Type::Nested(
-                typeid(13, 7),
-                Path {
-                    components: &[typeid(0, 4), typeid(6, 5)],
-                    colons: &[4, 11],
-                },
-            )
+            typeit(&global_arena, b"Enum::Other::Variant"),
+            t.nested(13, 7).push(0, 4).push(6, 5).build()
         );
     }
 
     #[test]
     fn tuple_unit() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"()"),
-            Type::Tuple(Tuple {
-                fields: &[],
-                commas: &[],
-                open: 0,
-                close: 1,
-            })
+            typeit(&global_arena, b"()"),
+            t.tuple().parens(0, 1).build()
         );
 
         assert_eq!(
-            typeit(&global, b"( )"),
-            Type::Tuple(Tuple {
-                fields: &[],
-                commas: &[],
-                open: 0,
-                close: 2,
-            })
+            typeit(&global_arena, b"( )"),
+            t.tuple().parens(0, 2).build()
         );
     }
 
     #[test]
     fn tuple_simple() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"(Int)"),
-            Type::Tuple(Tuple {
-                fields: &[simple_type(1, 3)],
-                commas: &[3],
-                open: 0,
-                close: 4,
-            })
+            typeit(&global_arena, b"(Int)"),
+            t.tuple().push(t.simple(1, 3)).build()
         );
 
         assert_eq!(
-            typeit(&global, b"(Int,)"),
-            Type::Tuple(Tuple {
-                fields: &[simple_type(1, 3)],
-                commas: &[4],
-                open: 0,
-                close: 5,
-            })
+            typeit(&global_arena, b"(Int,)"),
+            t.tuple().push(t.simple(1, 3)).comma(4).build()
         );
     }
 
     #[test]
     fn tuple_few() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"(Int,Int ,Int)"),
-            Type::Tuple(Tuple {
-                fields: &[
-                    simple_type(1, 3),
-                    simple_type(5, 3),
-                    simple_type(10, 3)
-                ],
-                commas: &[4, 9, 12],
-                open: 0,
-                close: 13,
-            })
+            typeit(&global_arena, b"(Int,Int ,Int)"),
+            t.tuple()
+                .push(t.simple(1, 3))
+                .push(t.simple(5, 3))
+                .comma(9)
+                .push(t.simple(10, 3))
+                .build()
         );
 
         assert_eq!(
-            typeit(&global, b" ( Int , Int, Int , )"),
-            Type::Tuple(Tuple {
-                fields: &[
-                    simple_type(3, 3),
-                    simple_type(9, 3),
-                    simple_type(14, 3)
-                ],
-                commas: &[7, 12, 18],
-                open: 1,
-                close: 20,
-            })
+            typeit(&global_arena, b" ( Int , Int, Int , )"),
+            t.tuple()
+                .parens(1, 20)
+                .push(t.simple(3, 3))
+                .comma(7)
+                .push(t.simple(9, 3))
+                .push(t.simple(14, 3))
+                .comma(18)
+                .build()
         );
     }
 
     #[test]
     fn tuple_nested() {
-        let global = mem::Arena::new();
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
 
         assert_eq!(
-            typeit(&global, b"((Int, Int), Int, )"),
-            Type::Tuple(Tuple {
-                fields: &[
-                    Type::Tuple(Tuple {
-                        fields: &[simple_type(2, 3), simple_type(7, 3)],
-                        commas: &[5, 9],
-                        open: 1,
-                        close: 10,
-                    }),
-                    simple_type(13, 3),
-                ],
-                commas: &[11, 16],
-                open: 0,
-                close: 18,
-            })
+            typeit(&global_arena, b"((Int, Int), Int, )"),
+            t.tuple()
+                .parens(0, 18)
+                .push(
+                    t.tuple()
+                        .push(t.simple(2, 3))
+                        .push(t.simple(7, 3))
+                        .build(),
+                )
+                .push(t.simple(13, 3))
+                .comma(16)
+                .build()
         );
     }
 
@@ -556,17 +491,5 @@ mod tests {
         local_arena.recycle();
 
         t
-    }
-
-    fn simple_type(offset: usize, length: usize) -> Type<'static> {
-        Type::Simple(typeid(offset, length))
-    }
-
-    fn typeid(offset: usize, length: usize) -> TypeIdentifier {
-        TypeIdentifier(range(offset, length))
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
     }
 }

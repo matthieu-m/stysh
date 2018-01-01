@@ -231,29 +231,24 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 mod tests {
     use basic::{com, mem};
     use model::syn;
+    use model::syn_builder::Factory as SynFactory;
     use model::sem::*;
     use model::sem::mocks::MockRegistry;
     use super::scp::mocks::MockScope;
 
     #[test]
     fn prototype_enum() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
-            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
-        }
-
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         assert_eq!(
             env.proto_of(
-                &syn::Item::Enum(syn::Enum {
-                    name: syn::TypeIdentifier(range(6, 6)),
-                    variants: &[unit(15, 3), unit(20, 3)],
-                    keyword: 0,
-                    open: 13,
-                    close: 24,
-                    commas: &[18, 0],
-                }),
+                &syn.item()
+                    .enum_(6, 6)
+                    .push_unit(15, 3)
+                    .push_unit(20, 3)
+                    .build(),
             ),
             Prototype::Enum(EnumProto {
                 name: ItemIdentifier(range(6, 6)),
@@ -264,15 +259,12 @@ mod tests {
 
     #[test]
     fn item_enum() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
-            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
-        }
-
         fn item_id(offset: usize, length: usize) -> ItemIdentifier {
             ItemIdentifier(range(offset, length))
         }
 
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let enum_prototype = EnumProto {
@@ -283,14 +275,11 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Enum(enum_prototype),
-                &syn::Item::Enum(syn::Enum {
-                    name: syn::TypeIdentifier(range(6, 6)),
-                    variants: &[unit(15, 3), unit(20, 3)],
-                    keyword: 0,
-                    open: 13,
-                    close: 24,
-                    commas: &[18, 0],
-                }),
+                &syn.item()
+                    .enum_(6, 6)
+                    .push_unit(15, 3)
+                    .push_unit(20, 3)
+                    .build(),
             ),
             Item::Enum(Enum {
                 prototype: &enum_prototype,
@@ -318,21 +307,12 @@ mod tests {
 
     #[test]
     fn prototype_rec() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
-            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
-        }
-
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Simple;", &global_arena);
 
         assert_eq!(
-            env.proto_of(
-                &syn::Item::Rec(syn::Record {
-                    inner: unit(5, 6),
-                    keyword: 0,
-                    semi_colon: 11,
-                }),
-            ),
+            env.proto_of(&syn.item().record(5, 6).build()),
             Prototype::Rec(RecordProto {
                 name: ItemIdentifier(range(5, 6)),
                 range: range(0, 12),
@@ -343,15 +323,12 @@ mod tests {
 
     #[test]
     fn item_rec_unit() {
-        fn unit(offset: usize, length: usize) -> syn::InnerRecord<'static> {
-            syn::InnerRecord::Unit(syn::TypeIdentifier(range(offset, length)))
-        }
-
         fn item_id(offset: usize, length: usize) -> ItemIdentifier {
             ItemIdentifier(range(offset, length))
         }
 
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let rec_prototype = RecordProto {
@@ -363,11 +340,7 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Rec(rec_prototype),
-                &syn::Item::Rec(syn::Record {
-                    inner: unit(5, 6),
-                    keyword: 0,
-                    semi_colon: 11,
-                }),
+                &syn.item().record(5, 6).build(),
             ),
             Item::Rec(Record {
                  prototype: &rec_prototype,
@@ -378,19 +351,12 @@ mod tests {
 
     #[test]
     fn item_rec_tuple() {
-        fn simple_type(offset: usize, length: usize) -> syn::Type<'static> {
-            syn::Type::Simple(type_id(offset, length))
-        }
-
-        fn type_id(offset: usize, length: usize) -> syn::TypeIdentifier {
-            syn::TypeIdentifier(range(offset, length))
-        }
-
         fn item_id(offset: usize, length: usize) -> ItemIdentifier {
             ItemIdentifier(range(offset, length))
         }
 
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
         let rec_prototype = RecordProto {
@@ -402,19 +368,14 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Rec(rec_prototype),
-                &syn::Item::Rec(syn::Record {
-                    inner: syn::InnerRecord::Tuple(
-                        type_id(5, 3),
-                        syn::Tuple {
-                            fields: &[simple_type(9, 3), simple_type(14, 6)],
-                            commas: &[12, 19],
-                            open: 8,
-                            close: 20,
-                        }
-                    ),
-                    keyword: 0,
-                    semi_colon: 21,
-                }),
+                &syn.item()
+                    .record(5, 3)
+                    .tuple(
+                        syn.type_tuple()
+                            .push(syn.type_().simple(9, 3))
+                            .push(syn.type_().simple(14, 6))
+                            .build()
+                    ).build(),
             ),
             Item::Rec(Record {
                  prototype: &rec_prototype,
@@ -429,6 +390,9 @@ mod tests {
     #[test]
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let t = syn.type_();
+
         let env = Env::new(
             b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
             &global_arena
@@ -437,33 +401,15 @@ mod tests {
 
         assert_eq!(
             env.proto_of(
-                &syn::Item::Fun(
-                    syn::Function {
-                        name: syn::VariableIdentifier(range(5, 3)),
-                        arguments: &[
-                            syn::Argument {
-                                name: syn::VariableIdentifier(range(9, 1)),
-                                type_: type_simple(12, 3),
-                                colon: 10,
-                                comma: 15,
-                            },
-                            syn::Argument {
-                                name: syn::VariableIdentifier(range(17, 1)),
-                                type_: type_simple(20, 3),
-                                colon: 18,
-                                comma: 0,
-                            }
-                        ],
-                        result: type_simple(28, 3),
-                        body: syn::Expression::Var(
-                            syn::VariableIdentifier(range(0, 0))
-                        ),
-                        keyword: 0,
-                        open: 0,
-                        close: 0,
-                        arrow: 0,
-                    }
+                &syn.item().function(
+                    5,
+                    3,
+                    t.simple(28, 3),
+                    syn.expr().var(0, 0),
                 )
+                .push_argument(9, 1, t.simple(12, 3))
+                .push_argument(17, 1, t.simple(20, 3))
+                .build()
             ),
             Prototype::Fun(
                 FunctionProto {
@@ -490,6 +436,10 @@ mod tests {
     #[test]
     fn item_fun() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let t = syn.type_();
+
         let env = Env::new(
             b":fun add(a: Int, b: Int) -> Int { a + b }",
             &global_arena,
@@ -513,44 +463,16 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &prototype,
-                &syn::Item::Fun(
-                    syn::Function {
-                        name: syn::VariableIdentifier(range(5, 3)),
-                        arguments: &[
-                            syn::Argument {
-                                name: syn::VariableIdentifier(range(9, 1)),
-                                type_: type_simple(12, 3),
-                                colon: 10,
-                                comma: 15,
-                            },
-                            syn::Argument {
-                                name: syn::VariableIdentifier(range(17, 1)),
-                                type_: type_simple(20, 3),
-                                colon: 18,
-                                comma: 0,
-                            }
-                        ],
-                        result: type_simple(28, 3),
-                        body: syn::Expression::Block(
-                            &[],
-                            &syn::Expression::BinOp(
-                                syn::BinaryOperator::Plus,
-                                36,
-                                &syn::Expression::Var(
-                                    syn::VariableIdentifier(range(34, 1))
-                                ),
-                                &syn::Expression::Var(
-                                    syn::VariableIdentifier(range(38, 1))
-                                ),
-                            ),
-                            range(32, 9),
-                        ),
-                        keyword: 0,
-                        open: 0,
-                        close: 0,
-                        arrow: 0,
-                    }
+                &syn.item().function(
+                    5,
+                    3,
+                    t.simple(28, 3),
+                    e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
+                        .build(),
                 )
+                .push_argument(9, 1, t.simple(12, 3))
+                .push_argument(17, 1, t.simple(17, 1))
+                .build()
             ),
             Item::Fun(Function {
                 prototype: &function_proto,
@@ -579,14 +501,14 @@ mod tests {
     #[test]
     fn item_fun_tuple() {
         let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let t = syn.type_();
+
         let env = Env::new(
             b":fun add() -> (Int, Int) { (1, 2) }",
             &global_arena,
         );
-
-        fn lit_int(offset: usize, length: usize) -> syn::Expression<'static> {
-            syn::Expression::Lit(syn::Literal::Integral, range(offset, length))
-        }
 
         fn value_int(value: i64, offset: usize, length: usize)
             -> Value<'static>
@@ -614,32 +536,18 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &prototype,
-                &syn::Item::Fun(
-                    syn::Function {
-                        name: syn::VariableIdentifier(range(5, 3)),
-                        arguments: &[],
-                        result: syn::Type::Tuple(syn::Tuple {
-                            fields: &[type_simple(15, 3), type_simple(20, 3)],
-                            commas: &[],
-                            open: 0,
-                            close: 0,
-                        }),
-                        body: syn::Expression::Block(
-                            &[],
-                            &syn::Expression::Tuple(syn::Tuple {
-                                fields: &[lit_int(28, 1), lit_int(31, 1)],
-                                commas: &[],
-                                open: 27,
-                                close: 32,
-                            }),
-                            range(25, 10),
-                        ),
-                        keyword: 0,
-                        open: 0,
-                        close: 0,
-                        arrow: 0,
-                    }
+                &syn.item().function(
+                    5,
+                    3,
+                    t.tuple()
+                        .push(t.simple(15, 3))
+                        .push(t.simple(20, 3))
+                        .build(),
+                    e.block(
+                        e.tuple().push(e.int(28, 1)).push(e.int(31, 1)).build()
+                    ).build(),
                 )
+                .build()
             ),
             Item::Fun(Function {
                 prototype: &function_proto,
@@ -721,10 +629,6 @@ mod tests {
             range: range,
             expr: Expr::ArgumentRef(value),
         }
-    }
-
-    fn type_simple(offset: usize, length: usize) -> syn::Type<'static> {
-        syn::Type::Simple(syn::TypeIdentifier(range(offset, length)))
     }
 
     fn value(start: usize, length: usize) -> ValueIdentifier {

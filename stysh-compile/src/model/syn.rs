@@ -6,6 +6,8 @@
 //! The structures are parameterized by the lifetime of the arena providing the
 //! memory for their members.
 
+use std::convert;
+
 use basic::com;
 
 use model::tt;
@@ -41,7 +43,7 @@ pub enum Expression<'a> {
     /// A if expression.
     If(IfElse<'a>),
     /// A literal.
-    Lit(Literal<'a>, com::Range),
+    Lit(Literal<'a>),
     /// A prefix unary operation.
     PreOp(PrefixOperator, u32, &'a Expression<'a>),
     /// A tuple.
@@ -229,13 +231,13 @@ pub struct IfElse<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Literal<'a> {
     /// A boolean value.
-    Bool(bool),
+    Bool(bool, com::Range),
     /// A bytes value.
-    Bytes(&'a [StringFragment]),
+    Bytes(&'a [StringFragment], com::Range),
     /// An integral value.
-    Integral,
+    Integral(com::Range),
     /// A string value.
-    String(&'a [StringFragment]),
+    String(&'a [StringFragment], com::Range),
 }
 
 /// A variable binding.
@@ -334,7 +336,7 @@ impl<'a> Expression<'a> {
             FieldAccess(f) => f.range(),
             FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
-            Lit(_, range) => range,
+            Lit(lit) => lit.range(),
             PreOp(_, pos, expr)
                 => com::Range::new(pos as usize, 0).extend(expr.range()),
             Tuple(t) => t.range(),
@@ -463,11 +465,7 @@ impl<'a> Argument<'a> {
     /// Returns the range spanned by the argument.
     pub fn range(&self) -> com::Range {
         let offset = self.name.0.offset();
-        let end_offset = if self.comma != 0 {
-            (self.comma + 1) as usize
-        } else {
-            self.type_.range().end_offset()
-        };
+        let end_offset = self.comma as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
 }
@@ -529,6 +527,20 @@ impl<'a> Statement<'a> {
 
         match *self {
             Var(var) => var.range(),
+        }
+    }
+}
+
+impl<'a> Literal<'a> {
+    /// Returns the range spanned by the literal.
+    pub fn range(&self) -> com::Range {
+        use self::Literal::*;
+
+        match *self {
+            Bool(_, r) => r,
+            Bytes(_, r) => r,
+            Integral(r) => r,
+            String(_, r) => r,
         }
     }
 }
@@ -602,6 +614,71 @@ impl TypeIdentifier {
     }
 }
 
+//
+//  Trait Implementations
+//
+impl<'a> convert::From<Constructor<'a>> for Expression<'a> {
+    fn from(c: Constructor<'a>) -> Expression<'a> {
+        Expression::Constructor(c)
+    }
+}
+
+impl<'a> convert::From<FieldAccess<'a>> for Expression<'a> {
+    fn from(f: FieldAccess<'a>) -> Expression<'a> {
+        Expression::FieldAccess(f)
+    }
+}
+
+impl<'a> convert::From<FunctionCall<'a>> for Expression<'a> {
+    fn from(f: FunctionCall<'a>) -> Expression<'a> {
+        Expression::FunctionCall(f)
+    }
+}
+
+impl<'a> convert::From<IfElse<'a>> for Expression<'a> {
+    fn from(i: IfElse<'a>) -> Expression<'a> {
+        Expression::If(i)
+    }
+}
+
+impl<'a> convert::From<Literal<'a>> for Expression<'a> {
+    fn from(l: Literal<'a>) -> Expression<'a> {
+        Expression::Lit(l)
+    }
+}
+
+impl<'a> convert::From<Tuple<'a, Expression<'a>>> for Expression<'a> {
+    fn from(t: Tuple<'a, Expression<'a>>) -> Expression<'a> {
+        Expression::Tuple(t)
+    }
+}
+
+impl convert::From<VariableIdentifier> for Expression<'static> {
+    fn from(v: VariableIdentifier) -> Expression<'static> {
+        Expression::Var(v)
+    }
+}
+
+impl<'a> convert::From<Enum<'a>> for Item<'a> {
+    fn from(e: Enum<'a>) -> Item<'a> { Item::Enum(e) }
+}
+
+impl<'a> convert::From<Function<'a>> for Item<'a> {
+    fn from(f: Function<'a>) -> Item<'a> { Item::Fun(f) }
+}
+
+impl<'a> convert::From<Record<'a>> for Item<'a> {
+    fn from(r: Record<'a>) -> Item<'a> { Item::Rec(r) }
+}
+
+impl<'a> convert::From<VariableBinding<'a>> for Statement<'a> {
+    fn from(v: VariableBinding<'a>) -> Statement<'a> { Statement::Var(v) }
+}
+
+impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
+    fn from(t: Tuple<'a, Type<'a>>) -> Type<'a> { Type::Tuple(t) }
+}
+
 impl<'a, T: 'a + Clone> Tuple<'a, T> {
     /// Returns whether the tuple is empty.
     pub fn is_empty(&self) -> bool { self.fields.is_empty() }
@@ -649,151 +726,121 @@ impl<'a, T: 'a> Default for Tuple<'a, T> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::com;
+    use basic::{com, mem};
     use super::*;
+    use model::syn_builder::Factory;
 
     #[test]
     fn range_enum_empty() {
+        let global_arena = mem::Arena::new();
+        let item = Factory::new(&global_arena).item();
+
         //  " :enum Empty { }"
-        assert_eq!(
-            Enum {
-                name: TypeIdentifier(range(7, 5)),
-                variants: &[],
-                keyword: 1,
-                open: 13,
-                close: 15,
-                commas: &[],
-            }.range(),
-            range(1, 15)
-        );
+        let e: Enum = item.enum_(7, 5).build();
+        assert_eq!(e.range(), range(1, 15));
     }
 
     #[test]
     fn range_enum_minimal() {
+        let global_arena = mem::Arena::new();
+        let item = Factory::new(&global_arena).item();
+
         //  ":enum Minimal"
-        assert_eq!(
-            Enum {
-                name: TypeIdentifier(range(6, 7)),
-                variants: &[],
-                keyword: 0,
-                open: 0,
-                close: 0,
-                commas: &[],
-            }.range(),
-            range(0, 13)
-        );
+        let e: Enum = item.enum_(6, 7).braces(12, 12).build();
+        assert_eq!(e.range(), range(0, 13));
     }
 
     #[test]
     fn range_enum_simple() {
-        fn unit(offset: usize, length: usize) -> InnerRecord<'static> {
-            InnerRecord::Unit(TypeIdentifier(range(offset, length)))
-        }
+        let global_arena = mem::Arena::new();
+        let item = Factory::new(&global_arena).item();
 
         //  ":enum Simple { One, Two }"
-        assert_eq!(
-            Enum {
-                name: TypeIdentifier(range(6, 6)),
-                variants: &[ unit(15, 3), unit(20, 3) ],
-                keyword: 0,
-                open: 13,
-                close: 24,
-                commas: &[18, 0],
-            }.range(),
-            range(0, 25)
-        );
+        let e: Enum =
+            item.enum_(6, 6)
+                .push_unit(15, 3)
+                .push_unit(20, 3)
+                .build();
+        assert_eq!(e.range(), range(0, 25));
     }
 
     #[test]
     fn range_expression_literal() {
-        let expr = expr_lit_integral(3, 4);
-        assert_eq!(expr.range(), range(3, 4));
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        //  "   1"
+        assert_eq!(e.int(3, 4).range(), range(3, 4));
     }
 
     #[test]
     fn range_expression_binary_operator() {
-        let left = expr_lit_integral(3, 1);
-        let right = expr_lit_integral(7, 1);
-        let expr = Expression::BinOp(BinaryOperator::Plus, 5, &left, &right);
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
-        assert_eq!(expr.range(), range(3, 5));
+        //  "   1 + 1"
+        assert_eq!(
+            e.bin_op(e.int(3, 1), e.int(7, 1)).build().range(),
+            range(3, 5)
+        );
     }
 
     #[test]
     fn range_item_fun() {
-        let (left, right) =
-            (expr_lit_integral(20, 1), expr_lit_integral(24, 1));
-        let fun = Function {
-            name: VariableIdentifier(range(8, 3)),
-            arguments: &[],
-            result: type_simple(16, 3),
-            body: Expression::BinOp(BinaryOperator::Plus, 22, &left, &right),
-            keyword: 3,
-            open: 11,
-            close: 12,
-            arrow: 14,
-        };
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
 
-        assert_eq!(fun.range(), range(3, 22));
+        //  "   :fun add() -> Int 1 + 1"
+        let item: Item =
+            syn.item()
+                .function(
+                    8,
+                    3,
+                    syn.type_().simple(16, 3),
+                    e.bin_op(e.int(21, 1), e.int(25, 1)).build(),
+                ).build();
+        assert_eq!(item.range(), range(3, 23));
     }
 
     #[test]
     fn range_node_binary_operator() {
-        let left = expr_lit_integral(3, 1);
-        let right = expr_lit_integral(7, 1);
-        let expr = Expression::BinOp(BinaryOperator::Plus, 5, &left, &right);
-        let node = Node::Expr(expr);
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        //  "   1 + 1"
+        let node = Node::Expr(e.bin_op(e.int(3, 1), e.int(7, 1)).build());
 
         assert_eq!(node.range(), range(3, 5));
     }
 
     #[test]
     fn range_node_prefix_unary_operator() {
-        let expr = expr_lit_integral(7, 2);
-        let node = Node::Expr(Expression::PreOp(PrefixOperator::Not, 1, &expr));
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        //  " !     1"
+        let node = Node::Expr(e.pre_op(e.int(7, 2)).offset(1).build());
 
         assert_eq!(node.range(), range(1, 8));
     }
 
     #[test]
     fn range_stmt_variable_binding() {
-        let with_semi = bind_var_integral(5);
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
-        let without_semi =
-            VariableBinding { semi: with_semi.semi - 1, .. with_semi };
+        //  "     :var fool := 1234;"
+        let mut var = syn.stmt().var(10, 4, syn.expr().int(18, 4));
 
+        let with_semi: Statement = var.build();
         assert_eq!(with_semi.range(), range(5, 18));
-        assert_eq!(without_semi.range(), range(5, 17));
-    }
 
-    #[test]
-    fn range_stmt() {
-        let stmt = Statement::Var(bind_var_integral(5));
-        assert_eq!(stmt.range(), range(5, 18));
+        let without_semi: Statement = var.semi_colon(21).build();
+        assert_eq!(without_semi.range(), range(5, 17));
     }
 
     fn range(offset: usize, length: usize) -> com::Range {
         com::Range::new(offset, length)
-    }
-
-    fn bind_var_integral(offset: usize) -> VariableBinding<'static> {
-        //  ":var fool := 1234;" at an arbitrary offset.
-        VariableBinding {
-            name: VariableIdentifier(range(offset + 5, 4)),
-            type_: None,
-            expr: expr_lit_integral(offset + 13, 4),
-            var: offset as u32,
-            colon: 0,
-            bind: (offset + 10) as u32,
-            semi: (offset + 17) as u32,
-        }
-    }
-
-    fn expr_lit_integral(offset: usize, length: usize) -> Expression<'static> {
-        Expression::Lit(Literal::Integral, range(offset, length))
-    }
-
-    fn type_simple(offset: usize, length: usize) -> Type<'static> {
-        Type::Simple(TypeIdentifier(range(offset, length)))
     }
 }

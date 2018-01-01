@@ -175,13 +175,13 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                     self.raw.pop_node();
 
                     let bytes = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::Bytes(bytes), node.range())
+                    Expression::Lit(Literal::Bytes(bytes, node.range()))
                 },
                 tt::Node::String(_, f, _) => {
                     self.raw.pop_node();
 
                     let string = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::String(string), node.range())
+                    Expression::Lit(Literal::String(string, node.range()))
                 },
                 tt::Node::UnexpectedBrace(_) => unimplemented!(),
             };
@@ -427,9 +427,9 @@ impl<'g> IntoExpr<'g> for tt::Token {
         use self::Literal::*;
 
         match self.kind() {
-            LitBoolFalse => Some(Lit(Bool(false), self.range())),
-            LitBoolTrue => Some(Lit(Bool(true), self.range())),
-            LitIntegral => Some(Lit(Integral, self.range())),
+            LitBoolFalse => Some(Lit(Bool(false, self.range()))),
+            LitBoolTrue => Some(Lit(Bool(true, self.range()))),
+            LitIntegral => Some(Lit(Integral(self.range()))),
             NameValue => Some(Var(VariableIdentifier(self.range()))),
             _ => None,
         }
@@ -453,131 +453,95 @@ impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
+    use basic::mem;
     use model::syn::*;
+    use model::syn_builder::Factory;
 
     #[test]
     fn basic_add() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"1 + 2"),
-            Expression::BinOp(
-                BinaryOperator::Plus,
-                2,
-                &int(0, 1),
-                &int(4, 1),
-            )
+            e.bin_op(e.int(0, 1), e.int(4, 1)).build()
         );
     }
 
     #[test]
     fn basic_var() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
-            varit(&global_arena, b" :var fool := 1234;"),
-            VariableBinding {
-                name: var(6, 4),
-                type_: None,
-                expr: int(14, 4),
-                var: 1,
-                colon: 0,
-                bind: 11,
-                semi: 18,
-            }
+            stmtit(&global_arena, b" :var fool := 1234;"),
+            syn.stmt().var(6, 4, syn.expr().int(14, 4)).build()
         );
     }
 
     #[test]
     fn basic_var_automatic_insertion() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
-            varit(&global_arena, b" :var fool 1234"),
-            VariableBinding {
-                name: var(6, 4),
-                type_: None,
-                expr: int(11, 4),
-                var: 1,
-                colon: 0,
-                bind: 0,
-                semi: 14,
-            }
+            stmtit(&global_arena, b" :var fool 1234"),
+            syn.stmt()
+                .var(6, 4, syn.expr().int(11, 4))
+                .bind(0)
+                .semi_colon(14)
+                .build()
         );
     }
 
     #[test]
     fn basic_block() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
 
         assert_eq!(
             exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
-            Expression::Block(
-                &[
-                    Statement::Var(VariableBinding {
-                        name: var(11, 4),
-                        type_: None,
-                        expr: int(19, 4),
-                        var: 6,
-                        colon: 0,
-                        bind: 16,
-                        semi: 23,
-                    }),
-                ],
-                &Expression::Var(var(29, 4)),
-                range(0, 35)
-            )
+            e.block(e.var(29, 4))
+                .range(0, 35)
+                .push_stmt(syn.stmt().var(11, 4, e.int(19, 4)).build())
+                .build()
         );
     }
 
     #[test]
     fn basic_bytes() {
-        use model::tt;
-
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"b'1 + 2'"),
-            Expression::Lit(
-                Literal::Bytes(&[
-                    StringFragment::Text(
-                        tt::Token::new(tt::Kind::StringText, 2, 5)
-                    ),
-                ]),
-                range(0, 8)
-            )
+            e.literal(0, 8).push_text(2, 5).bytes().build()
         );
     }
 
     #[test]
     fn basic_constructor() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
             exprit(&global_arena, b"True"),
-            Expression::Constructor(Constructor {
-                type_: Type::Simple(typeid(0, 4)),
-                arguments: Default::default(),
-            })
+            syn.expr().constructor(syn.type_().simple(0, 4)).build()
         );
     }
 
     #[test]
     fn basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
             exprit(&global_arena, b"Some(1)"),
-            Expression::Constructor(Constructor {
-                type_: Type::Simple(typeid(0, 4)),
-                arguments: Tuple {
-                    fields: &[int(5, 1)],
-                    commas: &[5],
-                    open: 4,
-                    close: 6,
-                },
-            })
+            syn.expr()
+                .constructor(syn.type_().simple(0, 4))
+                .push_argument(syn.expr().int(5, 1))
+                .build()
         );
 
     }
@@ -585,266 +549,160 @@ mod tests {
     #[test]
     fn basic_nested_constructor() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
             exprit(&global_arena, b"Bool::True"),
-            Expression::Constructor(Constructor {
-                type_: Type::Nested(
-                    typeid(6, 4),
-                    Path {
-                        components: &[typeid(0, 4)],
-                        colons: &[4],
-                    }
-                ),
-                arguments: Default::default()
-            })
+            syn.expr().constructor(
+                syn.type_().nested(6, 4).push(0, 4).build()
+            ).build()
         );
     }
 
     #[test]
     fn basic_function_call() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
 
         assert_eq!(
             exprit(&global_arena, b"basic(1, 2)"),
-            Expression::FunctionCall(FunctionCall {
-                function: &Expression::Var(var(0, 5)),
-                arguments: Tuple {
-                    fields: &[ int(6, 1), int(9, 1) ],
-                    commas: &[7, 9],
-                    open: 5,
-                    close: 10,
-                },
-            })
+            e.function_call(e.var(0, 5), 5, 10)
+                .push_argument(e.int(6, 1))
+                .push_argument(e.int(9, 1))
+                .build()
         );
 
         assert_eq!(
-            varit(&global_arena, b":var a := basic(1, 2);"),
-            VariableBinding {
-                name: var(5, 1),
-                type_: None,
-                expr: Expression::FunctionCall(FunctionCall {
-                    function: &Expression::Var(var(10, 5)),
-                    arguments: Tuple {
-                        fields: &[ int(16, 1), int(19, 1) ],
-                        commas: &[17, 19],
-                        open: 15,
-                        close: 20,
-                    },
-                }),
-                var: 0,
-                colon: 0,
-                bind: 7,
-                semi: 21,
-            }
+            stmtit(&global_arena, b":var a := basic(1, 2);"),
+            syn.stmt()
+                .var(
+                    5, 1,
+                    e.function_call(e.var(10, 5), 15, 20)
+                        .push_argument(e.int(16, 1))
+                        .push_argument(e.int(19, 1))
+                        .build(),
+                )
+                .build()
         );
     }
 
     #[test]
     fn basic_if_else() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b":if true { 1 } :else { 0 }"),
-            Expression::If(IfElse {
-                condition: &boolean(true, 4, 4),
-                true_expr: &Expression::Block(&[], &int(11, 1), range(9, 5)),
-                false_expr: &Expression::Block(&[], &int(23, 1), range(21, 5)),
-                if_: 0,
-                else_: 15,
-            })
+            e.if_else(
+                e.bool_(4, 4),
+                e.block(e.int(11, 1)).build(),
+                e.block(e.int(23, 1)).build(),
+            ).build()
         )
     }
 
     #[test]
     fn basic_string() {
-        use model::tt;
-
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"'1 + 2'"),
-            Expression::Lit(
-                Literal::String(&[
-                    StringFragment::Text(
-                        tt::Token::new(tt::Kind::StringText, 1, 5)
-                    ),
-                ]),
-                range(0, 7)
-            )
+            e.literal(0, 7).push_text(1, 5).string().build()
         );
     }
 
     #[test]
     fn boolean_basic() {
         let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
 
         assert_eq!(
-            varit(&global_arena, b":var x := true;"),
-            VariableBinding {
-                name: var(5, 1),
-                type_: None,
-                expr: boolean(true, 10, 4),
-                var: 0,
-                colon: 0,
-                bind: 7,
-                semi: 14,
-            }
+            stmtit(&global_arena, b":var x := true;"),
+            syn.stmt().var(5, 1, syn.expr().bool_(10, 4)).build()
         );
     }
 
     #[test]
     fn field_access_basic() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"tup.42"),
-            Expression::FieldAccess(FieldAccess {
-                accessed: &Expression::Var(var(0, 3)),
-                field: field(3, 3),
-            })
+            e.field_access(e.var(0, 3)).length(3).build()
         );
     }
 
     #[test]
     fn field_access_recursive() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"tup.42.53"),
-            Expression::FieldAccess(FieldAccess {
-                accessed: &Expression::FieldAccess(FieldAccess {
-                    accessed: &Expression::Var(var(0, 3)),
-                    field: field(3, 3),
-                }),
-                field: field(6, 3),
-            })
+            e.field_access(e.field_access(e.var(0, 3)).length(3).build())
+                .length(3)
+                .build()
         );
     }
 
     #[test]
     fn shunting_yard_prefix() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b":not a :or b :and c"),
-            Expression::BinOp(
-                BinaryOperator::Or,
-                7,
-                &Expression::PreOp(
-                    PrefixOperator::Not,
-                    0,
-                    &Expression::Var(var(5, 1)),
-                ),
-                &Expression::BinOp(
-                    BinaryOperator::And,
-                    13,
-                    &Expression::Var(var(11, 1)),
-                    &Expression::Var(var(18, 1)),
-                ),
-            )
+            e.bin_op(
+                e.pre_op(e.var(5, 1)).build(),
+                e.bin_op(e.var(11, 1), e.var(18, 1)).and().build()
+            ).or().build()
         );
     }
 
     #[test]
     fn shunting_yard_simple() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        let left = e.bin_op(
+            e.int(0, 1),
+            e.bin_op(e.int(4, 1), e.int(8, 1)).times().build()
+        ).build();
+
+        let right =
+            e.bin_op(e.int(12, 1), e.int(17, 1)).floor_by().build();
 
         assert_eq!(
             exprit(&global_arena, b"1 + 2 * 3 < 4 // 5"),
-            Expression::BinOp(
-                BinaryOperator::LessThan,
-                10,
-                &Expression::BinOp(
-                    BinaryOperator::Plus,
-                    2,
-                    &int(0, 1),
-                    &Expression::BinOp(
-                        BinaryOperator::Times,
-                        6,
-                        &int(4, 1),
-                        &int(8, 1),
-                    ),
-                ),
-                &Expression::BinOp(
-                    BinaryOperator::FloorBy,
-                    14,
-                    &int(12, 1),
-                    &int(17, 1),
-                ),
-            )
+            e.bin_op(left, right).less_than().build()
         )
     }
 
     #[test]
     fn tuple_basic() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
             exprit(&global_arena, b"(1)"),
-            Expression::Tuple(
-                Tuple {
-                    fields: &[int(1, 1)],
-                    commas: &[1],
-                    open: 0,
-                    close: 2,
-                }
-            )
+            e.tuple().push(e.int(1, 1)).build()
         );
     }
 
     #[test]
     fn tuple_nested() {
         let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        let inner = e.tuple().push(e.int(5, 1)).push(e.int(8, 1)).build();
 
         assert_eq!(
             exprit(&global_arena, b"(1, (2, 3), 4)"),
-            Expression::Tuple(
-                Tuple {
-                    fields: &[
-                        int(1, 1),
-                        Expression::Tuple(
-                            Tuple {
-                                fields: &[int(5, 1), int(8, 1)],
-                                commas: &[6, 8],
-                                open: 4,
-                                close: 9,
-                            }
-                        ),
-                        int(12, 1),
-                    ],
-                    commas: &[2, 10, 12],
-                    open: 0,
-                    close: 13,
-                }
-            )
+            e.tuple().push(e.int(1, 1)).push(inner).push(e.int(12, 1)).build()
         );
-    }
-
-    fn boolean(value: bool, offset: usize, length: usize)
-        -> Expression<'static>
-    {
-        Expression::Lit(Literal::Bool(value), range(offset, length))
-    }
-
-    fn field(offset: usize, length: usize) -> FieldIdentifier {
-        FieldIdentifier(range(offset, length))
-    }
-    
-    fn int(offset: usize, length: usize) -> Expression<'static> {
-        Expression::Lit(Literal::Integral, range(offset, length))
-    }
-
-    fn var(offset: usize, length: usize) -> VariableIdentifier {
-        VariableIdentifier(range(offset, length))
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
-    }
-
-    fn typeid(offset: usize, length: usize) -> TypeIdentifier {
-        TypeIdentifier(range(offset, length))
     }
 
     fn exprit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Expression<'g> {
@@ -861,8 +719,8 @@ mod tests {
         e
     }
 
-    fn varit<'g>(global_arena: &'g mem::Arena, raw: &[u8])
-        -> VariableBinding<'g>
+    fn stmtit<'g>(global_arena: &'g mem::Arena, raw: &[u8])
+        -> Statement<'g>
     {
         use super::super::com::RawParser;
 
@@ -874,6 +732,6 @@ mod tests {
         };
         local_arena.recycle();
 
-        v
+        Statement::Var(v)
     }
 }

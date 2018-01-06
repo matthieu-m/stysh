@@ -74,6 +74,17 @@ pub enum Binding<'a> {
     Variable(ValueIdentifier, Value<'a>, com::Range),
 }
 
+/// A re-binding.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ReBinding<'a> {
+    /// The left-hand side value.
+    pub left: Value<'a>,
+    /// The right-hand side value.
+    pub right: Value<'a>,
+    /// The range of the re-binding statement.
+    pub range: com::Range,
+}
+
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
@@ -118,6 +129,8 @@ pub enum BuiltinValue<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Stmt<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
+    /// A variable re-binding.
+    Set(ReBinding<'a>),
     /// A variable binding.
     Var(Binding<'a>),
 }
@@ -434,6 +447,18 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for ReBinding<'a> {
+    type Output = ReBinding<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        ReBinding {
+            left: arena.intern(&self.left),
+            right: arena.intern(&self.right),
+            range: self.range,
+        }
+    }
+}
+
 impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
     type Output = Stmt<'target>;
 
@@ -441,6 +466,7 @@ impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
         use self::Stmt::*;
 
         match *self {
+            Set(b) => Set(arena.intern(&b)),
             Var(b) => Var(arena.intern(&b)),
         }
     }

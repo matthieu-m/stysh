@@ -158,21 +158,27 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let mut statements = mem::Array::new(self.local_arena);
 
         for &s in stmts {
-            let (binding, type_, stmt) = match s {
-                syn::Statement::Set(_) => unimplemented!(),
+            let stmt = match s {
+                syn::Statement::Set(set) => {
+                    let right = self.rescope(&scope).value_of_expr(&set.expr);
+                    let left = scope.lookup_binding(set.name.into());
+                    sem::Stmt::Set(
+                        sem::ReBinding {
+                            left: left,
+                            right: right,
+                            range: set.range()
+                        }
+                    )
+                },
                 syn::Statement::Var(var) => {
                     let value = self.rescope(&scope).value_of_expr(&var.expr);
                     let id = var.name.into();
-                    (
-                        id,
-                        value.type_,
-                        sem::Stmt::Var(
-                            sem::Binding::Variable(id, value, var.range())
-                        )
+                    scope.add_value(id, value.type_);
+                    sem::Stmt::Var(
+                        sem::Binding::Variable(id, value, var.range())
                     )
                 },
             };
-            scope.add_value(binding, type_);
             statements.push(stmt);
         }
 
@@ -893,6 +899,47 @@ mod tests {
                 range: range(0, 15),
                 expr: Expr::BuiltinVal(
                     BuiltinValue::String(b"Hello, World!")
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn value_basic_set() {
+        let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let s = syn.stmt();
+
+        let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
+
+        let a = range(7, 1);
+        let type_ = Type::Builtin(BuiltinType::Int);
+
+        assert_eq!(
+            env.value_of(
+                &e.block(e.var(28, 1))
+                    .push_stmt(s.var(7, 1, e.int(12, 1)).build())
+                    .push_stmt(s.set(20, 1, e.int(25, 1)).build())
+                    .build()
+            ),
+            Value {
+                type_: type_,
+                range: range(0, 31),
+                expr: Expr::Block(
+                    &[
+                        Stmt::Var(Binding::Variable(
+                            ValueIdentifier(a),
+                            int(1, range(12, 1)),
+                            range(2, 12)
+                        )),
+                        Stmt::Set(ReBinding {
+                            left: int_ref(a, range(20, 1)),
+                            right: int(2, range(25, 1)),
+                            range: range(15, 12),
+                        }),
+                    ],
+                    &int_ref(a, range(28, 1)),
                 )
             }
         );

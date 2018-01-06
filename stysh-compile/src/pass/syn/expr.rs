@@ -20,44 +20,20 @@ pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     expr
 }
 
-pub fn parse_variable<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> VariableBinding<'g>
+pub fn parse_statement<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> Statement<'g>
 {
-    let var =
-        raw.pop_kind(tt::Kind::KeywordVar)
-            .map(|t| t.offset() as u32)
-            .expect(":var");
-
-    let name = raw.pop_kind(tt::Kind::NameValue).expect("name");
-
-    let bind =
-        raw.pop_kind(tt::Kind::SignBind)
-            .map(|t| t.offset() as u32)
-            .unwrap_or(0);
-
-    let expr = parse_expression(raw);
-
-    let semi =
-        raw.pop_kind(tt::Kind::SignSemiColon)
-            .map(|t| t.offset())
-            .unwrap_or(expr.range().end_offset() - 1) as u32;
-
-    VariableBinding {
-        name: VariableIdentifier(name.range()),
-        type_: None,
-        expr: expr,
-        var: var,
-        colon: 0,
-        bind: bind,
-        semi: semi,
-    }
+    let mut parser = StmtParser::new(*raw);
+    let stmt = parser.parse();
+    *raw = parser.into_raw();
+    stmt
 }
 
 //
-//  Implementation Details
+//  Implementation Details (Expression)
 //
 struct ExprParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>
+    raw: RawParser<'a, 'g, 'local>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -216,10 +192,11 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let mut stmts = raw.local_array();
 
         while let Some(tok) = raw.peek().map(|n| n.front()) {
-            if tok.kind() != tt::Kind::KeywordVar {
+            if tok.kind() != tt::Kind::KeywordSet &&
+                tok.kind() != tt::Kind::KeywordVar {
                 break;
             }
-            stmts.push(Statement::Var(parse_variable(&mut raw)));
+            stmts.push(parse_statement(&mut raw));
         }
 
         let stmts = self.raw.intern_slice(&stmts);
@@ -447,6 +424,93 @@ impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
     }
 }
 
+//
+//  Implementation Details (Statement)
+//
+struct StmtParser<'a, 'g, 'local> {
+    raw: RawParser<'a, 'g, 'local>,
+}
+
+impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> Self {
+        StmtParser { raw: raw }
+    }
+
+    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+
+    fn parse(&mut self) -> Statement<'g> {
+        use model::tt::Kind as K;
+
+        match self.raw.peek_kind() {
+            Some(K::KeywordSet) => self.parse_set(),
+            Some(K::KeywordVar) => self.parse_var(),
+            Some(k) => unimplemented!("Expected :set or :var, got {:?}", k),
+            None => unimplemented!("Expected :set or :var, got nothing"),
+        }
+    }
+
+    fn parse_set(&mut self) -> Statement<'g> {
+        let set =
+            self.raw
+                .pop_kind(tt::Kind::KeywordSet)
+                .map(|t| t.offset() as u32)
+                .expect(":set");
+
+        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+
+        let (expr, bind, semi) = self.parse_bind();
+
+        Statement::Set(VariableReBinding {
+            name: VariableIdentifier(name.range()),
+            expr: expr,
+            set: set,
+            bind: bind,
+            semi: semi,
+        })
+    }
+
+    fn parse_var(&mut self) -> Statement<'g> {
+        let var =
+            self.raw
+                .pop_kind(tt::Kind::KeywordVar)
+                .map(|t| t.offset() as u32)
+                .expect(":var");
+
+        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+
+        //  TODO(matthieum): parse type.
+
+        let (expr, bind, semi) = self.parse_bind();
+
+        Statement::Var(VariableBinding {
+            name: VariableIdentifier(name.range()),
+            type_: None,
+            expr: expr,
+            var: var,
+            colon: 0,
+            bind: bind,
+            semi: semi,
+        })
+    }
+
+    fn parse_bind(&mut self) -> (Expression<'g>, u32, u32) {
+        let bind =
+            self.raw
+                .pop_kind(tt::Kind::SignBind)
+                .map(|t| t.offset() as u32)
+                .unwrap_or(0);
+
+        let expr = parse_expression(&mut self.raw);
+
+        let semi =
+            self.raw
+                .pop_kind(tt::Kind::SignSemiColon)
+                .map(|t| t.offset())
+                .unwrap_or(expr.range().end_offset() - 1) as u32;
+
+        (expr, bind, semi)
+    }
+}
 
 //
 //  Tests
@@ -465,6 +529,17 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"1 + 2"),
             e.bin_op(e.int(0, 1), e.int(4, 1)).build()
+        );
+    }
+
+    #[test]
+    fn basic_set() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+
+        assert_eq!(
+            stmtit(&global_arena, b" :set fool := 1234;"),
+            syn.stmt().set(6, 4, syn.expr().int(14, 4)).build()
         );
     }
 
@@ -726,12 +801,12 @@ mod tests {
 
         let mut local_arena = mem::Arena::new();
 
-        let v = {
+        let stmt = {
             let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_variable(&mut raw)
+            super::parse_statement(&mut raw)
         };
         local_arena.recycle();
 
-        Statement::Var(v)
+        stmt
     }
 }

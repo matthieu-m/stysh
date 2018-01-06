@@ -159,6 +159,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         for &s in stmts {
             let (binding, type_, stmt) = match s {
+                syn::Statement::Set(_) => unimplemented!(),
                 syn::Statement::Var(var) => {
                     let value = self.rescope(&scope).value_of_expr(&var.expr);
                     let id = var.name.into();

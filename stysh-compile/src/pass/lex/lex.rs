@@ -265,6 +265,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":not" => Kind::KeywordNot,
             b":or" => Kind::KeywordOr,
             b":rec" => Kind::KeywordRec,
+            b":set" => Kind::KeywordSet,
             b":var" => Kind::KeywordVar,
             b":xor" => Kind::KeywordXor,
             _ => panic!("parse_colon not implemented for {}", tok),
@@ -664,6 +665,32 @@ mod tests {
                     Token::new(Kind::SignPlus, 4, 1),
                     Token::new(Kind::LitIntegral, 6, 2),
                 ])
+            ]
+        );
+    }
+
+    #[test]
+    fn lex_keywords_farandole() {
+        let global_arena = mem::Arena::new();
+
+        let keywords =
+            b":and :else :enum :fun :if :not :or :rec :set :var :xor";
+        assert_eq!(
+            lexit(&global_arena, keywords),
+            &[
+                Node::Run(&[
+                    Token::new(Kind::KeywordAnd, 0, 4),
+                    Token::new(Kind::KeywordElse, 5, 5),
+                    Token::new(Kind::KeywordEnum, 11, 5),
+                    Token::new(Kind::KeywordFun, 17, 4),
+                    Token::new(Kind::KeywordIf, 22, 3),
+                    Token::new(Kind::KeywordNot, 26, 4),
+                    Token::new(Kind::KeywordOr, 31, 3),
+                    Token::new(Kind::KeywordRec, 35, 4),
+                    Token::new(Kind::KeywordSet, 40, 4),
+                    Token::new(Kind::KeywordVar, 45, 4),
+                    Token::new(Kind::KeywordXor, 50, 4),
+                ]),
             ]
         );
     }

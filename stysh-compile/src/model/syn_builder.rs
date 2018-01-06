@@ -141,6 +141,16 @@ pub struct RecordBuilder<'a> {
 //  Statement Builders
 //
 
+/// VariableReBindingBuilder
+#[derive(Clone, Copy)]
+pub struct VariableReBindingBuilder<'a> {
+    name: VariableIdentifier,
+    expr: Expression<'a>,
+    set: u32,
+    bind: u32,
+    semi: u32,
+}
+
 /// VariableBindingBuilder
 #[derive(Clone, Copy)]
 pub struct VariableBindingBuilder<'a> {
@@ -1089,11 +1099,80 @@ impl<'a> StmtFactory<'a> {
         StmtFactory(marker::PhantomData)
     }
 
+    /// Creates a VariableReBindingBuilder.
+    pub fn set(&self, pos: usize, len: usize, expr: Expression<'a>)
+        -> VariableReBindingBuilder<'a>
+    {
+        VariableReBindingBuilder::new(pos, len, expr)
+    }
+
     /// Creates a VariableBindingBuilder.
     pub fn var(&self, pos: usize, len: usize, expr: Expression<'a>)
         -> VariableBindingBuilder<'a>
     {
         VariableBindingBuilder::new(pos, len, expr)
+    }
+}
+
+impl<'a> VariableReBindingBuilder<'a> {
+    /// Creates a new instance.
+    pub fn new(pos: usize, len: usize, expr: Expression<'a>) -> Self {
+        VariableReBindingBuilder {
+            name: VariableIdentifier(range((pos, len))),
+            expr: expr,
+            set: U32_NONE,
+            bind: U32_NONE,
+            semi: U32_NONE,
+        }
+    }
+
+    /// Sets up the position of the :set keyword.
+    pub fn set(&mut self, pos: u32) -> &mut Self {
+        self.set = pos;
+        self
+    }
+
+    /// Sets up the position of the bind.
+    pub fn bind(&mut self, pos: u32) -> &mut Self {
+        self.bind = pos;
+        self
+    }
+
+    /// Sets up the position of the semi-colon.
+    pub fn semi_colon(&mut self, pos: u32) -> &mut Self {
+        self.semi = pos;
+        self
+    }
+
+    /// Creates a VariableReBinding.
+    pub fn build<T: convert::From<VariableReBinding<'a>>>(&self) -> T {
+        let range = self.name.0;
+
+        let set = if self.set == U32_NONE {
+            range.offset() as u32 - 5
+        } else {
+            self.set
+        };
+
+        let bind = if self.bind == U32_NONE {
+            range.end_offset() as u32 + 1
+        } else {
+            self.bind
+        };
+
+        let semi = if self.semi == U32_NONE {
+            self.expr.range().end_offset() as u32
+        } else {
+            self.semi
+        };
+
+        VariableReBinding {
+            name: self.name,
+            expr: self.expr,
+            set: set,
+            bind: bind,
+            semi: semi,
+        }.into()
     }
 }
 

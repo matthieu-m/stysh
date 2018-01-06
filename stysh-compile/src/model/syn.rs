@@ -67,6 +67,8 @@ pub enum Item<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Statement<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
+    /// A variable re-binding.
+    Set(VariableReBinding<'a>),
     /// A variable definition.
     Var(VariableBinding<'a>),
 }
@@ -254,6 +256,22 @@ pub struct VariableBinding<'a> {
     pub var: u32,
     /// Offset of the : sign, or 0 if none.
     pub colon: u32,
+    /// Offset of the := sign.
+    pub bind: u32,
+    /// Offset of the ; sign.
+    pub semi: u32,
+}
+
+/// A variable re-binding.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct VariableReBinding<'a> {
+    /// Name of the binding.
+    //  TODO(matthieum): make a (restricted) expression.
+    pub name: VariableIdentifier,
+    /// Expression being bound.
+    pub expr: Expression<'a>,
+    /// Offset of the :set keyword.
+    pub set: u32,
     /// Offset of the := sign.
     pub bind: u32,
     /// Offset of the ; sign.
@@ -526,6 +544,7 @@ impl<'a> Statement<'a> {
         use self::Statement::*;
 
         match *self {
+            Set(set) => set.range(),
             Var(var) => var.range(),
         }
     }
@@ -557,6 +576,20 @@ impl<'a> VariableBinding<'a> {
             (self.semi + 1 - self.var) as usize
         )
     }
+}
+
+impl<'a> VariableReBinding<'a> {
+       /// Returns the range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        debug_assert!(
+            self.semi as usize >= self.expr.range().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.range()
+        );
+        com::Range::new(
+            self.set as usize,
+            (self.semi + 1 - self.set) as usize
+        )
+    } 
 }
 
 impl<'a> Type<'a> {
@@ -673,6 +706,10 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
 
 impl<'a> convert::From<VariableBinding<'a>> for Statement<'a> {
     fn from(v: VariableBinding<'a>) -> Statement<'a> { Statement::Var(v) }
+}
+
+impl<'a> convert::From<VariableReBinding<'a>> for Statement<'a> {
+    fn from(v: VariableReBinding<'a>) -> Statement<'a> { Statement::Set(v) }
 }
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {

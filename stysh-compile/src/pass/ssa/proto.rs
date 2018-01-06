@@ -141,6 +141,37 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         }
     }
 
+    pub fn push_binding(
+        &mut self,
+        binding: BindingId,
+        id: sir::ValueId,
+        type_: sem::Type<'g>,
+    )
+    {
+        for b in self.bindings.as_slice() {
+            assert_ne!(b.0, binding);
+        }
+
+        self.bindings.push((binding, id, type_));
+    }
+
+    pub fn push_rebinding(
+        &mut self,
+        binding: BindingId,
+        id: sir::ValueId,
+        type_: sem::Type<'g>,
+    )
+    {
+        for b in self.bindings.as_slice_mut() {
+            if b.0 == binding {
+                b.1 = id;
+                return;
+            }
+        }
+
+        self.bindings.push((binding, id, type_));
+    }
+
     pub fn push_instr(&mut self, instr: sir::Instruction<'g>) {
         let id = sir::ValueId::new_instruction(self.instructions.len());
         self.instructions.push(instr);

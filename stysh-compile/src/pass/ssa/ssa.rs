@@ -186,14 +186,21 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     {
         for &s in stmts {
             match s {
-                sem::Stmt::Var(sem::Binding::Variable(var, value, _))
-                    =>
-                {
+                sem::Stmt::Set(re) => {
+                    if let sem::Expr::VariableRef(n) = re.left.expr {
+                        current = self.convert_value(current, &re.right);
+                        let id = current.last_value();
+                        current.push_rebinding(n.0.into(), id, re.left.type_);
+                        continue;
+                    }
+                    unimplemented!();
+                },
+                sem::Stmt::Var(sem::Binding::Variable(var, value, _)) => {
                     current = self.convert_value(current, &value);
                     let id = current.last_value();
-                    current.bindings.push((var.0.into(), id, value.type_));
+                    current.push_binding(var.0.into(), id, value.type_);
                 },
-                _ => unimplemented!(),
+                sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
             }
         }
 
@@ -739,6 +746,47 @@ mod tests {
                 "    $1 := load 2 ; 1@25",
                 "    $2 := __add__($0, $1) ; 5@28",
                 "    return $2",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn block_rebinding() {
+        let global_arena = mem::Arena::new();
+        let int = Type::Builtin(BuiltinType::Int);
+
+        //  { :var a := 1; :set a := 2; a }
+        let a = value(7, 1);
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: Type::Builtin(BuiltinType::Int),
+                    range: range(0, 35),
+                    expr: Expr::Block(
+                        &[
+                            Stmt::Var(Binding::Variable(
+                                a,
+                                lit_integral(1, 12, 1),
+                                range(2, 12)
+                            )),
+                            Stmt::Set(ReBinding {
+                                left: resolved_variable(a, int),
+                                right: lit_integral(2, 25, 1),
+                                range: range(15, 12)
+                            }),
+                        ],
+                        &resolved_variable(a, int),
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 1 ; 1@12",
+                "    $1 := load 2 ; 1@25",
+                "    return $1",
                 ""
             ])
         );

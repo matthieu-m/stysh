@@ -187,13 +187,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         for &s in stmts {
             match s {
                 sem::Stmt::Set(re) => {
-                    if let sem::Expr::VariableRef(n) = re.left.expr {
-                        current = self.convert_value(current, &re.right);
-                        let id = current.last_value();
-                        current.push_rebinding(n.0.into(), id, re.left.type_);
-                        continue;
-                    }
-                    unimplemented!();
+                    current = self.convert_rebind(current, re);
                 },
                 sem::Stmt::Var(sem::Binding::Variable(var, value, _)) => {
                     current = self.convert_value(current, &value);
@@ -319,7 +313,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        current.bind(value.into());
+        current.last_value = Some(current.bind(value.into()).0);
         current
     }
 
@@ -423,6 +417,112 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     {
         current.push_instr(sir::Instruction::Load(val, range));
         current
+    }
+
+    fn convert_rebind(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        re: sem::ReBinding<'g>,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        //  Rebinding is binding an existing name to a new value.
+        //
+        //  This means that despite the familiar syntax "a.0 := 1;" does NOT
+        //  actually modifies "a". Instead, it creates a new value of "a",
+        //  which is identical to the former "a" except for the one updated
+        //  field.
+        //
+        //  That is in:
+        //      :var a := (1, 2);
+        //      :set a.0 := 3;
+        //
+        //  the rebinding is actually translated as:
+        //      :set a := (3, a.1);
+        //
+        //  And similarly in:
+        //      :set a.1.2 := 3;
+        //
+        //  the rebinding is actually translated as:
+        //      :set a := (a.0, (a.1.0, a.1.1, 3, a.1.3, ...), a.2, ...);
+        //
+        //  where I expect the motivation for the syntactic sugar to be clear.
+        //
+        //  This only really matters if the value is aliased, but alias
+        //  analysis is the job of the optimizer; here only semantics matter.
+        //
+        //  The following bit of code captures this reversal.
+
+        fn extract_fields<'a, 'g>(v: &'a sem::Value<'g>)
+            -> &'a [sem::Type<'g>]
+        {
+            //  TODO(matthieum): support Rec, which requires a Registry.
+            if let sem::Type::Tuple(t) = v.type_ {
+                return &t.fields;
+            }
+
+            unimplemented!("Can only access tuple fields!");
+        }
+
+        fn recurse<'g, 'local>(
+            me: &mut GraphBuilderImpl<'g, 'local>,
+            mut current: ProtoBlock<'g, 'local>,
+            left: &sem::Value<'g>
+        )
+            -> ProtoBlock<'g, 'local>
+        {
+            if let sem::Expr::VariableRef(n) = left.expr {
+                let id = current.last_value();
+                current.push_rebinding(n.0.into(), id, left.type_);
+                return current;
+            }
+
+            let (value, index) =
+                if let sem::Expr::FieldAccess(v, i) = left.expr {
+                    (v, i)
+                } else {
+                    unimplemented!("{:?}", left);
+                };
+
+            let id = current.last_value();
+
+            //  Load tuple
+            current = me.convert_value(current, value);
+            let tuple_id = current.last_value();
+
+            //  Load other fields
+            let fields = extract_fields(&value);
+            let mut args =
+                mem::Array::with_capacity(fields.len(), me.global_arena);
+
+            for i in 0..(fields.len() as u16) {
+                if i == index {
+                    args.push(id);
+                } else {
+                    current.push_instr(sir::Instruction::Field(
+                        fields[i as usize],
+                        tuple_id,
+                        i,
+                        value.range
+                    ));
+                    args.push(current.last_value());
+                }
+            }
+
+            //  Construct a new tuple, identical to the former except for the
+            //  one new field.
+            current.push_instr(sir::Instruction::New(
+                value.type_,
+                args.into_slice(),
+                value.range,
+            ));
+
+            recurse(me, current, &value)
+        }
+
+        current = self.convert_value(current, &re.right);
+
+        recurse(self, current, &re.left)
     }
 
     fn convert_tuple(
@@ -787,6 +887,91 @@ mod tests {
                 "    $0 := load 1 ; 1@12",
                 "    $1 := load 2 ; 1@25",
                 "    return $1",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn block_rebinding_nested_field() {
+        let global_arena = mem::Arena::new();
+        let int = Type::Builtin(BuiltinType::Int);
+        let t_a_1_slice = &[int, int];
+        let t_a_1 = Type::Tuple(Tuple { fields: t_a_1_slice });
+        let t_a_slice = &[int, t_a_1];
+        let t_a = Type::Tuple(Tuple { fields: t_a_slice });
+
+        //  { :var a := (1, (2, 3)); :set a.1.0 := 4; a }
+        let a = value(7, 1);
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: Type::Builtin(BuiltinType::Int),
+                    range: range(0, 45),
+                    expr: Expr::Block(
+                        &[
+                            Stmt::Var(Binding::Variable(
+                                a,
+                                Value {
+                                    type_: t_a,
+                                    range: range(12, 11),
+                                    expr: Expr::Tuple(Tuple { fields: &[
+                                        lit_integral(1, 13, 1),
+                                        Value {
+                                            type_: t_a_1,
+                                            range: range(16, 6),
+                                            expr: Expr::Tuple(Tuple { fields: &[
+                                                lit_integral(2, 17, 1),
+                                                lit_integral(3, 19, 1),
+                                            ]}),
+                                        }
+                                    ]}),
+                                },
+                                range(2, 22)
+                            )),
+                            Stmt::Set(ReBinding {
+                                left: Value {
+                                    type_: int,
+                                    range: range(30, 5),
+                                    expr: Expr::FieldAccess(
+                                        &Value {
+                                            type_: t_a_1,
+                                            range: range(30, 3),
+                                            expr: Expr::FieldAccess(
+                                                &resolved_variable(a, t_a),
+                                                1
+                                            ),
+                                        },
+                                        0
+                                    ),
+                                },
+                                right: lit_integral(4, 39, 1),
+                                range: range(25, 16)
+                            }),
+                        ],
+                        &resolved_variable(a, t_a),
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                //  :var a := (1, (2, 3));
+                "    $0 := load 1 ; 1@13",
+                "    $1 := load 2 ; 1@17",
+                "    $2 := load 3 ; 1@19",
+                "    $3 := new (Int, Int) ($1, $2) ; 6@16",
+                "    $4 := new (Int, (Int, Int)) ($0, $3) ; 11@12",
+                //  :set a.1.0 := 4;
+                "    $5 := load 4 ; 1@39",
+                "    $6 := field 1 of $4 ; 3@30",
+                "    $7 := field 1 of $6 ; 3@30",
+                "    $8 := new (Int, Int) ($5, $7) ; 3@30",
+                "    $9 := field 0 of $4 ; 0@0",
+                "    $10 := new (Int, (Int, Int)) ($9, $8) ; 0@0",
+                //  a
+                "    return $10",
                 ""
             ])
         );

@@ -15,6 +15,7 @@ pub struct ProtoBlock<'g, 'local>
     pub predecessors: mem::Array<'local, BlockId>,
     pub bindings: mem::Array<'local, (BindingId, sir::ValueId, sem::Type<'g>)>,
     pub instructions: mem::Array<'local, sir::Instruction<'g>>,
+    pub last_value: Option<sir::ValueId>,
     pub exit: ProtoTerminator<'g, 'local>,
 }
 
@@ -56,12 +57,15 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
             predecessors: mem::Array::new(arena),
             bindings: mem::Array::new(arena),
             instructions: mem::Array::new(arena),
+            last_value: None,
             exit: ProtoTerminator::Unreachable,
         }
     }
 
     pub fn last_value(&self) -> sir::ValueId {
-        if !self.instructions.is_empty() {
+        if let Some(v) = self.last_value {
+            v
+        } else if !self.instructions.is_empty() {
             sir::ValueId::new_instruction(self.instructions.len() - 1)
         } else {
             assert!(self.arguments.len() == 1, "{:?}", self.arguments);
@@ -175,6 +179,7 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     pub fn push_instr(&mut self, instr: sir::Instruction<'g>) {
         let id = sir::ValueId::new_instruction(self.instructions.len());
         self.instructions.push(instr);
+        self.last_value = None;
         self.bindings.push((instr.range().into(), id, instr.result_type()));
     }
 }

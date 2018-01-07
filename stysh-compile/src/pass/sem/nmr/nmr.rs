@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn value_basic_set() {
+    fn value_set_basic() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
         let e = syn.expr();
@@ -946,7 +946,81 @@ mod tests {
     }
 
     #[test]
-    fn value_basic_var() {
+    fn value_set_field() {
+        let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let s = syn.stmt();
+
+        let env = Env::new(
+            b"{ :var a := (1,); :set a.0 := 2; a }",
+            &global_arena
+        );
+
+        let a = ValueIdentifier(range(7, 1));
+        let t_int = Type::Builtin(BuiltinType::Int);
+        let t_slice = [t_int];
+        let t_tuple = Type::Tuple(Tuple { fields: &t_slice});
+
+        assert_eq!(
+            env.value_of(
+                &e.block(e.var(33, 1))
+                    .push_stmt(s.var(
+                        7,
+                        1,
+                        e.tuple().push(e.int(13, 1)).comma(14).build()
+                    ).build())
+                    .push_stmt(s.set(
+                        e.field_access(e.var(23, 1)).build(),
+                        e.int(30, 1)
+                    ).build())
+                    .build()
+            ),
+            Value {
+                type_: t_tuple,
+                range: range(0, 36),
+                expr: Expr::Block(
+                    &[
+                        Stmt::Var(Binding::Variable(
+                            a,
+                            Value {
+                                type_: t_tuple,
+                                range: range(12, 4),
+                                expr: Expr::Tuple(Tuple {
+                                    fields: &[int(1, range(13, 1))],
+                                }),
+                            },
+                            range(2, 15)
+                        )),
+                        Stmt::Set(ReBinding {
+                            left: Value {
+                                type_: t_int,
+                                range: range(23, 3),
+                                expr: Expr::FieldAccess(
+                                    &Value {
+                                        type_: t_tuple,
+                                        range: range(23, 1),
+                                        expr: Expr::VariableRef(a),
+                                    },
+                                    0,
+                                ),
+                            },
+                            right: int(2, range(30, 1)),
+                            range: range(18, 14),
+                        }),
+                    ],
+                    &Value {
+                        type_: t_tuple,
+                        range: range(33, 1),
+                        expr: Expr::VariableRef(a),
+                    },
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn value_var_basic() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
         let e = syn.expr();

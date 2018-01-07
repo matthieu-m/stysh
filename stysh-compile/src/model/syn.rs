@@ -265,9 +265,8 @@ pub struct VariableBinding<'a> {
 /// A variable re-binding.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct VariableReBinding<'a> {
-    /// Name of the binding.
-    //  TODO(matthieum): make a (restricted) expression.
-    pub name: VariableIdentifier,
+    /// Left-hand side identifying a binding.
+    pub left: Expression<'a>,
     /// Expression being bound.
     pub expr: Expression<'a>,
     /// Offset of the :set keyword.

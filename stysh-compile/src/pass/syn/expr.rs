@@ -125,6 +125,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                             yard.push_field(FieldIdentifier(range));
                             continue;
                         },
+                        K::SignBind => break,
                         _ => {
                             let ty = typ::try_parse_type(&mut self.raw);
                             if let Some(ty) = ty {
@@ -456,12 +457,12 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
                 .map(|t| t.offset() as u32)
                 .expect(":set");
 
-        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+        let left = parse_expression(&mut self.raw);
 
         let (expr, bind, semi) = self.parse_bind();
 
         Statement::Set(VariableReBinding {
-            name: VariableIdentifier(name.range()),
+            left: left,
             expr: expr,
             set: set,
             bind: bind,
@@ -529,17 +530,6 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"1 + 2"),
             e.bin_op(e.int(0, 1), e.int(4, 1)).build()
-        );
-    }
-
-    #[test]
-    fn basic_set() {
-        let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-
-        assert_eq!(
-            stmtit(&global_arena, b" :set fool := 1234;"),
-            syn.stmt().set(6, 4, syn.expr().int(14, 4)).build()
         );
     }
 
@@ -720,6 +710,33 @@ mod tests {
             e.field_access(e.field_access(e.var(0, 3)).length(3).build())
                 .length(3)
                 .build()
+        );
+    }
+
+    #[test]
+    fn set_basic() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
+
+        assert_eq!(
+            stmtit(&global_arena, b" :set fool := 1234;"),
+            syn.stmt().set(e.var(6, 4), e.int(14, 4)).build()
+        );
+    }
+
+    #[test]
+    fn set_field() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let e = syn.expr();
+
+        assert_eq!(
+            stmtit(&global_arena, b" :set foo.0 := 1234;"),
+            syn.stmt().set(
+                e.field_access(e.var(6, 3)).build(),
+                e.int(15, 4)
+            ).build()
         );
     }
 

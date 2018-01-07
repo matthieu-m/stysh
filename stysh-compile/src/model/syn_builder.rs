@@ -144,7 +144,7 @@ pub struct RecordBuilder<'a> {
 /// VariableReBindingBuilder
 #[derive(Clone, Copy)]
 pub struct VariableReBindingBuilder<'a> {
-    name: VariableIdentifier,
+    left: Expression<'a>,
     expr: Expression<'a>,
     set: u32,
     bind: u32,
@@ -1100,10 +1100,10 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Creates a VariableReBindingBuilder.
-    pub fn set(&self, pos: usize, len: usize, expr: Expression<'a>)
+    pub fn set(&self, left: Expression<'a>, expr: Expression<'a>)
         -> VariableReBindingBuilder<'a>
     {
-        VariableReBindingBuilder::new(pos, len, expr)
+        VariableReBindingBuilder::new(left, expr)
     }
 
     /// Creates a VariableBindingBuilder.
@@ -1116,9 +1116,9 @@ impl<'a> StmtFactory<'a> {
 
 impl<'a> VariableReBindingBuilder<'a> {
     /// Creates a new instance.
-    pub fn new(pos: usize, len: usize, expr: Expression<'a>) -> Self {
+    pub fn new(left: Expression<'a>, expr: Expression<'a>) -> Self {
         VariableReBindingBuilder {
-            name: VariableIdentifier(range((pos, len))),
+            left: left,
             expr: expr,
             set: U32_NONE,
             bind: U32_NONE,
@@ -1146,7 +1146,7 @@ impl<'a> VariableReBindingBuilder<'a> {
 
     /// Creates a VariableReBinding.
     pub fn build<T: convert::From<VariableReBinding<'a>>>(&self) -> T {
-        let range = self.name.0;
+        let range = self.left.range();
 
         let set = if self.set == U32_NONE {
             range.offset() as u32 - 5
@@ -1167,7 +1167,7 @@ impl<'a> VariableReBindingBuilder<'a> {
         };
 
         VariableReBinding {
-            name: self.name,
+            left: self.left,
             expr: self.expr,
             set: set,
             bind: bind,

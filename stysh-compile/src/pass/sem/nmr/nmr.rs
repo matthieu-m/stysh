@@ -160,8 +160,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         for &s in stmts {
             let stmt = match s {
                 syn::Statement::Set(set) => {
+                    let left = self.rescope(&scope).value_of_expr(&set.left);
                     let right = self.rescope(&scope).value_of_expr(&set.expr);
-                    let left = scope.lookup_binding(set.name.into());
                     sem::Stmt::Set(
                         sem::ReBinding {
                             left: left,
@@ -920,7 +920,7 @@ mod tests {
             env.value_of(
                 &e.block(e.var(28, 1))
                     .push_stmt(s.var(7, 1, e.int(12, 1)).build())
-                    .push_stmt(s.set(20, 1, e.int(25, 1)).build())
+                    .push_stmt(s.set(e.var(20, 1), e.int(25, 1)).build())
                     .build()
             ),
             Value {

@@ -29,6 +29,12 @@ pub struct ItemFactory<'a> {
     arena: &'a mem::Arena,
 }
 
+/// PatternFactory
+#[derive(Clone, Copy)]
+pub struct PatternFactory<'a> {
+    arena: &'a mem::Arena,
+}
+
 /// StmtFactory
 #[derive(Clone, Copy)]
 pub struct StmtFactory<'a>(marker::PhantomData<&'a ()>);
@@ -138,6 +144,10 @@ pub struct RecordBuilder<'a> {
 }
 
 //
+//  Pattern Builders
+//
+
+//
 //  Statement Builders
 //
 
@@ -154,7 +164,7 @@ pub struct VariableReBindingBuilder<'a> {
 /// VariableBindingBuilder
 #[derive(Clone, Copy)]
 pub struct VariableBindingBuilder<'a> {
-    name: VariableIdentifier,
+    pattern: Pattern<'a>,
     expr: Expression<'a>,
     var: u32,
     colon: u32,
@@ -203,8 +213,11 @@ impl<'a> Factory<'a> {
     /// Creates a ExprFactory.
     pub fn expr(&self) -> ExprFactory<'a> { ExprFactory::new(self.arena) }
 
-    /// Creates an ItemFactory
+    /// Creates an ItemFactory.
     pub fn item(&self) -> ItemFactory<'a> { ItemFactory::new(self.arena) }
+
+    /// Creates a PatternFactory.
+    pub fn pat(&self) -> PatternFactory<'a> { PatternFactory::new(self.arena) }
 
     /// Creates a StmtFactory.
     pub fn stmt(&self) -> StmtFactory<'a> { StmtFactory::new(self.arena) }
@@ -1091,6 +1104,26 @@ impl<'a> RecordBuilder<'a> {
 }
 
 //
+//  Implementations of Pattern builds
+//
+impl<'a> PatternFactory<'a> {
+    /// Creates an instance.
+    pub fn new(arena: &'a mem::Arena) -> PatternFactory<'a> {
+        PatternFactory { arena }
+    }
+
+    /// Creates a TupleBuilder.
+    pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
+        TupleBuilder::new(self.arena, |e| e.range())
+    }
+
+    /// Creates a Var Pattern.
+    pub fn var(&self, pos: usize, len: usize) -> Pattern<'a> {
+        Pattern::Var(VariableIdentifier(range((pos, len))))
+    }
+}
+
+//
 //  Implementations of Stmt builders
 //
 impl<'a> StmtFactory<'a> {
@@ -1107,10 +1140,10 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Creates a VariableBindingBuilder.
-    pub fn var(&self, pos: usize, len: usize, expr: Expression<'a>)
+    pub fn var(&self, pattern: Pattern<'a>, expr: Expression<'a>)
         -> VariableBindingBuilder<'a>
     {
-        VariableBindingBuilder::new(pos, len, expr)
+        VariableBindingBuilder::new(pattern, expr)
     }
 }
 
@@ -1178,9 +1211,9 @@ impl<'a> VariableReBindingBuilder<'a> {
 
 impl<'a> VariableBindingBuilder<'a> {
     /// Creates a new instance.
-    pub fn new(pos: usize, len: usize, expr: Expression<'a>) -> Self {
+    pub fn new(pattern: Pattern<'a>, expr: Expression<'a>) -> Self {
         VariableBindingBuilder {
-            name: VariableIdentifier(range((pos, len))),
+            pattern: pattern,
             expr: expr,
             var: U32_NONE,
             colon: U32_NONE,
@@ -1222,7 +1255,7 @@ impl<'a> VariableBindingBuilder<'a> {
 
     /// Creates a VariableBinding.
     pub fn build<T: convert::From<VariableBinding<'a>>>(&self) -> T {
-        let range = self.name.0;
+        let range = self.pattern.range();
 
         let var = if self.var == U32_NONE {
             range.offset() as u32 - 5
@@ -1250,7 +1283,7 @@ impl<'a> VariableBindingBuilder<'a> {
         };
 
         VariableBinding {
-            name: self.name,
+            pattern: self.pattern,
             type_: self.type_,
             expr: self.expr,
             var: var,

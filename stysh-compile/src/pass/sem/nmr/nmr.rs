@@ -172,7 +172,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 },
                 syn::Statement::Var(var) => {
                     let value = self.rescope(&scope).value_of_expr(&var.expr);
-                    let id = var.name.into();
+                    let id = if let syn::Pattern::Var(name) = var.pattern {
+                        name.into()
+                    } else {
+                        unimplemented!("Pattern {:?}", var.pattern);
+                    };
                     scope.add_value(id, value.type_);
                     sem::Stmt::Var(
                         sem::Binding::Variable(id, value, var.range())
@@ -908,8 +912,7 @@ mod tests {
     fn value_set_basic() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let s = syn.stmt();
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
 
@@ -919,7 +922,7 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.block(e.var(28, 1))
-                    .push_stmt(s.var(7, 1, e.int(12, 1)).build())
+                    .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
                     .push_stmt(s.set(e.var(20, 1), e.int(25, 1)).build())
                     .build()
             ),
@@ -949,8 +952,7 @@ mod tests {
     fn value_set_field() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let s = syn.stmt();
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         let env = Env::new(
             b"{ :var a := (1,); :set a.0 := 2; a }",
@@ -966,8 +968,7 @@ mod tests {
             env.value_of(
                 &e.block(e.var(33, 1))
                     .push_stmt(s.var(
-                        7,
-                        1,
+                        p.var(7, 1),
                         e.tuple().push(e.int(13, 1)).comma(14).build()
                     ).build())
                     .push_stmt(s.set(
@@ -1023,8 +1024,7 @@ mod tests {
     fn value_var_basic() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let s = syn.stmt();
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
@@ -1033,8 +1033,8 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
-                    .push_stmt(s.var(7, 1, e.int(12, 1)).build())
-                    .push_stmt(s.var(20, 1, e.int(25, 1)).build())
+                    .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
+                    .push_stmt(s.var(p.var(20, 1), e.int(25, 1)).build())
                     .build()
             ),
             Value {

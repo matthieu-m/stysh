@@ -4,7 +4,7 @@
 
 use std;
 
-use basic::mem;
+use basic::{com, mem};
 use model::tt;
 use model::syn::*;
 use pass::syn::typ;
@@ -18,6 +18,15 @@ pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     let expr = parser.parse();
     *raw = parser.into_raw();
     expr
+}
+
+pub fn parse_pattern<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> Pattern<'g>
+{
+    let mut parser = PatternParser::new(*raw);
+    let stmt = parser.parse();
+    *raw = parser.into_raw();
+    stmt
 }
 
 pub fn parse_statement<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
@@ -208,39 +217,27 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         Expression::Block(stmts, inner, o.range().extend(c.range()))
     }
 
-    fn parse_parens(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
+    fn parse_parens(
+        &mut self,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token
+    )
         -> Expression<'g>
     {
         Expression::Tuple(self.parse_tuple(ns, o, c))
     }
 
-    fn parse_tuple(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
+    fn parse_tuple(
+        &mut self,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token
+    )
         -> Tuple<'g, Expression<'g>>
     {
-        let mut inner = ExprParser::new(self.raw.spawn(ns));
-
-        let mut fields = self.raw.local_array();
-        let mut commas = self.raw.local_array();
-
-        while let Some(_) = inner.raw.peek() {
-            let e = inner.parse();
-            fields.push(e);
-
-            if let Some(c) = inner.raw.pop_kind(tt::Kind::SignComma) {
-                commas.push(c.range().offset() as u32)
-            } else {
-                commas.push(e.range().end_offset() as u32 - 1)
-            };
-        }
-
-        assert!(inner.into_raw().peek().is_none());
-
-        Tuple {
-            fields: self.raw.intern_slice(fields.into_slice()),
-            commas: self.raw.intern_slice(commas.into_slice()),
-            open: o.offset() as u32,
-            close: c.offset() as u32,
-        }
+        fn range(e: &Expression) -> com::Range { e.range() }
+        parse_tuple_impl(&mut self.raw, parse_expression, range, ns, o, c)
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
@@ -426,6 +423,61 @@ impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
 }
 
 //
+//  Implementation Details (Pattern)
+//
+struct PatternParser<'a, 'g, 'local> {
+    raw: RawParser<'a, 'g, 'local>,
+}
+
+impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
+    fn new(raw: RawParser<'a, 'g, 'local>) -> Self {
+        PatternParser { raw: raw }
+    }
+
+    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+
+    fn parse(&mut self) -> Pattern<'g> {
+        use model::tt::Kind as K;
+
+        match self.raw.peek_kind() {
+            Some(K::NameValue) => self.parse_name(),
+            Some(K::ParenthesisOpen) => self.parse_parens(),
+            Some(k) => unimplemented!("Expected identifier or tuple, got {:?}", k),
+            None => unimplemented!("Expected identifier or tuple, got nothing"),
+        }
+    }
+
+    fn parse_name(&mut self) -> Pattern<'g> {
+        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+        Pattern::Var(VariableIdentifier(name.range()))
+    }
+
+    fn parse_parens(&mut self) -> Pattern<'g> {
+        match self.raw.peek() {
+            Some(tt::Node::Braced(o, n, c)) => {
+                self.raw.pop_node();
+                self.parse_tuple(n, o, c)
+            },
+            n => unimplemented!("Expected tuple, got {:?}", n),
+        }
+    }
+
+    fn parse_tuple(
+        &mut self,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token
+    )
+        -> Pattern<'g>
+    {
+        fn range(p: &Pattern) -> com::Range { p.range() }
+        Pattern::Tuple(
+            parse_tuple_impl(&mut self.raw, parse_pattern, range, ns, o, c)
+        )
+    }
+}
+
+//
 //  Implementation Details (Statement)
 //
 struct StmtParser<'a, 'g, 'local> {
@@ -477,14 +529,14 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
                 .map(|t| t.offset() as u32)
                 .expect(":var");
 
-        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+        let pattern = parse_pattern(&mut self.raw);
 
         //  TODO(matthieum): parse type.
 
         let (expr, bind, semi) = self.parse_bind();
 
         Statement::Var(VariableBinding {
-            name: VariableIdentifier(name.range()),
+            pattern: pattern,
             type_: None,
             expr: expr,
             var: var,
@@ -510,6 +562,45 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
                 .unwrap_or(expr.range().end_offset() - 1) as u32;
 
         (expr, bind, semi)
+    }
+}
+
+//
+//  Implementation Details (Tuple)
+//
+fn parse_tuple_impl<'a, 'g, 'local, T: Copy + 'g>(
+    raw: &mut RawParser<'a, 'g, 'local>,
+    inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
+    range: fn(&T) -> com::Range,
+    ns: &'a [tt::Node<'a>],
+    o: tt::Token,
+    c: tt::Token,
+)
+    -> Tuple<'g, T>
+{
+    let mut fields = raw.local_array();
+    let mut commas = raw.local_array();
+
+    let mut inner = raw.spawn(ns);
+
+    while let Some(_) = inner.peek() {
+        let f = inner_parser(&mut inner);
+        fields.push(f);
+
+        if let Some(c) = inner.pop_kind(tt::Kind::SignComma) {
+            commas.push(c.range().offset() as u32)
+        } else {
+            commas.push(range(&f).end_offset() as u32 - 1)
+        };
+    }
+
+    assert!(inner.peek().is_none());
+
+    Tuple {
+        fields: raw.intern_slice(fields.into_slice()),
+        commas: raw.intern_slice(commas.into_slice()),
+        open: o.offset() as u32,
+        close: c.offset() as u32,
     }
 }
 
@@ -540,7 +631,7 @@ mod tests {
 
         assert_eq!(
             stmtit(&global_arena, b" :var fool := 1234;"),
-            syn.stmt().var(6, 4, syn.expr().int(14, 4)).build()
+            syn.stmt().var(syn.pat().var(6, 4), syn.expr().int(14, 4)).build()
         );
     }
 
@@ -552,7 +643,7 @@ mod tests {
         assert_eq!(
             stmtit(&global_arena, b" :var fool 1234"),
             syn.stmt()
-                .var(6, 4, syn.expr().int(11, 4))
+                .var(syn.pat().var(6, 4), syn.expr().int(11, 4))
                 .bind(0)
                 .semi_colon(14)
                 .build()
@@ -563,13 +654,13 @@ mod tests {
     fn basic_block() {
         let global_arena = mem::Arena::new();
         let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         assert_eq!(
             exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
             e.block(e.var(29, 4))
                 .range(0, 35)
-                .push_stmt(syn.stmt().var(11, 4, e.int(19, 4)).build())
+                .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
                 .build()
         );
     }
@@ -628,7 +719,7 @@ mod tests {
     fn basic_function_call() {
         let global_arena = mem::Arena::new();
         let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         assert_eq!(
             exprit(&global_arena, b"basic(1, 2)"),
@@ -640,15 +731,14 @@ mod tests {
 
         assert_eq!(
             stmtit(&global_arena, b":var a := basic(1, 2);"),
-            syn.stmt()
-                .var(
-                    5, 1,
-                    e.function_call(e.var(10, 5), 15, 20)
-                        .push_argument(e.int(16, 1))
-                        .push_argument(e.int(19, 1))
-                        .build(),
-                )
-                .build()
+            s.var(
+                p.var(5, 1),
+                e.function_call(e.var(10, 5), 15, 20)
+                    .push_argument(e.int(16, 1))
+                    .push_argument(e.int(19, 1))
+                    .build(),
+            )
+            .build()
         );
     }
 
@@ -682,10 +772,11 @@ mod tests {
     fn boolean_basic() {
         let global_arena = mem::Arena::new();
         let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         assert_eq!(
             stmtit(&global_arena, b":var x := true;"),
-            syn.stmt().var(5, 1, syn.expr().bool_(10, 4)).build()
+            s.var(p.var(5, 1), e.bool_(10, 4)).build()
         );
     }
 
@@ -736,6 +827,21 @@ mod tests {
             syn.stmt().set(
                 e.field_access(e.var(6, 3)).build(),
                 e.int(15, 4)
+            ).build()
+        );
+    }
+
+    #[test]
+    fn var_tuple() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+
+        assert_eq!(
+            stmtit(&global_arena, b":var (a, b) := (1, 2);"),
+            s.var(
+                p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
+                e.tuple().push(e.int(16, 1)).push(e.int(19, 1)).build(),
             ).build()
         );
     }

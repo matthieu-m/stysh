@@ -63,6 +63,15 @@ pub enum Item<'a> {
     Rec(Record<'a>),
 }
 
+/// A Pattern.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Pattern<'a> {
+    /// A tuple.
+    Tuple(Tuple<'a, Pattern<'a>>),
+    /// A variable identifier.
+    Var(VariableIdentifier),
+}
+
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Statement<'a> {
@@ -246,8 +255,7 @@ pub enum Literal<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct VariableBinding<'a> {
     /// Name of the binding.
-    //  TODO(matthieum): make a pattern.
-    pub name: VariableIdentifier,
+    pub pattern: Pattern<'a>,
     /// Type of the binding, if specified.
     pub type_: Option<Type<'a>>,
     /// Expression being bound.
@@ -328,6 +336,9 @@ pub struct FieldIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct VariableIdentifier(pub com::Range);
 
+//
+//  Implementations
+//
 impl<'a> Node<'a> {
     /// Returns the range spanned by the node.
     pub fn range(&self) -> com::Range {
@@ -371,6 +382,18 @@ impl<'a> Item<'a> {
             Enum(e) => e.range(),
             Fun(fun) => fun.range(),
             Rec(r) => r.range(),
+        }
+    }
+}
+
+impl<'a> Pattern<'a> {
+    /// Returns the range spanned by the item.
+    pub fn range(&self) -> com::Range {
+        use self::Pattern::*;
+
+        match *self {
+            Tuple(t) => t.range(),
+            Var(v) => v.range(),
         }
     }
 }
@@ -703,6 +726,12 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
     fn from(r: Record<'a>) -> Item<'a> { Item::Rec(r) }
 }
 
+impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
+    fn from(t: Tuple<'a, Pattern<'a>>) -> Pattern<'a> {
+        Pattern::Tuple(t)
+    }
+}
+
 impl<'a> convert::From<VariableBinding<'a>> for Statement<'a> {
     fn from(v: VariableBinding<'a>) -> Statement<'a> { Statement::Var(v) }
 }
@@ -865,9 +894,10 @@ mod tests {
     fn range_stmt_variable_binding() {
         let global_arena = mem::Arena::new();
         let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
 
         //  "     :var fool := 1234;"
-        let mut var = syn.stmt().var(10, 4, syn.expr().int(18, 4));
+        let mut var = s.var(p.var(10, 4), e.int(18, 4));
 
         let with_semi: Statement = var.build();
         assert_eq!(with_semi.range(), range(5, 18));

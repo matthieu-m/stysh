@@ -149,14 +149,24 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        type_: sem::Type<'g>,
+        t: sem::Type<'g>,
     )
     {
+        //  TODO(matthieum): The binding may already have been created by
+        //                   push_instr, which should not be necessary.
         for b in self.bindings.as_slice() {
-            assert_ne!(b.0, binding);
+            if b.0 == binding {
+                assert_eq!(
+                    b.1, id, "{:?} bound to {:?} cannot bind to {:?}", b.0, b.1, id
+                );
+                assert_eq!(
+                    b.2, t, "{:?} bound to {:?} cannot bind to {:?}", b.0, b.2, t
+                );
+                return;
+            }
         }
 
-        self.bindings.push((binding, id, type_));
+        self.bindings.push((binding, id, t));
     }
 
     pub fn push_rebinding(

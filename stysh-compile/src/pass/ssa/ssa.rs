@@ -189,15 +189,11 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 sem::Stmt::Set(re) => {
                     current = self.convert_rebind(current, re);
                 },
-                sem::Stmt::Var(sem::Binding::Variable(var, value, _)) => {
+                sem::Stmt::Var(sem::Binding::Variable(pat, value, _)) => {
                     current = self.convert_value(current, &value);
                     let id = current.last_value();
-                    let var = if let sem::Pattern::Var(var) = var {
-                        var
-                    } else {
-                        unimplemented!("Pattern {:?}", var)
-                    };
-                    current.push_binding(var.0.into(), id, value.type_);
+                    current =
+                        self.convert_pattern(current, id, pat, value.type_);
                 },
                 sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
             }
@@ -421,6 +417,46 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         -> ProtoBlock<'g, 'local>
     {
         current.push_instr(sir::Instruction::Load(val, range));
+        current
+    }
+
+    fn convert_pattern(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        matched: sir::ValueId,
+        pattern: sem::Pattern<'g>,
+        type_: sem::Type<'g>,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        fn extract_tuple_types<'b>(t: sem::Type<'b>) -> &'b [sem::Type<'b>] {
+            if let sem::Type::Tuple(ref t) = t {
+                return &t.fields;
+            }
+
+            unimplemented!("Expected tuple, got {:?}", t);
+        }
+
+        match pattern {
+            sem::Pattern::Tuple(pat) => {
+                let types = extract_tuple_types(type_);
+                assert_eq!(pat.fields.len(), types.len());
+
+                for (index, (p, t)) in
+                    pat.fields.iter().zip(types.iter()).enumerate() {
+                    let i = index as u16;
+                    current.push_instr(
+                        sir::Instruction::Field(*t, matched, i, p.range())
+                    );
+                    let id = current.last_value();
+                    current = self.convert_pattern(current, id, *p, *t);
+                }
+            },
+            sem::Pattern::Var(var) => {
+                current.push_binding(var.0.into(), matched, type_);
+            },
+        };
+
         current
     }
 
@@ -868,7 +904,7 @@ mod tests {
             valueit(
                 &global_arena,
                 &Value {
-                    type_: Type::Builtin(BuiltinType::Int),
+                    type_: int,
                     range: range(0, 35),
                     expr: Expr::Block(
                         &[
@@ -977,6 +1013,58 @@ mod tests {
                 "    $10 := new (Int, (Int, Int)) ($9, $8) ; 0@0",
                 //  a
                 "    return $10",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn block_tuple_binding() {
+        let global_arena = mem::Arena::new();
+        let int = Type::Builtin(BuiltinType::Int);
+
+        //  { :var (a, b) := (1, 2); a }
+        let (a, b) = (value(8, 1), value(11, 1));
+
+        assert_eq!(
+            valueit(
+                &global_arena,
+                &Value {
+                    type_: int,
+                    range: range(0, 28),
+                    expr: Expr::Block(
+                        &[
+                            Stmt::Var(Binding::Variable(
+                                Pattern::Tuple(Tuple {
+                                    fields: &[Pattern::Var(a), Pattern::Var(b)]
+                                }),
+                                Value {
+                                    type_: Type::Tuple(
+                                        Tuple { fields: &[int, int] }
+                                    ),
+                                    range: range(17, 6),
+                                    expr: Expr::Tuple(Tuple {
+                                        fields: &[
+                                            lit_integral(1, 18, 1),
+                                            lit_integral(2, 21, 1),
+                                        ]
+                                    })
+                                },
+                                range(2, 22)
+                            )),
+                        ],
+                        &resolved_variable(a, int),
+                    )
+                }
+            ).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 1 ; 1@18",
+                "    $1 := load 2 ; 1@21",
+                "    $2 := new (Int, Int) ($0, $1) ; 6@17",
+                "    $3 := field 0 of $2 ; 1@8",
+                "    $4 := field 1 of $2 ; 1@11",
+                "    return $3",
                 ""
             ])
         );

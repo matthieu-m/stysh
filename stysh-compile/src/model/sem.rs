@@ -330,6 +330,26 @@ impl<'a> Callable<'a> {
     }
 }
 
+impl<'a> Pattern<'a> {
+    /// Returns the range spanned by the pattern.
+    pub fn range(&self) -> com::Range {
+        use self::Pattern::*;
+
+        match *self {
+            Tuple(t) => {
+                if t.fields.len() == 0 {
+                    Default::default()
+                } else {
+                    let first = t.fields.first().unwrap();
+                    let last = t.fields.last().unwrap();
+                    first.range().extend(last.range())
+                }
+            },
+            Var(v) => v.0,
+        }
+    }
+}
+
 impl<'a> Prototype<'a> {
     /// Returns the range spanned by the prototype.
     pub fn range(&self) -> com::Range {

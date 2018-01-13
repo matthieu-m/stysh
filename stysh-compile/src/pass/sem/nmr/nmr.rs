@@ -46,6 +46,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    /// Translates a pattern into... a pattern!
+    pub fn pattern_of(&mut self, p: &syn::Pattern) -> sem::Pattern<'g> {
+        use model::syn::Pattern;
+
+        match *p {
+            Pattern::Tuple(t) => self.pattern_of_tuple(&t),
+            Pattern::Var(v) => self.pattern_of_var(v),
+        }
+    }
+
     /// Translates a type into... a type!
     pub fn type_of(&mut self, t: &syn::Type) -> sem::Type<'g> {
         use model::syn::Type;
@@ -70,6 +80,25 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn pattern_of_tuple(&mut self, t: &syn::Tuple<syn::Pattern>)
+        -> sem::Pattern<'g>
+    {
+        let mut fields =
+            mem::Array::with_capacity(t.fields.len(), self.global_arena);
+
+        for f in t.fields {
+            fields.push(self.pattern_of(f));
+        }
+
+        sem::Pattern::Tuple(sem::Tuple { fields: fields.into_slice() })
+    }
+
+    fn pattern_of_var(&self, var: syn::VariableIdentifier)
+        -> sem::Pattern<'g>
+    {
+        sem::Pattern::Var(var.into())
+    }
+
     fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
         -> sem::Type<'g>
     {
@@ -172,14 +201,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 },
                 syn::Statement::Var(var) => {
                     let value = self.rescope(&scope).value_of_expr(&var.expr);
-                    let id = if let syn::Pattern::Var(name) = var.pattern {
-                        name.into()
-                    } else {
-                        unimplemented!("Pattern {:?}", var.pattern);
-                    };
-                    scope.add_value(id, value.type_);
+                    let pattern = self.pattern_of(&var.pattern);
+                    scope.add_pattern(pattern, value.type_);
                     sem::Stmt::Var(
-                        sem::Binding::Variable(id, value, var.range())
+                        sem::Binding::Variable(pattern, value, var.range())
                     )
                 },
             };
@@ -932,7 +957,7 @@ mod tests {
                 expr: Expr::Block(
                     &[
                         Stmt::Var(Binding::Variable(
-                            ValueIdentifier(a),
+                            Pattern::Var(ValueIdentifier(a)),
                             int(1, range(12, 1)),
                             range(2, 12)
                         )),
@@ -983,7 +1008,7 @@ mod tests {
                 expr: Expr::Block(
                     &[
                         Stmt::Var(Binding::Variable(
-                            a,
+                            Pattern::Var(a),
                             Value {
                                 type_: t_tuple,
                                 range: range(12, 4),
@@ -1043,12 +1068,12 @@ mod tests {
                 expr: Expr::Block(
                     &[
                         Stmt::Var(Binding::Variable(
-                            ValueIdentifier(a),
+                            Pattern::Var(ValueIdentifier(a)),
                             int(1, range(12, 1)),
                             range(2, 12)
                         )),
                         Stmt::Var(Binding::Variable(
-                            ValueIdentifier(b),
+                            Pattern::Var(ValueIdentifier(b)),
                             int(2, range(25, 1)),
                             range(15, 12)
                         )),
@@ -1061,6 +1086,60 @@ mod tests {
                             &[ int_ref(a, range(28, 1)), int_ref(b, range(32, 1)) ]
                         ),
                     }
+                )
+            }
+        );
+    }
+
+    #[test]
+    fn value_var_pattern_tuple() {
+        let global_arena = mem::Arena::new();
+        let syn = SynFactory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+
+        let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
+
+        let (a, b) = (range(8, 1), range(11, 1));
+
+        let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
+        let expr = e.tuple().push(e.int(18, 1)).push(e.int(21, 1)).build();
+
+        let i = Type::Builtin(BuiltinType::Int);
+
+        assert_eq!(
+            env.value_of(
+                &e.block(e.var(25, 1))
+                    .push_stmt(s.var(pat, expr).build())
+                    .build()
+            ),
+            Value {
+                type_: i,
+                range: range(0, 28),
+                expr: Expr::Block(
+                    &[
+                        Stmt::Var(Binding::Variable(
+                            Pattern::Tuple(Tuple {
+                                fields: &[
+                                    Pattern::Var(ValueIdentifier(a)),
+                                    Pattern::Var(ValueIdentifier(b)),
+                                ],
+                            }),
+                            Value {
+                                type_: Type::Tuple(Tuple {
+                                    fields: &[i, i],
+                                }),
+                                range: range(17, 6),
+                                expr: Expr::Tuple(Tuple {
+                                    fields: &[
+                                        int(1, range(18, 1)),
+                                        int(2, range(21, 1)),
+                                    ],
+                                }),
+                            },
+                            range(2, 22)
+                        )),
+                    ],
+                    &int_ref(a, range(25, 1)),
                 )
             }
         );

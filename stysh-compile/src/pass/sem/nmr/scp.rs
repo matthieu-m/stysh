@@ -141,6 +141,27 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
         );
     }
 
+    /// Adds a new pattern to the scope.
+    pub fn add_pattern(&mut self, pat: Pattern<'g>, type_: Type<'g>) {
+        fn type_of_field<'b>(type_: Type<'b>, index: usize) -> Type<'b> {
+            let unresolved = Type::Unresolved(ItemIdentifier::unresolved());
+            if let Type::Tuple(type_) = type_ {
+                type_.fields.get(index).cloned().unwrap_or(unresolved)
+            } else {
+                unresolved
+            }
+        }
+
+        match pat {
+            Pattern::Tuple(tuple) => {
+                for (index, pat) in tuple.fields.iter().enumerate() {
+                    self.add_pattern(*pat, type_of_field(type_, index))
+                }
+            },
+            Pattern::Var(id) => self.add_value(id, type_),
+        }
+    }
+
     /// Adds a new value identifier to the scope.
     pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
         self.values.insert(&self.source[id.0], (id, type_));

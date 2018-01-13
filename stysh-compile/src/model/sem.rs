@@ -71,7 +71,7 @@ pub enum Binding<'a> {
     /// A function argument.
     Argument(ValueIdentifier, Type<'a>, com::Range),
     /// A variable declaration.
-    Variable(ValueIdentifier, Value<'a>, com::Range),
+    Variable(Pattern<'a>, Value<'a>, com::Range),
 }
 
 /// A re-binding.
@@ -112,6 +112,15 @@ pub enum Expr<'a> {
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
     VariableRef(ValueIdentifier),
+}
+
+/// A Pattern
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Pattern<'a> {
+    /// A tuple.
+    Tuple(Tuple<'a, Pattern<'a>>),
+    /// A variable.
+    Var(ValueIdentifier),
 }
 
 /// A built-in value, the type is implicit.
@@ -432,6 +441,19 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Pattern<'a> {
+    type Output = Pattern<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Pattern::*;
+
+        match *self {
+            Tuple(t) => Tuple(arena.intern(&t)),
+            Var(v) => Var(v),
+        }
+    }
+}
+
 impl<'a, 'target> CloneInto<'target> for Binding<'a> {
     type Output = Binding<'target>;
 
@@ -441,8 +463,8 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
         match *self {
             Argument(id, type_, range)
                 => Argument(id, arena.intern(&type_), range),
-            Variable(id, value, range)
-                => Variable(id, arena.intern(&value), range),
+            Variable(pat, value, range)
+                => Variable(arena.intern(&pat), arena.intern(&value), range),
         }
     }
 }

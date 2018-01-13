@@ -192,6 +192,11 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 sem::Stmt::Var(sem::Binding::Variable(var, value, _)) => {
                     current = self.convert_value(current, &value);
                     let id = current.last_value();
+                    let var = if let sem::Pattern::Var(var) = var {
+                        var
+                    } else {
+                        unimplemented!("Pattern {:?}", var)
+                    };
                     current.push_binding(var.0.into(), id, value.type_);
                 },
                 sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
@@ -814,12 +819,12 @@ mod tests {
                     expr: Expr::Block(
                         &[
                             Stmt::Var(Binding::Variable(
-                                a,
+                                Pattern::Var(a),
                                 lit_integral(1, 12, 1),
                                 range(2, 12)
                             )),
                             Stmt::Var(Binding::Variable(
-                                b,
+                                Pattern::Var(b),
                                 lit_integral(2, 25, 1),
                                 range(15, 12)
                             )),
@@ -868,7 +873,7 @@ mod tests {
                     expr: Expr::Block(
                         &[
                             Stmt::Var(Binding::Variable(
-                                a,
+                                Pattern::Var(a),
                                 lit_integral(1, 12, 1),
                                 range(2, 12)
                             )),
@@ -913,7 +918,7 @@ mod tests {
                     expr: Expr::Block(
                         &[
                             Stmt::Var(Binding::Variable(
-                                a,
+                                Pattern::Var(a),
                                 Value {
                                     type_: t_a,
                                     range: range(12, 11),

@@ -12,7 +12,7 @@
 //! The structures are parameterized by the lifetime of the arena providing the
 //! memory for their members.
 
-use std;
+use std::{convert, fmt};
 
 use basic::{com, mem};
 use basic::mem::CloneInto;
@@ -118,7 +118,7 @@ pub enum Expr<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Pattern<'a> {
     /// A tuple.
-    Tuple(Tuple<'a, Pattern<'a>>),
+    Tuple(Tuple<'a, Pattern<'a>>, com::Range),
     /// A variable.
     Var(ValueIdentifier),
 }
@@ -278,7 +278,7 @@ pub struct Function<'a> {
     pub body: Value<'a>,
 }
 
-/// An full-fledged item.
+/// A full-fledged item.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Item<'a> {
     /// A full-fledged enum definition.
@@ -297,10 +297,41 @@ pub struct ItemIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub com::Range);
 
+impl<'a> Stmt<'a> {
+    /// Range spanned by the statement.
+    pub fn range(&self) -> com::Range {
+        use self::Stmt::*;
+
+        match *self {
+            Set(r) => r.range(),
+            Var(b) => b.range(),
+        }
+    }
+}
+
 impl<'a> Type<'a> {
     /// Returns an unresolved type.
     pub fn unresolved() -> Type<'a> {
         Type::Unresolved(ItemIdentifier::unresolved())
+    }
+}
+
+impl<'a> Value<'a> {
+    /// Sets the range.
+    pub fn with_range(mut self, pos: usize, len: usize) -> Value<'a> {
+        self.range = com::Range::new(pos, len);
+        self
+    }
+}
+
+impl<'a> Binding<'a> {
+    /// Range spanned by the binding.
+    pub fn range(&self) -> com::Range {
+        use self::Binding::*;
+
+        match *self {
+            Argument(_, _, r) | Variable(_, _, r) => r,
+        }
     }
 }
 
@@ -336,15 +367,7 @@ impl<'a> Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
-            Tuple(t) => {
-                if t.fields.len() == 0 {
-                    Default::default()
-                } else {
-                    let first = t.fields.first().unwrap();
-                    let last = t.fields.last().unwrap();
-                    first.range().extend(last.range())
-                }
-            },
+            Tuple(_, r) => r,
             Var(v) => v.0,
         }
     }
@@ -361,6 +384,11 @@ impl<'a> Prototype<'a> {
             Rec(r) => r.range,
         }
     }
+}
+
+impl<'a> ReBinding<'a> {
+    /// Range spanned by the re-binding.
+    pub fn range(&self) -> com::Range { self.range }
 }
 
 impl BuiltinFunction {
@@ -387,6 +415,9 @@ impl BuiltinFunction {
 }
 
 impl ItemIdentifier {
+    /// Returns the range spanned by the ItemIdentifier.
+    pub fn range(&self) -> com::Range { self.0 }
+
     /// Returns a sentinel instance of ItemIdentifier.
     pub fn unresolved() -> ItemIdentifier {
         ItemIdentifier(com::Range::new(0, 0))
@@ -394,6 +425,9 @@ impl ItemIdentifier {
 }
 
 impl ValueIdentifier {
+    /// Returns the range spanned by the ValueIdentifier.
+    pub fn range(&self) -> com::Range { self.0 }
+
     /// Returns a sentinel instance of ValueIdentifier.
     pub fn unresolved() -> ItemIdentifier {
         ItemIdentifier(com::Range::new(0, 0))
@@ -468,7 +502,7 @@ impl<'a, 'target> CloneInto<'target> for Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
-            Tuple(t) => Tuple(arena.intern(&t)),
+            Tuple(t, r) => Tuple(arena.intern(&t), r),
             Var(v) => Var(v),
         }
     }
@@ -641,8 +675,12 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
     }
 }
 
-impl<'a> std::convert::From<BuiltinValue<'a>> for bool {
-    fn from(value: BuiltinValue<'a>) -> bool {
+//
+//  From Implementations
+//
+
+impl<'a> convert::From<BuiltinValue<'a>> for bool {
+    fn from(value: BuiltinValue<'a>) -> Self {
         match value {
             BuiltinValue::Bool(b) => b,
             _ => panic!("{} is not a boolean", value),
@@ -650,8 +688,8 @@ impl<'a> std::convert::From<BuiltinValue<'a>> for bool {
     }
 }
 
-impl<'a> std::convert::From<BuiltinValue<'a>> for i64 {
-    fn from(value: BuiltinValue<'a>) -> i64 {
+impl<'a> convert::From<BuiltinValue<'a>> for i64 {
+    fn from(value: BuiltinValue<'a>) -> Self {
         match value {
             BuiltinValue::Int(i) => i,
             _ => panic!("{} is not an integer", value),
@@ -659,30 +697,88 @@ impl<'a> std::convert::From<BuiltinValue<'a>> for i64 {
     }
 }
 
-impl std::convert::From<syn::VariableIdentifier> for ValueIdentifier {
-    fn from(value: syn::VariableIdentifier) -> ValueIdentifier {
+impl convert::From<syn::VariableIdentifier> for ValueIdentifier {
+    fn from(value: syn::VariableIdentifier) -> Self {
         ValueIdentifier(value.range())
     }
 }
 
-impl std::convert::From<syn::TypeIdentifier> for ItemIdentifier {
-    fn from(value: syn::TypeIdentifier) -> ItemIdentifier {
+impl convert::From<syn::TypeIdentifier> for ItemIdentifier {
+    fn from(value: syn::TypeIdentifier) -> Self {
         ItemIdentifier(value.range())
     }
+}
+
+impl<'a> convert::From<Tuple<'a, Value<'a>>> for Expr<'a> {
+    fn from(t: Tuple<'a, Value<'a>>) -> Self { Expr::Tuple(t) }
+}
+
+impl<'a> convert::From<Enum<'a>> for Item<'a> {
+    fn from(e: Enum<'a>) -> Self { Item::Enum(e) }
+}
+
+impl<'a> convert::From<Function<'a>> for Item<'a> {
+    fn from(f: Function<'a>) -> Self { Item::Fun(f) }
+}
+
+impl<'a> convert::From<Record<'a>> for Item<'a> {
+    fn from(r: Record<'a>) -> Self { Item::Rec(r) }
+}
+
+impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
+    fn from(t: Tuple<'a, Pattern<'a>>) -> Self {
+        let f = &t.fields;
+        let off = f.first().map(|p| p.range().offset() - 1).unwrap_or(0);
+        let end = f.last().map(|p| p.range().end_offset() + 1).unwrap_or(0);
+
+        Pattern::Tuple(t, com::Range::new(off, end - off))
+    }
+}
+
+impl convert::From<EnumProto> for Prototype<'static> {
+    fn from(e: EnumProto) -> Self { Prototype::Enum(e) }
+}
+
+impl<'a> convert::From<FunctionProto<'a>> for Prototype<'a> {
+    fn from(f: FunctionProto<'a>) -> Self { Prototype::Fun(f) }
+}
+
+impl convert::From<RecordProto> for Prototype<'static> {
+    fn from(r: RecordProto) -> Self { Prototype::Rec(r) }
+}
+
+impl<'a> convert::From<ReBinding<'a>> for Stmt<'a> {
+    fn from(r: ReBinding<'a>) -> Self { Stmt::Set(r) }
+}
+
+impl<'a> convert::From<Binding<'a>> for Stmt<'a> {
+    fn from(b: Binding<'a>) -> Self { Stmt::Var(b) }
+}
+
+impl convert::From<EnumProto> for Type<'static> {
+    fn from(e: EnumProto) -> Self { Type::Enum(e) }
+}
+
+impl convert::From<RecordProto> for Type<'static> {
+    fn from(r: RecordProto) -> Self { Type::Rec(r) }
+}
+
+impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
+    fn from(t: Tuple<'a, Type<'a>>) -> Self { Type::Tuple(t) }
 }
 
 
 //
 //  Implementation Details
 //
-impl std::fmt::Display for BuiltinType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl fmt::Display for BuiltinType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{:?}", self)
     }
 }
 
-impl<'a> std::fmt::Display for BuiltinValue<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for BuiltinValue<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             BuiltinValue::Bool(b) =>
                 write!(f, "{}", if b { "true" } else { "false" }),
@@ -692,8 +788,8 @@ impl<'a> std::fmt::Display for BuiltinValue<'a> {
     }
 }
 
-impl std::fmt::Display for BuiltinFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl fmt::Display for BuiltinFunction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::BuiltinFunction::*;
 
         match *self {
@@ -715,8 +811,8 @@ impl std::fmt::Display for BuiltinFunction {
     }
 }
 
-impl<'a> std::fmt::Display for Callable<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for Callable<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::Callable::*;
 
         match *self {
@@ -735,17 +831,17 @@ impl<'a> std::fmt::Display for Callable<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for ItemIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for ItemIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "<{}>", self.0)
     }
 }
 
-impl<'a, T> std::fmt::Display for Tuple<'a, T>
+impl<'a, T> fmt::Display for Tuple<'a, T>
     where
-        T: std::fmt::Display
+        T: fmt::Display
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "(")?;
         for (i, e) in self.fields.iter().enumerate() {
             if i != 0 { write!(f, ", ")? }
@@ -755,8 +851,8 @@ impl<'a, T> std::fmt::Display for Tuple<'a, T>
     }
 }
 
-impl<'a> std::fmt::Display for Type<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for Type<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             Type::Builtin(t) => write!(f, "{}", t),
             Type::Enum(e) => write!(f, "{}", e.name),

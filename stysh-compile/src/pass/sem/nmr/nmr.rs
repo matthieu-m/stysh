@@ -90,7 +90,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             fields.push(self.pattern_of(f));
         }
 
-        sem::Pattern::Tuple(sem::Tuple { fields: fields.into_slice() })
+        sem::Pattern::Tuple(
+            sem::Tuple { fields: fields.into_slice() },
+            t.range(),
+        )
     }
 
     fn pattern_of_var(&self, var: syn::VariableIdentifier)
@@ -655,28 +658,21 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::syn;
+    use model::{syn, sem};
     use model::syn_builder::Factory as SynFactory;
-    use model::sem::*;
-    use model::sem::mocks::MockRegistry;
+    use model::sem_builder::Factory as SemFactory;
     use super::super::scp::mocks::MockScope;
 
     #[test]
     fn value_basic_add() {
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
+        let v = SemFactory::new(&global_arena).value();
         let env = Env::new(b"1 + 2", &global_arena);
 
         assert_eq!(
             env.value_of(&e.bin_op(e.int(0, 1), e.int(4, 1)).build()),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(0, 5),
-                expr: Expr::Call(
-                    Callable::Builtin(BuiltinFunction::Add),
-                    &[ int(1, range(0, 1)), int(2, range(4, 1)) ],
-                )
-            }
+            v.call().push(v.int(1, 0)).push(v.int(2, 4)).build()
         );
     }
 
@@ -684,11 +680,12 @@ mod tests {
     fn value_basic_boolean() {
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
+        let v = SemFactory::new(&global_arena).value();
         let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
             env.value_of(&e.bool_(0, 4)),
-            boolean(true, range(0, 4))
+            v.bool_(true, 0)
         );
     }
 
@@ -696,22 +693,19 @@ mod tests {
     fn value_basic_constructor() {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+
         let mut env = Env::new(b"Rec", &global_arena);
 
-        let registered = ItemIdentifier(range(0, 3));
-        let basic_rec_prototype = RecordProto {
-            name: registered,
-            range: range(45, 3),
-            enum_: ItemIdentifier::unresolved()
-        };
-
-        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+        let rec = p.rec(i.id(45, 3), 0).build();
+        env.scope.types.insert(i.id(0, 3), sem::Type::Rec(rec));
 
         assert_eq!(
             env.value_of(
                 &syn.expr().constructor(syn.type_().simple(0, 3)).build()
             ),
-            rec(basic_rec_prototype, &[], range(0, 3))
+            v.constructor(rec).build().with_range(0, 3)
         );
     }
 
@@ -720,16 +714,14 @@ mod tests {
         let global_arena = mem::Arena::new();
         let syn = SynFactory::new(&global_arena);
         let e = syn.expr();
+
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+
         let mut env = Env::new(b"Rec(1)", &global_arena);
 
-        let registered = ItemIdentifier(range(0, 3));
-        let basic_rec_prototype = RecordProto {
-            name: registered,
-            range: range(45, 3),
-            enum_: ItemIdentifier::unresolved()
-        };
-
-        env.scope.types.insert(registered, Type::Rec(basic_rec_prototype));
+        let rec = p.rec(i.id(45, 3), 0).build();
+        env.scope.types.insert(i.id(0, 3), sem::Type::Rec(rec));
 
         assert_eq!(
             env.value_of(
@@ -738,7 +730,7 @@ mod tests {
                     .push_argument(e.int(4, 1))
                     .build()
             ),
-            rec(basic_rec_prototype, &[ int(1, range(4, 1)) ], range(0, 6))
+            v.constructor(rec).push(v.int(1, 4)).build().with_range(0, 6)
         );
     }
 
@@ -748,17 +740,17 @@ mod tests {
         let syn = SynFactory::new(&global_arena);
         let e = syn.expr();
 
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+
         let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
 
-        let record = env.insert_record(
-            RecordProto {
-                name: ItemIdentifier(range(5, 3)),
-                range: range(0, 14),
-                enum_: ItemIdentifier::unresolved(),
-            },
-            &[Type::Builtin(BuiltinType::Int)],
-            &[range(15, 3)],
-        );
+        let rec =
+            i.rec(p.rec(i.id(5, 3), 0).range(0, 14).build())
+                .push(t.int())
+                .build();
+
+        env.insert_record(rec, &[15]);
 
         assert_eq!(
             env.value_of(
@@ -769,31 +761,24 @@ mod tests {
                         .build(),
                 ).build()
             ),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(15, 9),
-                expr: Expr::FieldAccess(
-                    &rec(
-                        *record.prototype,
-                        &[ int(42, range(19, 2)) ],
-                        range(15, 7)
-                    ),
-                    0
-                )
-            }
+            v.field_access(
+                0,
+                v.constructor(*rec.prototype)
+                    .push(v.int(42, 19))
+                    .build()
+                    .with_range(15, 7)
+            ).build()
         );
     }
 
     #[test]
     fn value_basic_tuple_field_access() {
-        let int_type = Type::Builtin(BuiltinType::Int);
-
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
 
-        let env = Env::new(b"(42, 43).1", &global_arena);
+        let v = SemFactory::new(&global_arena).value();
 
-        let (arg0, arg1) = (range(1, 2), range(5, 2));
+        let env = Env::new(b"(42, 43).1", &global_arena);
 
         assert_eq!(
             env.value_of(
@@ -801,22 +786,10 @@ mod tests {
                     e.tuple().push(e.int(1, 2)).push(e.int(5, 2)).build(),
                 ).build()
             ),
-            Value {
-                type_: int_type,
-                range: range(0, 10),
-                expr: Expr::FieldAccess(
-                    &Value {
-                        type_: Type::Tuple(Tuple {
-                            fields: &[int_type, int_type]
-                        }),
-                        range: range(0, 8),
-                        expr: Expr::Tuple(Tuple {
-                            fields: &[ int(42, arg0), int(43, arg1) ],
-                        }),
-                    },
-                    1
-                )
-            }
+            v.field_access(
+                1,
+                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build()
+            ).build()
         )
     }
 
@@ -826,18 +799,21 @@ mod tests {
         let syn = SynFactory::new(&global_arena);
         let e = syn.expr();
 
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
             &global_arena
         );
 
-        let enum_ = env.add_enum_unit(range(6, 6), range(0, 21), &[range(15, 4)]);
-        let rec_prototype = enum_.variants[0].prototype;
+        let enum_ =
+            i.enum_(p.enum_(i.id(6, 6), 0).build())
+                .push(i.unit(15, 4))
+                .build();
+        let rec = enum_.variants[0];
 
-        env.scope.types.insert(
-            ItemIdentifier(range(30, 6)),
-            Type::Enum(*enum_.prototype)
-        );
+        env.insert_enum(enum_, &[30]);
 
         assert_eq!(
             env.value_of(
@@ -845,7 +821,7 @@ mod tests {
                     syn.type_().nested(38, 4).push(30, 6).build()
                 ).build()
             ),
-            rec(*rec_prototype, &[], range(30, 12))
+            v.constructor(*rec.prototype).build().with_range(30, 12)
         );
     }
 
@@ -854,20 +830,13 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
 
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+
         let mut env = Env::new(b"basic(1, 2)", &global_arena);
 
-        let registered = ItemIdentifier(range(42, 5));
-        let basic_fun_prototype = FunctionProto {
-            name: registered,
-            range: range(37, 20),
-            arguments: &[],
-            result: Type::Builtin(BuiltinType::Int),
-        };
-
-        env.scope.callables.insert(
-            ValueIdentifier(range(0, 5)),
-            Callable::Function(basic_fun_prototype),
-        );
+        let proto = p.fun(i.id(42, 5), t.int()).build();
+        env.insert_function_prototype(proto, &[0]);
 
         assert_eq!(
             env.value_of(
@@ -876,14 +845,11 @@ mod tests {
                     .push_argument(e.int(9, 1))
                     .build()
             ),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(0, 11),
-                expr: Expr::Call(
-                    Callable::Function(basic_fun_prototype),
-                    &[ int(1, range(6, 1)), int(2, range(9, 1)), ]
-                )
-            }
+            v.call()
+                .function(proto)
+                .push(v.int(1, 6))
+                .push(v.int(2, 9))
+                .build()
         )
     }
 
@@ -891,6 +857,8 @@ mod tests {
     fn value_basic_if_else() {
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
+
+        let v = SemFactory::new(&global_arena).value();
 
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
@@ -902,15 +870,11 @@ mod tests {
                     e.block(e.int(23, 1)).build(),
                 ).build()
             ),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(0, 26),
-                expr: Expr::If(
-                    &boolean(true, range(4, 4)),
-                    &block(&int(1, range(11, 1)), range(9, 5)),
-                    &block(&int(0, range(23, 1)), range(21, 5)),
-                )
-            }
+            v.if_(
+                v.bool_(true, 4),
+                v.block(v.int(1, 11)).build(),
+                v.block(v.int(0, 23)).build(),
+            ).build()
         )
     }
 
@@ -919,298 +883,211 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = SynFactory::new(&global_arena).expr();
 
+        let v = SemFactory::new(&global_arena).value();
+
         let env = Env::new(b"'Hello, World!'", &global_arena);
 
         assert_eq!(
             env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
-            Value {
-                type_: Type::Builtin(BuiltinType::String),
-                range: range(0, 15),
-                expr: Expr::BuiltinVal(
-                    BuiltinValue::String(b"Hello, World!")
-                )
-            }
+            v.string("Hello, World!", 0)
         );
     }
 
     #[test]
     fn value_set_basic() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
-
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
 
-        let a = range(7, 1);
-        let type_ = Type::Builtin(BuiltinType::Int);
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
-        assert_eq!(
-            env.value_of(
-                &e.block(e.var(28, 1))
+            e.block(e.var(28, 1))
                     .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
                     .push_stmt(s.set(e.var(20, 1), e.int(25, 1)).build())
                     .build()
-            ),
-            Value {
-                type_: type_,
-                range: range(0, 31),
-                expr: Expr::Block(
-                    &[
-                        Stmt::Var(Binding::Variable(
-                            Pattern::Var(ValueIdentifier(a)),
-                            int(1, range(12, 1)),
-                            range(2, 12)
-                        )),
-                        Stmt::Set(ReBinding {
-                            left: int_ref(a, range(20, 1)),
-                            right: int(2, range(25, 1)),
-                            range: range(15, 12),
-                        }),
-                    ],
-                    &int_ref(a, range(28, 1)),
-                )
-            }
-        );
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (p, s, v) = (f.pat(), f.stmt(), f.value());
+
+            let a = v.id(7, 1);
+
+            v.block(v.int_ref(a, 28))
+                .push(s.var(p.var(a), v.int(1, 12)))
+                .push(s.set(v.int_ref(a, 20), v.int(2, 25)))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     #[test]
     fn value_set_field() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
-
         let env = Env::new(
             b"{ :var a := (1,); :set a.0 := 2; a }",
             &global_arena
         );
 
-        let a = ValueIdentifier(range(7, 1));
-        let t_int = Type::Builtin(BuiltinType::Int);
-        let t_slice = [t_int];
-        let t_tuple = Type::Tuple(Tuple { fields: &t_slice});
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
-        assert_eq!(
-            env.value_of(
-                &e.block(e.var(33, 1))
-                    .push_stmt(s.var(
-                        p.var(7, 1),
-                        e.tuple().push(e.int(13, 1)).comma(14).build()
-                    ).build())
-                    .push_stmt(s.set(
-                        e.field_access(e.var(23, 1)).build(),
-                        e.int(30, 1)
-                    ).build())
-                    .build()
-            ),
-            Value {
-                type_: t_tuple,
-                range: range(0, 36),
-                expr: Expr::Block(
-                    &[
-                        Stmt::Var(Binding::Variable(
-                            Pattern::Var(a),
-                            Value {
-                                type_: t_tuple,
-                                range: range(12, 4),
-                                expr: Expr::Tuple(Tuple {
-                                    fields: &[int(1, range(13, 1))],
-                                }),
-                            },
-                            range(2, 15)
-                        )),
-                        Stmt::Set(ReBinding {
-                            left: Value {
-                                type_: t_int,
-                                range: range(23, 3),
-                                expr: Expr::FieldAccess(
-                                    &Value {
-                                        type_: t_tuple,
-                                        range: range(23, 1),
-                                        expr: Expr::VariableRef(a),
-                                    },
-                                    0,
-                                ),
-                            },
-                            right: int(2, range(30, 1)),
-                            range: range(18, 14),
-                        }),
-                    ],
-                    &Value {
-                        type_: t_tuple,
-                        range: range(33, 1),
-                        expr: Expr::VariableRef(a),
-                    },
-                )
-            }
-        );
+            e.block(e.var(33, 1))
+                .push_stmt(s.var(
+                    p.var(7, 1),
+                    e.tuple().push(e.int(13, 1)).comma(14).build()
+                ).build())
+                .push_stmt(s.set(
+                    e.field_access(e.var(23, 1)).build(),
+                    e.int(30, 1)
+                ).build())
+                .build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (p, s, v) = (f.pat(), f.stmt(), f.value());
+
+            let a = v.id(7, 1);
+            let tup = v.tuple().push(v.int(1, 13)).build().with_range(12, 4);
+
+            v.block(v.var_ref(tup.type_, a, 33))
+                .push(s.var(p.var(a), tup))
+                .push(s.set(
+                    v.field_access(0, v.var_ref(tup.type_, a, 23)).build(),
+                    v.int(2, 30)
+                ))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     #[test]
     fn value_var_basic() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
-
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
-        let (a, b) = (range(7, 1), range(20, 1));
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
-        assert_eq!(
-            env.value_of(
-                &e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
+            e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
                     .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
                     .push_stmt(s.var(p.var(20, 1), e.int(25, 1)).build())
                     .build()
-            ),
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(0, 35),
-                expr: Expr::Block(
-                    &[
-                        Stmt::Var(Binding::Variable(
-                            Pattern::Var(ValueIdentifier(a)),
-                            int(1, range(12, 1)),
-                            range(2, 12)
-                        )),
-                        Stmt::Var(Binding::Variable(
-                            Pattern::Var(ValueIdentifier(b)),
-                            int(2, range(25, 1)),
-                            range(15, 12)
-                        )),
-                    ],
-                    &Value {
-                        type_: Type::Builtin(BuiltinType::Int),
-                        range: range(28, 5),
-                        expr: Expr::Call(
-                            Callable::Builtin(BuiltinFunction::Add),
-                            &[ int_ref(a, range(28, 1)), int_ref(b, range(32, 1)) ]
-                        ),
-                    }
-                )
-            }
-        );
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (p, s, v) = (f.pat(), f.stmt(), f.value());
+
+            let (a, b) = (v.id(7, 1), v.id(20, 1));
+            let add =
+                v.call().push(v.int_ref(a, 28)).push(v.int_ref(b, 32)).build();
+
+            v.block(add)
+                .push(s.var(p.var(a), v.int(1, 12)))
+                .push(s.var(p.var(b), v.int(2, 25)))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     #[test]
     fn value_var_pattern_tuple() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
-
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
 
-        let (a, b) = (range(8, 1), range(11, 1));
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
-        let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
-        let expr = e.tuple().push(e.int(18, 1)).push(e.int(21, 1)).build();
+            let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
+            let expr = e.tuple().push(e.int(18, 1)).push(e.int(21, 1)).build();
 
-        let i = Type::Builtin(BuiltinType::Int);
-
-        assert_eq!(
-            env.value_of(
-                &e.block(e.var(25, 1))
+            e.block(e.var(25, 1))
                     .push_stmt(s.var(pat, expr).build())
                     .build()
-            ),
-            Value {
-                type_: i,
-                range: range(0, 28),
-                expr: Expr::Block(
-                    &[
-                        Stmt::Var(Binding::Variable(
-                            Pattern::Tuple(Tuple {
-                                fields: &[
-                                    Pattern::Var(ValueIdentifier(a)),
-                                    Pattern::Var(ValueIdentifier(b)),
-                                ],
-                            }),
-                            Value {
-                                type_: Type::Tuple(Tuple {
-                                    fields: &[i, i],
-                                }),
-                                range: range(17, 6),
-                                expr: Expr::Tuple(Tuple {
-                                    fields: &[
-                                        int(1, range(18, 1)),
-                                        int(2, range(21, 1)),
-                                    ],
-                                }),
-                            },
-                            range(2, 22)
-                        )),
-                    ],
-                    &int_ref(a, range(25, 1)),
-                )
-            }
-        );
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (p, s, v) = (f.pat(), f.stmt(), f.value());
+
+            let (a, b) = (v.id(8, 1), v.id(11, 1));
+
+            v.block(v.int_ref(a, 25))
+                .push(s.var(
+                    p.tuple().push(p.var(a)).push(p.var(b)).build(),
+                    v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build(),
+                ))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     #[test]
     fn value_implicit_cast_to_enum() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let ty = syn.type_();
-
         let mut env = Env::new(
             b":enum B { T, F } :if true { B::T } else { B::F }", 
             &global_arena
         );
 
-        let b = env.add_enum_unit(
-            range(6, 1),
-            range(0, 16),
-            &[range(10, 1), range(13, 1)]
-        );
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, t) = (f.expr(), f.type_());
 
-        let t = b.variants[0].prototype;
-        let f = b.variants[1].prototype;
+            e.if_else(
+                e.bool_(21, 4),
+                e.block(
+                    e.constructor(t.nested(31, 1).push(28, 1).build()).build(),
+                ).build(),
+                e.block(
+                    e.constructor(t.nested(45, 1).push(42, 1).build()).build(),
+                ).build(),
+            ).build()
+        };
 
-        env.scope.types.insert(
-            ItemIdentifier(range(28, 1)),
-            Type::Enum(*b.prototype)
-        );
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (i, p, v) = (f.item(), f.proto(), f.value());
 
-        env.scope.types.insert(
-            ItemIdentifier(range(42, 1)),
-            Type::Enum(*b.prototype)
-        );
+            let enum_ =
+                i.enum_(p.enum_(i.id(6, 1), 0).build())
+                    .push(i.unit(10, 1))
+                    .push(i.unit(13, 1))
+                    .build();
 
-        assert_eq!(
-            env.value_of(
-                &e.if_else(
-                    e.bool_(21, 4),
-                    e.block(
-                        e.constructor(ty.nested(31, 1).push(28, 1).build())
-                            .build(),
-                    ).build(),
-                    e.block(
-                        e.constructor(ty.nested(45, 1).push(42, 1).build())
-                            .build(),
-                    ).build(),
+            env.insert_enum(enum_, &[28, 42]);
+
+            let block = |index: usize, pos: usize| {
+                let rec = *enum_.variants[index].prototype;
+                v.block(
+                    v.implicit().enum_(
+                        *enum_.prototype,
+                        v.constructor(rec).build().with_range(pos, 4),
+                    )
                 ).build()
-            ),
-            Value {
-                type_: Type::Enum(*b.prototype),
-                range: range(17, 31),
-                expr: Expr::If(
-                    &boolean(true, range(21, 4)),
-                    &block(
-                        &implicit_to_enum(*b.prototype, &rec(*t, &[], range(28, 4))),
-                        range(26, 8)
-                    ),
-                    &block(
-                        &implicit_to_enum(*b.prototype, &rec(*f, &[], range(42, 4))),
-                        range(40, 8)
-                    ),
-                )
-            }
-        )
+            };
+
+            v.if_(v.bool_(true, 21), block(0, 28), block(1, 42))
+                .type_((*enum_.prototype).into())
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     struct Env<'g> {
         scope: MockScope<'g>,
-        registry: MockRegistry<'g>,
+        registry: sem::mocks::MockRegistry<'g>,
         fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
@@ -1219,32 +1096,53 @@ mod tests {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
             Env {
                 scope: MockScope::new(fragment, arena),
-                registry: MockRegistry::new(arena),
+                registry: sem::mocks::MockRegistry::new(arena),
                 fragment: fragment,
                 arena: arena,
             }
         }
 
+        fn insert_enum(
+            &mut self,
+            enum_: sem::Enum<'g>,
+            positions: &[usize],
+        )
+        {
+            let len = enum_.prototype.name.0.length();
+            for p in positions {
+                let id = sem::ItemIdentifier(range(*p, len));
+                self.scope.types.insert(id, sem::Type::Enum(*enum_.prototype));
+            }
+            self.registry.enums.insert(enum_.prototype.name, enum_);
+        }
+
         fn insert_record(
             &mut self,
-            proto: RecordProto,
-            fields: &[Type],
-            ranges: &[com::Range],
+            record: sem::Record<'g>,
+            positions: &[usize],
         )
-            -> Record<'g>
         {
-            let proto = self.arena.insert(proto);
-            let record = Record {
-                prototype: proto,
-                fields: mem::CloneInto::clone_into(fields, self.arena),
-            };
-
-            for r in ranges {
-                self.scope.types.insert(ItemIdentifier(*r), Type::Rec(*proto));
+            let len = record.prototype.name.0.length();
+            for p in positions {
+                let id = sem::ItemIdentifier(range(*p, len));
+                self.scope.types.insert(id, sem::Type::Rec(*record.prototype));
             }
-            self.registry.records.insert(proto.name, record);
+            self.registry.records.insert(record.prototype.name, record);
+        }
 
-            record
+        fn insert_function_prototype(
+            &mut self,
+            proto: sem::FunctionProto<'g>,
+            positions: &[usize],
+
+        )
+        {
+            let len = proto.name.0.length();
+
+            for p in positions {
+                let id = sem::ValueIdentifier(range(*p, len));
+                self.scope.callables.insert(id, sem::Callable::Function(proto));
+            }
         }
 
         fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)
@@ -1259,97 +1157,11 @@ mod tests {
             )
         }
 
-        fn value_of(&self, expr: &syn::Expression) -> Value<'g> {
+        fn value_of(&self, expr: &syn::Expression) -> sem::Value<'g> {
             let mut local_arena = mem::Arena::new();
             let result = self.resolver(&local_arena).value_of(expr);
             local_arena.recycle();
             result
-        }
-
-        fn add_enum_unit(
-            &mut self,
-            name: com::Range,
-            range: com::Range,
-            units: &[com::Range],
-        )
-            -> Enum<'g>
-        {
-            let enum_prototype = EnumProto {
-                name: ItemIdentifier(name),
-                range: range,
-            };
-
-            let mut records = mem::Array::with_capacity(units.len(), self.arena);
-
-            for u in units {
-                records.push(Record {
-                    prototype: self.arena.insert(RecordProto {
-                        name: ItemIdentifier(*u),
-                        range: *u,
-                        enum_: enum_prototype.name,
-                    }),
-                    fields: &[],
-                });
-            }
-
-            let enum_ = Enum {
-                prototype: self.arena.intern_ref(&enum_prototype),
-                variants: records.into_slice(),
-            };
-
-            self.registry.enums.insert(enum_prototype.name, enum_);
-
-            enum_
-        }
-    }
-
-    fn block<'a>(value: &'a Value<'a>, range: com::Range) -> Value<'a> {
-        Value {
-            type_: value.type_,
-            range: range,
-            expr: Expr::Block(&[], &value),
-        }
-    }
-
-    fn boolean(value: bool, range: com::Range) -> Value<'static> {
-        Value {
-            type_: Type::Builtin(BuiltinType::Bool),
-            range: range,
-            expr: Expr::BuiltinVal(BuiltinValue::Bool(value)),
-        }
-    }
-
-    fn implicit_to_enum<'a>(enum_: EnumProto, value: &'a Value<'a>) -> Value<'a> {
-        Value {
-            type_: Type::Enum(enum_),
-            range: value.range,
-            expr: Expr::Implicit(Implicit::ToEnum(enum_, value))
-        }
-    }
-
-    fn int(value: i64, range: com::Range) -> Value<'static> {
-        Value {
-            type_: Type::Builtin(BuiltinType::Int),
-            range: range,
-            expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
-        }
-    }
-
-    fn int_ref(name: com::Range, range: com::Range) -> Value<'static> {
-        Value {
-            type_: Type::Builtin(BuiltinType::Int),
-            range: range,
-            expr: Expr::VariableRef(ValueIdentifier(name)),
-        }
-    }
-
-    fn rec<'a>(name: RecordProto, args: &'a [Value<'a>], range: com::Range)
-        -> Value<'a>
-    {
-        Value {
-            type_: Type::Rec(name),
-            range: range,
-            expr: Expr::Constructor(name, args),
         }
     }
 

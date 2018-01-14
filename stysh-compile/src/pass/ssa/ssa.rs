@@ -438,7 +438,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
 
         match pattern {
-            sem::Pattern::Tuple(pat) => {
+            sem::Pattern::Tuple(pat, _) => {
                 let types = extract_tuple_types(type_);
                 assert_eq!(pat.fields.len(), types.len());
 
@@ -1035,9 +1035,12 @@ mod tests {
                     expr: Expr::Block(
                         &[
                             Stmt::Var(Binding::Variable(
-                                Pattern::Tuple(Tuple {
-                                    fields: &[Pattern::Var(a), Pattern::Var(b)]
-                                }),
+                                Pattern::Tuple(
+                                    Tuple {
+                                        fields: &[Pattern::Var(a), Pattern::Var(b)]
+                                    },
+                                    range(7, 6),
+                                ),
                                 Value {
                                     type_: Type::Tuple(
                                         Tuple { fields: &[int, int] }

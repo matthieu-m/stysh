@@ -153,7 +153,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
         }
 
         match pat {
-            Pattern::Tuple(tuple) => {
+            Pattern::Tuple(tuple, _) => {
                 for (index, pat) in tuple.fields.iter().enumerate() {
                     self.add_pattern(*pat, type_of_field(type_, index))
                 }

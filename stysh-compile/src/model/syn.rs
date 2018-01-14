@@ -655,6 +655,42 @@ impl<'a> Path<'a> {
     }
 }
 
+impl<'a, T: 'a + Clone> Tuple<'a, T> {
+    /// Returns whether the tuple is empty.
+    pub fn is_empty(&self) -> bool { self.fields.is_empty() }
+
+    /// Returns the number of fields of the tuple.
+    pub fn len(&self) -> usize { self.fields.len() }
+
+    /// Returns the field at index i.
+    pub fn field(&self, i: usize) -> Option<T> {
+        self.fields.get(i).cloned()
+    }
+
+    /// Returns the token of the comma following the i-th field, if there is no
+    /// such comma the position it would have been at is faked.
+    pub fn comma(&self, i: usize) -> Option<tt::Token> {
+        self.commas
+            .get(i)
+            .map(|&o| tt::Token::new(tt::Kind::SignComma, o as usize, 1))
+    }
+
+    /// Returns the token of the opening parenthesis.
+    pub fn parenthesis_open(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisOpen, self.open as usize, 1)
+    }
+
+    /// Returns the token of the closing parenthesis.
+    pub fn parenthesis_close(&self) -> tt::Token {
+        tt::Token::new(tt::Kind::ParenthesisClose, self.close as usize, 1)
+    }
+
+    /// Returns the range spanned by the tuple.
+    pub fn range(&self) -> com::Range {
+        self.parenthesis_open().range().extend(self.parenthesis_close().range())
+    }
+}
+
 impl VariableIdentifier {
     /// Returns the range spanned by the variable identifier.
     pub fn range(&self) -> com::Range {
@@ -742,42 +778,6 @@ impl<'a> convert::From<VariableReBinding<'a>> for Statement<'a> {
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
     fn from(t: Tuple<'a, Type<'a>>) -> Type<'a> { Type::Tuple(t) }
-}
-
-impl<'a, T: 'a + Clone> Tuple<'a, T> {
-    /// Returns whether the tuple is empty.
-    pub fn is_empty(&self) -> bool { self.fields.is_empty() }
-
-    /// Returns the number of fields of the tuple.
-    pub fn len(&self) -> usize { self.fields.len() }
-
-    /// Returns the field at index i.
-    pub fn field(&self, i: usize) -> Option<T> {
-        self.fields.get(i).cloned()
-    }
-
-    /// Returns the token of the comma following the i-th field, if there is no
-    /// such comma the position it would have been at is faked.
-    pub fn comma(&self, i: usize) -> Option<tt::Token> {
-        self.commas
-            .get(i)
-            .map(|&o| tt::Token::new(tt::Kind::SignComma, o as usize, 1))
-    }
-
-    /// Returns the token of the opening parenthesis.
-    pub fn parenthesis_open(&self) -> tt::Token {
-        tt::Token::new(tt::Kind::ParenthesisOpen, self.open as usize, 1)
-    }
-
-    /// Returns the token of the closing parenthesis.
-    pub fn parenthesis_close(&self) -> tt::Token {
-        tt::Token::new(tt::Kind::ParenthesisClose, self.close as usize, 1)
-    }
-
-    /// Returns the range spanned by the tuple.
-    pub fn range(&self) -> com::Range {
-        self.parenthesis_open().range().extend(self.parenthesis_close().range())
-    }
 }
 
 impl<'a, T: 'a> Default for Tuple<'a, T> {

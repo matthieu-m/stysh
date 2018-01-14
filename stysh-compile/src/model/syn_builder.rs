@@ -1128,9 +1128,7 @@ impl<'a> PatternFactory<'a> {
 //
 impl<'a> StmtFactory<'a> {
     /// Creates a new instance.
-    pub fn new(_: &'a mem::Arena) -> StmtFactory<'a> {
-        StmtFactory(marker::PhantomData)
-    }
+    pub fn new(_: &'a mem::Arena) -> Self { StmtFactory(marker::PhantomData) }
 
     /// Creates a VariableReBindingBuilder.
     pub fn set(&self, left: Expression<'a>, expr: Expression<'a>)

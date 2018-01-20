@@ -427,6 +427,11 @@ impl<'a> StmtFactory<'a> {
 
         Stmt::Var(Binding::Variable(pattern, value, range(off, end - off)))
     }
+
+    /// Shortcut: Creates a simple binding Stmt.
+    pub fn var_id(&self, id: ValueIdentifier, value: Value<'a>) -> Stmt<'a> {
+        self.var(Pattern::Var(id), value)
+    }
 }
 
 //

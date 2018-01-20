@@ -667,27 +667,17 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
+    use basic::mem;
+    use model::sem_builder::Factory as SemFactory;
     use model::sem::*;
     use model::sir::*;
-
 
     #[test]
     fn value_simple() {
         let global_arena = mem::Arena::new();
 
-        let (left, right) = (lit_integral(1, 0, 1), lit_integral(2, 4, 1));
-        let arguments = &[left, right];
-        let expr_range = range(0, 5);
-
-        let val = Value {
-            type_: Type::Builtin(BuiltinType::Int),
-            range: expr_range,
-            expr: Expr::Call(
-                Callable::Builtin(BuiltinFunction::Add),
-                arguments,
-            )
-        };
+        let v = SemFactory::new(&global_arena).value();
+        let val = v.call().push(v.int(1, 0)).push(v.int(2, 4)).build();
 
         assert_eq!(
             valueit(&global_arena, &val).to_string(),
@@ -706,24 +696,18 @@ mod tests {
     fn tuple_simple() {
         let global_arena = mem::Arena::new();
 
-        let int = Type::Builtin(BuiltinType::Int);
+        let v = SemFactory::new(&global_arena).value();
 
         assert_eq!(
             valueit(
                 &global_arena,
-                &Value {
-                    type_: Type::Tuple(Tuple { fields: &[int, int] }),
-                    range: range(0, 5),
-                    expr: Expr::Tuple(Tuple {
-                        fields: &[lit_integral(1, 0, 1), lit_integral(2, 4, 1)]
-                    }),
-                }
+                &v.tuple().push(v.int(1, 1)).push(v.int(2, 5)).build()
             ).to_string(),
             cat(&[
                 "0 ():",
-                "    $0 := load 1 ; 1@0",
-                "    $1 := load 2 ; 1@4",
-                "    $2 := new (Int, Int) ($0, $1) ; 5@0",
+                "    $0 := load 1 ; 1@1",
+                "    $1 := load 2 ; 1@5",
+                "    $2 := new (Int, Int) ($0, $1) ; 7@0",
                 "    return $2",
                 ""
             ])
@@ -733,21 +717,15 @@ mod tests {
     #[test]
     fn enum_simple() {
         let global_arena = mem::Arena::new();
+        let f = SemFactory::new(&global_arena);
+        let (i, p, v) = (f.item(), f.proto(), f.value());
 
-        let basic_rec_prototype = RecordProto {
-            name: ItemIdentifier(range(15, 4)),
-            range: range(15, 4),
-            enum_: ItemIdentifier(range(6, 6)),
-        };
+        let r = p.rec(i.id(15, 4), 15).enum_(i.id(6, 6)).build();
 
         assert_eq!(
             valueit(
                 &global_arena,
-                &Value {
-                    type_: Type::Rec(basic_rec_prototype),
-                    range: range(30, 12),
-                    expr: Expr::Constructor(basic_rec_prototype, &[]),
-                }
+                &v.constructor(r).build().with_range(30, 12)
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -762,26 +740,15 @@ mod tests {
     fn record_arguments() {
         //  ":rec Args(Int);    Args(42)"
         let global_arena = mem::Arena::new();
+        let f = SemFactory::new(&global_arena);
+        let (i, p, v) = (f.item(), f.proto(), f.value());
 
-        let basic_rec_prototype = RecordProto {
-            name: ItemIdentifier(range(5, 4)),
-            range: range(0, 15),
-            enum_: ItemIdentifier::unresolved(),
-        };
+        let r = p.rec(i.id(5, 4), 0).build();
 
         assert_eq!(
             valueit(
                 &global_arena,
-                &Value {
-                    type_: Type::Rec(basic_rec_prototype),
-                    range: range(19, 8),
-                    expr: Expr::Constructor(
-                        basic_rec_prototype,
-                        &[
-                            lit_integral(42, 24, 2)
-                        ]
-                    ),
-                }
+                &v.constructor(r).push(v.int(42, 24)).build().with_range(19, 8)
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -797,39 +764,23 @@ mod tests {
     fn record_field() {
         //  ":rec Args(Int, Int);   Args(4, 42).1"
         let global_arena = mem::Arena::new();
+        let f = SemFactory::new(&global_arena);
+        let (i, p, v) = (f.item(), f.proto(), f.value());
 
-        let basic_rec_prototype = RecordProto {
-            name: ItemIdentifier(range(5, 4)),
-            range: range(0, 20),
-            enum_: ItemIdentifier::unresolved(),
-        };
+        let r = p.rec(i.id(5, 4), 0).build();
+        let c =
+            v.constructor(r)
+                .push(v.int(4, 28))
+                .push(v.int(42, 31))
+                .build()
+                .with_range(23, 11);
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: Type::Builtin(BuiltinType::Int),
-                    range: range(23, 13),
-                    expr: Expr::FieldAccess(
-                        &Value {
-                            type_: Type::Rec(basic_rec_prototype),
-                            range: range(23, 11),
-                            expr: Expr::Constructor(
-                                basic_rec_prototype,
-                                &[
-                                    lit_integral(4, 28, 2),
-                                    lit_integral(42, 31, 3),
-                                ]
-                            ),
-                        },
-                        1
-                    ),
-                },
-            ).to_string(),
+            valueit(&global_arena, &v.field_access(1, c).build()).to_string(),
             cat(&[
                 "0 ():",
-                "    $0 := load 4 ; 2@28",
-                "    $1 := load 2a ; 3@31",
+                "    $0 := load 4 ; 1@28",
+                "    $1 := load 2a ; 2@31",
                 "    $2 := new <4@5> ($0, $1) ; 11@23",
                 "    $3 := field 1 of $2 ; 13@23",
                 "    return $3",
@@ -841,46 +792,21 @@ mod tests {
     #[test]
     fn block_simple() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (s, v) = (f.stmt(), f.value());
 
         //  { :var a := 1; :var b := 2; a + b }
-        let (a, b) = (value(7, 1), value(20, 1));
+        let (a, b) = (v.id(7, 1), v.id(20, 1));
+        let add =
+            v.call().push(v.int_ref(a, 28)).push(v.int_ref(b, 32)).build();
+        let block =
+            v.block(add)
+                .push(s.var_id(a, v.int(1, 12)))
+                .push(s.var_id(b, v.int(2, 25)))
+                .build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: Type::Builtin(BuiltinType::Int),
-                    range: range(0, 35),
-                    expr: Expr::Block(
-                        &[
-                            Stmt::Var(Binding::Variable(
-                                Pattern::Var(a),
-                                lit_integral(1, 12, 1),
-                                range(2, 12)
-                            )),
-                            Stmt::Var(Binding::Variable(
-                                Pattern::Var(b),
-                                lit_integral(2, 25, 1),
-                                range(15, 12)
-                            )),
-                        ],
-                        &Value {
-                            type_: int,
-                            range: range(28, 5),
-                            expr: Expr::Call(
-                                Callable::Builtin(
-                                    BuiltinFunction::Add
-                                ),
-                                &[
-                                    resolved_variable(a, int),
-                                    resolved_variable(b, int),
-                                ]
-                            ),
-                        },
-                    )
-                }
-            ).to_string(),
+            valueit(&global_arena, &block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -895,34 +821,19 @@ mod tests {
     #[test]
     fn block_rebinding() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (s, v) = (f.stmt(), f.value());
 
         //  { :var a := 1; :set a := 2; a }
-        let a = value(7, 1);
+        let a = v.id(7, 1);
+        let block =
+            v.block(v.int_ref(a, 28))
+                .push(s.var_id(a, v.int(1, 12)))
+                .push(s.set(v.int_ref(a, 20), v.int(2, 25)))
+                .build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: int,
-                    range: range(0, 35),
-                    expr: Expr::Block(
-                        &[
-                            Stmt::Var(Binding::Variable(
-                                Pattern::Var(a),
-                                lit_integral(1, 12, 1),
-                                range(2, 12)
-                            )),
-                            Stmt::Set(ReBinding {
-                                left: resolved_variable(a, int),
-                                right: lit_integral(2, 25, 1),
-                                range: range(15, 12)
-                            }),
-                        ],
-                        &resolved_variable(a, int),
-                    )
-                }
-            ).to_string(),
+            valueit(&global_arena, &block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -936,72 +847,35 @@ mod tests {
     #[test]
     fn block_rebinding_nested_field() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
-        let t_a_1_slice = &[int, int];
-        let t_a_1 = Type::Tuple(Tuple { fields: t_a_1_slice });
-        let t_a_slice = &[int, t_a_1];
-        let t_a = Type::Tuple(Tuple { fields: t_a_slice });
+        let f = SemFactory::new(&global_arena);
+        let (s, v) = (f.stmt(), f.value());
 
         //  { :var a := (1, (2, 3)); :set a.1.0 := 4; a }
-        let a = value(7, 1);
+        let a = v.id(7, 1);
+
+        let a_1_v = v.tuple().push(v.int(2, 17)).push(v.int(3, 20)).build();
+        let a_v = v.tuple().push(v.int(1, 13)).push(a_1_v).build();
+
+        let block =
+            v.block(v.var_ref(a_v.type_, a, 42))
+                .push(s.var_id(a, a_v))
+                .push(s.set(
+                    v.field_access(
+                        0,
+                        v.field_access(1, v.var_ref(a_v.type_, a, 30)).build(),
+                    ).build(),
+                    v.int(4, 39),
+                ))
+                .build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: Type::Builtin(BuiltinType::Int),
-                    range: range(0, 45),
-                    expr: Expr::Block(
-                        &[
-                            Stmt::Var(Binding::Variable(
-                                Pattern::Var(a),
-                                Value {
-                                    type_: t_a,
-                                    range: range(12, 11),
-                                    expr: Expr::Tuple(Tuple { fields: &[
-                                        lit_integral(1, 13, 1),
-                                        Value {
-                                            type_: t_a_1,
-                                            range: range(16, 6),
-                                            expr: Expr::Tuple(Tuple { fields: &[
-                                                lit_integral(2, 17, 1),
-                                                lit_integral(3, 19, 1),
-                                            ]}),
-                                        }
-                                    ]}),
-                                },
-                                range(2, 22)
-                            )),
-                            Stmt::Set(ReBinding {
-                                left: Value {
-                                    type_: int,
-                                    range: range(30, 5),
-                                    expr: Expr::FieldAccess(
-                                        &Value {
-                                            type_: t_a_1,
-                                            range: range(30, 3),
-                                            expr: Expr::FieldAccess(
-                                                &resolved_variable(a, t_a),
-                                                1
-                                            ),
-                                        },
-                                        0
-                                    ),
-                                },
-                                right: lit_integral(4, 39, 1),
-                                range: range(25, 16)
-                            }),
-                        ],
-                        &resolved_variable(a, t_a),
-                    )
-                }
-            ).to_string(),
+            valueit(&global_arena, &block).to_string(),
             cat(&[
                 "0 ():",
                 //  :var a := (1, (2, 3));
                 "    $0 := load 1 ; 1@13",
                 "    $1 := load 2 ; 1@17",
-                "    $2 := load 3 ; 1@19",
+                "    $2 := load 3 ; 1@20",
                 "    $3 := new (Int, Int) ($1, $2) ; 6@16",
                 "    $4 := new (Int, (Int, Int)) ($0, $3) ; 11@12",
                 //  :set a.1.0 := 4;
@@ -1009,8 +883,8 @@ mod tests {
                 "    $6 := field 1 of $4 ; 3@30",
                 "    $7 := field 1 of $6 ; 3@30",
                 "    $8 := new (Int, Int) ($5, $7) ; 3@30",
-                "    $9 := field 0 of $4 ; 0@0",
-                "    $10 := new (Int, (Int, Int)) ($9, $8) ; 0@0",
+                "    $9 := field 0 of $4 ; 1@30",
+                "    $10 := new (Int, (Int, Int)) ($9, $8) ; 1@30",
                 //  a
                 "    return $10",
                 ""
@@ -1021,45 +895,20 @@ mod tests {
     #[test]
     fn block_tuple_binding() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
         //  { :var (a, b) := (1, 2); a }
-        let (a, b) = (value(8, 1), value(11, 1));
+        let (a, b) = (v.id(8, 1), v.id(11, 1));
+        let binding = p.tuple().push(p.var(a)).push(p.var(b)).build();
+        let value = v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build();
+        let block =
+            v.block(v.var_ref(value.type_, a, 25))
+                .push(s.var(binding, value))
+                .build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: int,
-                    range: range(0, 28),
-                    expr: Expr::Block(
-                        &[
-                            Stmt::Var(Binding::Variable(
-                                Pattern::Tuple(
-                                    Tuple {
-                                        fields: &[Pattern::Var(a), Pattern::Var(b)]
-                                    },
-                                    range(7, 6),
-                                ),
-                                Value {
-                                    type_: Type::Tuple(
-                                        Tuple { fields: &[int, int] }
-                                    ),
-                                    range: range(17, 6),
-                                    expr: Expr::Tuple(Tuple {
-                                        fields: &[
-                                            lit_integral(1, 18, 1),
-                                            lit_integral(2, 21, 1),
-                                        ]
-                                    })
-                                },
-                                range(2, 22)
-                            )),
-                        ],
-                        &resolved_variable(a, int),
-                    )
-                }
-            ).to_string(),
+            valueit(&global_arena, &block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -1076,36 +925,28 @@ mod tests {
     #[test]
     fn fun_simple() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
-        let (first, second) = (value(9, 1), value(17, 1));
+        let (a, b) = (v.id(9, 1), v.id(17, 1));
+
+        let f =
+            p.fun(i.id(5, 3), t.int())
+                .push(a, t.int())
+                .push(b, t.int())
+                .range(0, 31)
+                .build();
+
+        let body =
+            v.call()
+                .push(v.arg_ref(t.int(), a, 34))
+                .push(v.arg_ref(t.int(), b, 38))
+                .build();
+
+        let function = i.fun(f, v.block(body).build());
 
         assert_eq!(
-            funit(
-                &global_arena,
-                &Function {
-                    prototype: &FunctionProto {
-                        name: ItemIdentifier(range(0, 0)),
-                        range: range(0, 0),
-                        arguments: &[
-                            argument(first, int),
-                            argument(second, int),
-                        ],
-                        result: int,
-                    },
-                    body: Value {
-                        type_: int,
-                        range: range(34, 5),
-                        expr: Expr::Call(
-                            Callable::Builtin(BuiltinFunction::Add),
-                            &[
-                                resolved_argument(first, int),
-                                resolved_argument(second, int),
-                            ]
-                        ),
-                    }
-                }
-            ).to_string(),
+            funit(&global_arena, &function).to_string(),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -1118,48 +959,24 @@ mod tests {
     #[test]
     fn if_simple() {
         let global_arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
+        let v = SemFactory::new(&global_arena).value();
 
-        //  "if true { 1 } else { 2 }"
+        //  ":if true { 1 } :else { 2 }"
+        let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &Value {
-                    type_: int,
-                    range: range(0, 24),
-                    expr: Expr::If(
-                        &bool_literal(true, 3, 4),
-                        &Value {
-                            type_: int,
-                            range: range(8, 5),
-                            expr: Expr::Block(
-                                &[],
-                                &lit_integral(1, 10, 1),
-                            ),
-                        },
-                        &Value {
-                            type_: int,
-                            range: range(19, 5),
-                            expr: Expr::Block(
-                                &[],
-                                &lit_integral(2, 21, 1),
-                            ),
-                        }
-                    )
-                }
-            ).to_string(),
+            valueit(&global_arena, &if_).to_string(),
             cat(&[
                 "0 ():",
-                "    $0 := load true ; 4@3",
+                "    $0 := load true ; 4@4",
                 "    branch $0 in [0 => <1> (), 1 => <2> ()]",
                 "",
                 "1 ():",
-                "    $0 := load 1 ; 1@10",
+                "    $0 := load 1 ; 1@11",
                 "    jump <0> ($0)",
                 "",
                 "2 ():",
-                "    $0 := load 2 ; 1@21",
+                "    $0 := load 2 ; 1@23",
                 "    jump <0> ($0)",
                 "",
                 "3 (Int):",
@@ -1173,79 +990,42 @@ mod tests {
     fn if_shortcircuit() {
         use self::BuiltinFunction::*;
 
-        //  ":fun in(a: Int, b: Int, c: Int) -> Bool { ... }"
-        fn maker<'g>(arena: &'g mem::Arena, content: Value)
-            -> &'g Function<'g>
-        {
-            let bool_ = Type::Builtin(BuiltinType::Bool);
-            let int = Type::Builtin(BuiltinType::Int);
-            let (a, b, c) = (value(8, 1), value(16, 1), value(24, 1));
-
-            let proto = arena.intern(&FunctionProto {
-                name: ItemIdentifier(range(5, 2)),
-                range: range(0, 39),
-                arguments: &[
-                    argument(a, int),
-                    argument(b, int),
-                    argument(c, int),
-                ],
-                result: bool_,
-            });
-
-            let fun = arena.intern(&Function {
-                prototype: &proto,
-                body: block(
-                    bool_,
-                    range(53, 105),
-                    &[],
-                    &content
-                )
-            });
-
-            arena.insert(fun)
-        }
-
         let global_arena = mem::Arena::new();
-        let bool_ = Type::Builtin(BuiltinType::Bool);
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
-        let (a, b, c) = (value(8, 1), value(16, 1), value(24, 1));
+        let (a, b, c) = (v.id(8, 1), v.id(16, 1), v.id(24, 1));
 
-        let left = global_arena.intern(&call(
-            bool_,
-            range(42, 6),
-            Callable::Builtin(LessThanOrEqual),
-            &[
-                resolved_argument(a, int),
-                resolved_argument(b, int),
-            ]
-        ));
+        let f =
+            p.fun(i.id(5, 2), t.bool_())
+                .push(a, t.int())
+                .push(b, t.int())
+                .push(c, t.int())
+                .range(0, 61)
+                .build();
 
-        let right = global_arena.intern(&call(
-            bool_,
-            range(54, 5),
-            Callable::Builtin(LessThan),
-            &[
-                resolved_argument(b, int),
-                resolved_argument(c, int),
-            ]
-        ));
+        let left = 
+            v.call()
+                .builtin(LessThanOrEqual)
+                .push(v.arg_ref(t.int(), a, 42))
+                .push(v.arg_ref(t.int(), b, 47))
+                .build();
 
-        //  "a <= b :and b < c"
+        let right =
+            v.call()
+                .builtin(LessThan)
+                .push(v.arg_ref(t.int(), b, 54))
+                .push(v.arg_ref(t.int(), c, 58))
+                .build();
 
+        let maker = |b| {
+            let call = v.call().builtin(b).push(left).push(right).build();
+            i.fun(f, v.block(call).build())
+        };
+
+        //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :and b < c }"
         assert_eq!(
-            funit(
-                &global_arena,
-                maker(
-                    &global_arena,
-                    call(
-                        bool_,
-                        range(42, 17),
-                        Callable::Builtin(And),
-                        &[ left, right ]
-                    )
-                )
-            ).to_string(),
+            funit(&global_arena, &maker(And)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1261,21 +1041,9 @@ mod tests {
             ])
         );
 
-        //  "a <= b :or  b < c"
-
+        //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :or  b < c }"
         assert_eq!(
-            funit(
-                &global_arena,
-                maker(
-                    &global_arena,
-                    call(
-                        bool_,
-                        range(42, 17),
-                        Callable::Builtin(Or),
-                        &[ left, right ]
-                    )
-                )
-            ).to_string(),
+            funit(&global_arena, &maker(Or)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1297,8 +1065,8 @@ mod tests {
         use self::BuiltinFunction::*;
 
         let global_arena = mem::Arena::new();
-        let bool_ = Type::Builtin(BuiltinType::Bool);
-        let int = Type::Builtin(BuiltinType::Int);
+        let f = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
         //  ":fun fib(current: Int, next: Int, count: Int) -> Int {"     55
         //  "    :if count == 0 {"                                       76
@@ -1308,77 +1076,49 @@ mod tests {
         //  "    }"                                                     157
         //  "}"                                                         159
 
-        let (current, next, count) = (value(9, 7), value(23, 4), value(34, 5));
+        let (current, next, count) = (v.id(9, 7), v.id(23, 4), v.id(34, 5));
 
-        let proto = global_arena.intern(&FunctionProto {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 52),
-            arguments: &[
-                argument(current, int),
-                argument(next, int),
-                argument(count, int),
-            ],
-            result: int,
-        });
+        let proto =
+            p.fun(i.id(5, 3), t.int())
+                .push(current, t.int())
+                .push(next, t.int())
+                .push(count, t.int())
+                .range(0, 52)
+                .build();
 
-        let fun = global_arena.intern(&Function {
-            prototype: &proto,
-            body: block(
-                int,
-                range(53, 105),
-                &[],
-                &if_(
-                    int,
-                    59,
-                    &call(
-                        bool_,
-                        range(63, 10),
-                        Callable::Builtin(Equal),
-                        &[
-                            resolved_argument(count, int),
-                            lit_integral(0, 72, 1),
-                        ]
-                    ),
-                    &block(
-                        int,
-                        range(74, 32),
-                        &[],
-                        &resolved_argument(current, int),
-                    ),
-                    &block(
-                        int,
-                        range(106, 50),
-                        &[],
-                        &call(
-                            int,
-                            range(113, 36),
-                            Callable::Function(proto),
-                            &[
-                                resolved_argument(next, int),
-                                call(
-                                    int,
-                                    range(123, 14),
-                                    Callable::Builtin(Add),
-                                    &[
-                                        resolved_argument(current, int),
-                                        resolved_argument(next, int),
-                                    ]
-                                ),
-                                call(
-                                    int,
-                                    range(139, 9),
-                                    Callable::Builtin(Substract),
-                                    &[
-                                        resolved_argument(count, int),
-                                        lit_integral(1, 147, 1)
-                                    ]
-                                )
-                            ]
-                        ),
-                    )
-                )
-            )
-        });
+        let if_ =
+            v.if_(
+                v.call()
+                    .builtin(Equal)
+                    .push(v.arg_ref(t.int(), count, 63))
+                    .push(v.int(0, 72))
+                    .build(),
+                v.block(v.arg_ref(t.int(), current, 84))
+                    .build()
+                    .with_range(74, 32),
+                v.block(
+                    v.call()
+                        .function(proto)
+                        .push(v.arg_ref(t.int(), next, 117))
+                        .push(
+                            v.call()
+                                .push(v.arg_ref(t.int(), current, 123))
+                                .push(v.arg_ref(t.int(), next, 133))
+                                .build()
+                        )
+                        .push(
+                            v.call()
+                                .builtin(Substract)
+                                .push(v.arg_ref(t.int(), count, 139))
+                                .push(v.int(1, 147))
+                                .build()
+                        )
+                        .build()
+                ).build()
+                    .with_range(106, 50)
+            ).build();
+
+        let fun = i.fun(proto, v.block(if_).build().with_range(53, 105));
 
         assert_eq!(
             funit(&global_arena, &fun).to_string(),
@@ -1433,113 +1173,6 @@ mod tests {
         local_arena.recycle();
 
         result
-    }
-
-    fn argument<'a>(value: ValueIdentifier, type_: Type<'a>)
-        -> Binding<'a>
-    {
-        Binding::Argument(value, type_, range(0, 0))
-    }
-
-    fn bool_literal(value: bool, offset: usize, length: usize)
-        -> Value<'static>
-    {
-        Value {
-            type_: Type::Builtin(BuiltinType::Bool),
-            range: range(offset, length),
-            expr: Expr::BuiltinVal(BuiltinValue::Bool(value)),
-        }
-    }
-
-    fn block<'a>(
-        type_: Type<'a>,
-        range: com::Range,
-        stmts: &'a [Stmt<'a>],
-        value: &'a Value<'a>
-    )
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range,
-            expr: Expr::Block(stmts, value)
-        }
-    }
-
-    fn call<'a>(
-        type_: Type<'a>,
-        range: com::Range,
-        callable: Callable<'a>,
-        arguments: &'a [Value<'a>]
-    )
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range,
-            expr: Expr::Call(
-                callable,
-                arguments,
-            )
-        }
-    }
-
-    fn if_<'a>(
-        type_: Type<'a>,
-        offset: usize,
-        condition: &'a Value<'a>,
-        true_branch: &'a Value<'a>,
-        false_branch: &'a Value<'a>
-    )
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: com::Range::new(offset, 0).extend(false_branch.range),
-            expr: Expr::If(
-                condition,
-                true_branch,
-                false_branch
-            )
-        }
-    }
-
-    fn lit_integral(value: i64, offset: usize, length: usize)
-        -> Value<'static>
-    {
-        Value {
-            type_: Type::Builtin(BuiltinType::Int),
-            range: range(offset, length),
-            expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
-        }
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
-    }
-
-    fn resolved_argument<'a>(value: ValueIdentifier, type_: Type<'a>)
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range(0, 0),
-            expr: Expr::ArgumentRef(value),
-        }
-    }
-
-    fn resolved_variable<'a>(value: ValueIdentifier, type_: Type<'a>)
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range(0, 0),
-            expr: Expr::VariableRef(value),
-        }
-    }
-
-    fn value(start: usize, length: usize) -> ValueIdentifier {
-        ValueIdentifier(range(start, length))
     }
 
     fn cat(lines: &[&str]) -> String {

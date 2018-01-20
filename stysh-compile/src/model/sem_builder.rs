@@ -315,8 +315,10 @@ impl<'a> PrototypeFactory<'a> {
     pub fn new(arena: &'a mem::Arena) -> Self { PrototypeFactory { arena } }
 
     /// Creates an EnumProtoBuilder.
-    pub fn enum_(&self, name: ItemIdentifier, pos: usize) -> EnumProtoBuilder {
-        EnumProtoBuilder::new(name, pos)
+    pub fn enum_(&self, name: ItemIdentifier) -> EnumProtoBuilder {
+        let mut e = EnumProtoBuilder::new(name, 0);
+        e.range(name.0.offset() - 6, name.0.length() + 6);
+        e
     }
 
     /// Creates a FunctionProtoBuilder.
@@ -331,10 +333,12 @@ impl<'a> PrototypeFactory<'a> {
     }
 
     /// Creates a RecordProtoBuilder.
-    pub fn rec(&self, name: ItemIdentifier, pos: usize)
-        -> RecordProtoBuilder
-    {
-        RecordProtoBuilder::new(name, pos)
+    pub fn rec(&self, name: ItemIdentifier, pos: usize) -> RecordProtoBuilder {
+        let mut r = RecordProtoBuilder::new(name, pos);
+        if pos != name.0.offset() {
+            r.range(name.0.offset() - 5, name.0.length() + 5);
+        }
+        r
     }
 }
 
@@ -381,10 +385,20 @@ impl<'a> FunctionProtoBuilder<'a> {
 
     /// Creates a FunctionProto.
     pub fn build(&self) -> FunctionProto<'a> {
+        let arguments = self.arguments.clone().into_slice();
+
+        for (i, a) in arguments.iter_mut().enumerate() {
+            if i + 1 == self.arguments.len() { continue; }
+            if let &mut Binding::Argument(_, _, ref mut r) = a {
+                let n = range(r.offset(), r.length() + 1);
+                *r = n;
+            }
+        }
+
         FunctionProto {
             name: self.name,
             range: self.range,
-            arguments: self.arguments.clone().into_slice(),
+            arguments: arguments,
             result: self.result
         }
     }

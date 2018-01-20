@@ -232,6 +232,7 @@ mod tests {
     use basic::{com, mem};
     use model::syn;
     use model::syn_builder::Factory as SynFactory;
+    use model::sem_builder::Factory as SemFactory;
     use model::sem::*;
     use model::sem::mocks::MockRegistry;
     use super::scp::mocks::MockScope;
@@ -239,8 +240,11 @@ mod tests {
     #[test]
     fn prototype_enum() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
+
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p) = (sem.item(), sem.proto());
 
         assert_eq!(
             env.proto_of(
@@ -250,124 +254,82 @@ mod tests {
                     .push_unit(20, 3)
                     .build(),
             ),
-            Prototype::Enum(EnumProto {
-                name: ItemIdentifier(range(6, 6)),
-                range: range(0, 12)
-            })
+            p.enum_(i.id(6, 6)).build()
         );
     }
 
     #[test]
     fn item_enum() {
-        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
-            ItemIdentifier(range(offset, length))
-        }
-
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
-        let enum_prototype = EnumProto {
-            name: item_id(6, 6),
-            range: range(0, 12)
-        };
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p) = (sem.item(), sem.proto());
+
+        let e = p.enum_(i.id(6, 6)).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Enum(enum_prototype),
+                &Prototype::Enum(e),
                 &syn.item()
                     .enum_(6, 6)
                     .push_unit(15, 3)
                     .push_unit(20, 3)
                     .build(),
             ),
-            Item::Enum(Enum {
-                prototype: &enum_prototype,
-                variants: &[
-                    Record {
-                        prototype: &RecordProto {
-                            name: item_id(15, 3),
-                            range: range(15, 3),
-                            enum_: enum_prototype.name,
-                        },
-                        fields: &[],
-                    },
-                    Record {
-                        prototype: &RecordProto {
-                            name: item_id(20, 3),
-                            range: range(20, 3),
-                            enum_: enum_prototype.name,
-                        },
-                        fields: &[],
-                    },
-                ],
-            })
+            i.enum_(e).push(i.unit(15, 3)).push(i.unit(20, 3)).build().into()
         );
     }
 
     #[test]
     fn prototype_rec() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Simple;", &global_arena);
+
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
 
         assert_eq!(
             env.proto_of(&syn.item().record(5, 6).build()),
-            Prototype::Rec(RecordProto {
-                name: ItemIdentifier(range(5, 6)),
-                range: range(0, 12),
-                enum_: ItemIdentifier::unresolved(),
-            })
+            sem.proto().rec(sem.item().id(5, 6), 0).range(0, 12).build()
         );
     }
 
     #[test]
     fn item_rec_unit() {
-        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
-            ItemIdentifier(range(offset, length))
-        }
-
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Simple;", &global_arena);
 
-        let rec_prototype = RecordProto {
-            name: item_id(5, 6),
-            range: range(0, 12),
-            enum_: ItemIdentifier::unresolved(),
-        };
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p) = (sem.item(), sem.proto());
+
+        let r = p.rec(i.id(5, 6), 0).range(0, 12).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Rec(rec_prototype),
+                &Prototype::Rec(r),
                 &syn.item().record(5, 6).build(),
             ),
-            Item::Rec(Record {
-                 prototype: &rec_prototype,
-                 fields: &[],
-            })
+            i.rec(r).build().into()
         );
     }
 
     #[test]
     fn item_rec_tuple() {
-        fn item_id(offset: usize, length: usize) -> ItemIdentifier {
-            ItemIdentifier(range(offset, length))
-        }
-
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
-        let rec_prototype = RecordProto {
-            name: item_id(5, 3),
-            range: range(0, 22),
-            enum_: ItemIdentifier::unresolved(),
-        };
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t) = (sem.item(), sem.proto(), sem.type_());
+
+        let r = p.rec(i.id(5, 3), 0).range(0, 22).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Rec(rec_prototype),
+                &Prototype::Rec(r),
                 &syn.item()
                     .record(5, 3)
                     .tuple(
@@ -377,171 +339,116 @@ mod tests {
                             .build()
                     ).build(),
             ),
-            Item::Rec(Record {
-                 prototype: &rec_prototype,
-                 fields: &[
-                     Type::Builtin(BuiltinType::Int),
-                     Type::Builtin(BuiltinType::String),
-                 ],
-            })
+            i.rec(r).push(t.int()).push(t.string()).build().into()
         );
     }
 
     #[test]
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let t = syn.type_();
-
         let env = Env::new(
             b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
             &global_arena
         );
-        let int = Type::Builtin(BuiltinType::Int);
+
+        let syn = SynFactory::new(&global_arena);
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
         assert_eq!(
             env.proto_of(
                 &syn.item().function(
                     5,
                     3,
-                    t.simple(28, 3),
+                    syn.type_().simple(28, 3),
                     syn.expr().var(0, 0),
                 )
-                .push_argument(9, 1, t.simple(12, 3))
-                .push_argument(17, 1, t.simple(20, 3))
+                .push_argument(9, 1, syn.type_().simple(12, 3))
+                .push_argument(17, 1, syn.type_().simple(20, 3))
                 .build()
             ),
-            Prototype::Fun(
-                FunctionProto {
-                    name: ItemIdentifier(range(5, 3)),
-                    range: range(0, 31),
-                    arguments: &[
-                        Binding::Argument(
-                            ValueIdentifier(range(9, 1)),
-                            int,
-                            range(9, 7),
-                        ),
-                        Binding::Argument(
-                            ValueIdentifier(range(17, 1)),
-                            int,
-                            range(17, 6),
-                        ),
-                    ],
-                    result: int,
-                }
-            )
+            p.fun(i.id(5, 3), t.int())
+                .push(v.id(9, 1), t.int())
+                .push(v.id(17, 1), t.int())
+                .range(0, 31)
+                .build()
+                .into()
         );
     }
 
     #[test]
     fn item_fun() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let t = syn.type_();
-
         let env = Env::new(
             b":fun add(a: Int, b: Int) -> Int { a + b }",
             &global_arena,
         );
-        let int = Type::Builtin(BuiltinType::Int);
 
-        let function_proto = FunctionProto {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 31),
-            arguments: &[
-                Binding::Argument(value(9, 1), int, range(9, 7)),
-                Binding::Argument(value(17, 1), int, range(17, 6)),
-            ],
-            result: int,
-        };
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
-        let prototype = Prototype::Fun(function_proto);
+        let f =
+            p.fun(i.id(5, 3), t.int())
+                .push(v.id(9, 1), t.int())
+                .push(v.id(17, 1), t.int())
+                .range(0, 31)
+                .build();
 
-        let arg = resolved_argument;
+        let body =
+            v.call()
+                .push(v.arg_ref(t.int(), v.id(9, 1), 34))
+                .push(v.arg_ref(t.int(), v.id(17, 1), 38))
+                .build();
 
         assert_eq!(
             env.item_of(
-                &prototype,
+                &Prototype::Fun(f),
                 &syn.item().function(
                     5,
                     3,
-                    t.simple(28, 3),
+                    syn.type_().simple(28, 3),
                     e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
                         .build(),
                 )
-                .push_argument(9, 1, t.simple(12, 3))
-                .push_argument(17, 1, t.simple(17, 1))
+                .push_argument(9, 1, syn.type_().simple(12, 3))
+                .push_argument(17, 1, syn.type_().simple(17, 1))
                 .build()
             ),
-            Item::Fun(Function {
-                prototype: &function_proto,
-                body: Value {
-                    type_: int,
-                    range: range(32, 9),
-                    expr: Expr::Block(
-                        &[],
-                        &Value {
-                            type_: int,
-                            range: range(34, 5),
-                            expr: Expr::Call(
-                                Callable::Builtin(BuiltinFunction::Add),
-                                &[
-                                    arg(value(9, 1), range(34, 1), int),
-                                    arg(value(17, 1), range(38, 1), int),
-                                ]
-                            ),
-                        },
-                    ),
-                }
-            })
+            i.fun(f, v.block(body).build()).into()
         );
     }
 
     #[test]
     fn item_fun_tuple() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
-        let t = syn.type_();
-
         let env = Env::new(
             b":fun add() -> (Int, Int) { (1, 2) }",
             &global_arena,
         );
 
-        fn value_int(value: i64, offset: usize, length: usize)
-            -> Value<'static>
-        {
-            Value {
-                type_: Type::Builtin(BuiltinType::Int),
-                range: range(offset, length),
-                expr: Expr::BuiltinVal(BuiltinValue::Int(value)),
-            }
-        }
+        let syn = SynFactory::new(&global_arena);
+        let e = syn.expr();
+        let sem = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
-        let int = Type::Builtin(BuiltinType::Int);
+        let f =
+            p.fun(i.id(5, 3), t.tuple().push(t.int()).push(t.int()).build())
+                .range(0, 24)
+                .build();
 
-        let tuple_type = Tuple { fields: &[int, int] };
-
-        let function_proto = FunctionProto {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 24),
-            arguments: &[],
-            result: Type::Tuple(tuple_type),
-        };
-
-        let prototype = Prototype::Fun(function_proto);
+        let body = v.tuple().push(v.int(1, 28)).push(v.int(2, 31)).build();
 
         assert_eq!(
             env.item_of(
-                &prototype,
+                &Prototype::Fun(f),
                 &syn.item().function(
                     5,
                     3,
-                    t.tuple()
-                        .push(t.simple(15, 3))
-                        .push(t.simple(20, 3))
+                    syn.type_().tuple()
+                        .push(syn.type_().simple(15, 3))
+                        .push(syn.type_().simple(20, 3))
                         .build(),
                     e.block(
                         e.tuple().push(e.int(28, 1)).push(e.int(31, 1)).build()
@@ -549,26 +456,7 @@ mod tests {
                 )
                 .build()
             ),
-            Item::Fun(Function {
-                prototype: &function_proto,
-                body: Value {
-                    type_: Type::Tuple(Tuple { fields: &[int, int] }),
-                    range: range(25, 10),
-                    expr: Expr::Block(
-                        &[],
-                        &Value {
-                            type_: Type::Tuple(Tuple { fields: &[int, int] }),
-                            range: range(27, 6),
-                            expr: Expr::Tuple(Tuple {
-                                fields: &[
-                                    value_int(1, 28, 1),
-                                    value_int(2, 31, 1)
-                                ]
-                            }),
-                        },
-                    ),
-                }
-            })
+            i.fun(f, v.block(body).build()).into()
         );
     }
 
@@ -615,27 +503,5 @@ mod tests {
             local_arena.recycle();
             result
         }
-    }
-
-    fn resolved_argument<'a>(
-        value: ValueIdentifier,
-        range: com::Range,
-        type_: Type<'a>
-    )
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range,
-            expr: Expr::ArgumentRef(value),
-        }
-    }
-
-    fn value(start: usize, length: usize) -> ValueIdentifier {
-        ValueIdentifier(range(start, length))
-    }
-
-    fn range(start: usize, length: usize) -> com::Range {
-        com::Range::new(start, length)
     }
 }

@@ -808,7 +808,7 @@ mod tests {
         );
 
         let enum_ =
-            i.enum_(p.enum_(i.id(6, 6), 0).build())
+            i.enum_(p.enum_(i.id(6, 6)).build())
                 .push(i.unit(15, 4))
                 .build();
         let rec = enum_.variants[0];
@@ -1060,7 +1060,7 @@ mod tests {
             let (i, p, v) = (f.item(), f.proto(), f.value());
 
             let enum_ =
-                i.enum_(p.enum_(i.id(6, 1), 0).build())
+                i.enum_(p.enum_(i.id(6, 1)).build())
                     .push(i.unit(10, 1))
                     .push(i.unit(13, 1))
                     .build();

@@ -358,104 +358,60 @@ pub mod mocks {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
-    use model::sem::*;
+    use basic::mem;
+    use model::sem_builder::Factory as SemFactory;
 
     use super::{Scope, BuiltinScope, FunctionScope};
 
     #[test]
     fn function_no_arguments() {
-        let arena = mem::Arena::new();
-
         let source = b":fun random() -> Int { a }";
 
-        let prot = FunctionProto {
-            name: ItemIdentifier(range(5, 6)),
-            range: range(0, 20),
-            arguments: &[],
-            result: Type::Builtin(BuiltinType::Int),
-        };
+        let arena = mem::Arena::new();
+        let f = SemFactory::new(&arena);
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+
+        let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
 
         let builtin = BuiltinScope::new(source);
         let scope = FunctionScope::new(source, &builtin, &prot, &arena, &arena);
 
         assert_eq!(
-            scope.lookup_binding(value(23, 1)),
-            unresolved_binding(value(23, 1))
+            scope.lookup_binding(v.id(23, 1)),
+            v.unresolved_ref(v.id(23, 1))
         );
     }
 
     #[test]
     fn function_with_arguments() {
-        let arena = mem::Arena::new();
-        let int = Type::Builtin(BuiltinType::Int);
-
         let source = b":fun add(a: Int, b: Int) -> Int { a + b + c }";
 
-        let prot = FunctionProto {
-            name: ItemIdentifier(range(5, 3)),
-            range: range(0, 55),
-            arguments: &[
-                Binding::Argument(
-                    ValueIdentifier(range(9, 1)),
-                    int,
-                    range(9, 7),
-                ),
-                Binding::Argument(
-                    ValueIdentifier(range(17, 1)),
-                    int,
-                    range(17, 6),
-                ),
-            ],
-            result: Type::Builtin(BuiltinType::Int),
-        };
+        let arena = mem::Arena::new();
+        let f = SemFactory::new(&arena);
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+
+        let prot =
+            p.fun(i.id(5, 3), t.int())
+                .push(v.id(9, 1), t.int())
+                .push(v.id(17, 1), t.int())
+                .build();
 
         let builtin = BuiltinScope::new(source);
         let scope = FunctionScope::new(source, &builtin, &prot, &arena, &arena);
 
         assert_eq!(
-            scope.lookup_binding(value(42, 1)),
-            unresolved_binding(value(42, 1))
+            scope.lookup_binding(v.id(42, 1)),
+            v.unresolved_ref(v.id(42, 1))
         );
 
         assert_eq!(
-            scope.lookup_binding(value(34, 1)),
-            resolved_argument(value(9, 1), range(34, 1), int)
+            scope.lookup_binding(v.id(34, 1)),
+            v.arg_ref(t.int(), v.id(9, 1), 34)
         );
 
         assert_eq!(
-            scope.lookup_binding(value(38, 1)),
-            resolved_argument(value(17, 1), range(38, 1), int)
+            scope.lookup_binding(v.id(38, 1)),
+            v.arg_ref(t.int(), v.id(17, 1), 38)
         );
-    }
-
-    fn range(start: usize, length: usize) -> com::Range {
-        com::Range::new(start, length)
-    }
-
-    fn resolved_argument<'a>(
-        value: ValueIdentifier,
-        range: com::Range,
-        type_: Type<'a>
-    )
-        -> Value<'a>
-    {
-        Value {
-            type_: type_,
-            range: range,
-            expr: Expr::ArgumentRef(value),
-        }
-    }
-
-    fn unresolved_binding(value: ValueIdentifier) -> Value<'static> {
-        Value {
-            type_: Type::Unresolved(ItemIdentifier::unresolved()),
-            range: value.0,
-            expr: Expr::UnresolvedRef(value),
-        }
-    }
-
-    fn value(start: usize, length: usize) -> ValueIdentifier {
-        ValueIdentifier(range(start, length))
     }
 }

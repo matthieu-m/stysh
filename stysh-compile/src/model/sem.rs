@@ -310,6 +310,27 @@ impl<'a> Stmt<'a> {
 }
 
 impl<'a> Type<'a> {
+    /// Returns the range this type would cover if it was anchored at 0.
+    pub fn range(&self) -> com::Range {
+        use self::Type::*;
+        use self::BuiltinType::*;
+
+        fn len(i: ItemIdentifier) -> usize { i.range().length() }
+
+        let len = match *self {
+            Builtin(Bool) => 4,
+            Builtin(Int) => 3,
+            Builtin(String) => 6,
+            Enum(p) => len(p.name),
+            Rec(r) => len(r.name)
+                + if len(r.enum_) > 0 { 2 + len(r.enum_) } else { 0 },
+            Tuple(t) => t.fields.iter().map(|t| t.range().length()).sum(),
+            Unresolved(i) => len(i),
+        };
+
+        com::Range::new(0, len)
+    }
+
     /// Returns an unresolved type.
     pub fn unresolved() -> Type<'a> {
         Type::Unresolved(ItemIdentifier::unresolved())

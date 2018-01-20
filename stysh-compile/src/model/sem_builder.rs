@@ -364,7 +364,9 @@ impl<'a> FunctionProtoBuilder<'a> {
     /// Pushes an argument.
     pub fn push(&mut self, name: ValueIdentifier, type_: Type<'a>) -> &mut Self
     {
-        self.arguments.push(Binding::Argument(name, type_, range(0, 0)));
+        let len = name.0.length() + 2 + type_.range().length();
+        let range = range(name.0.offset(), len);
+        self.arguments.push(Binding::Argument(name, type_, range));
         self
     }
 
@@ -484,9 +486,10 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Creates an ArgumentRef Value.
-    pub fn arg_ref(&self, type_: Type<'a>, name: ValueIdentifier) -> Value<'a>
+    pub fn arg_ref(&self, type_: Type<'a>, name: ValueIdentifier, pos: usize)
+        -> Value<'a>
     {
-        value(type_, Expr::ArgumentRef(name))
+        value(type_, Expr::ArgumentRef(name)).with_range(pos, name.0.length())
     }
 
     /// Creates a BlockBuilder.
@@ -566,6 +569,7 @@ impl<'a> ValueFactory<'a> {
     /// Creates an unresolved ref Value.
     pub fn unresolved_ref(&self, name: ValueIdentifier) -> Value<'a> {
         value(Type::unresolved(), Expr::UnresolvedRef(name))
+            .with_range(name.0.offset(), name.0.length())
     }
 
     /// Creates a variable ref Value.

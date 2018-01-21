@@ -184,7 +184,6 @@ pub struct TupleBuilder<'a, T: 'a> {
     commas: mem::Array<'a, u32>,
     open: u32,
     close: u32,
-    range_extractor: fn(&T) -> com::Range,
 }
 
 /// TypeFactory
@@ -223,21 +222,17 @@ impl<'a> Factory<'a> {
     pub fn stmt(&self) -> StmtFactory<'a> { StmtFactory::new(self.arena) }
 
     /// Creates a TupleBuilder.
-    pub fn tuple<T: 'a>(&self, range: fn(&T) -> com::Range)
-        -> TupleBuilder<'a, T>
-    {
-        TupleBuilder::new(self.arena, range)
+    pub fn tuple<T: 'a>(&self) -> TupleBuilder<'a, T> {
+        TupleBuilder::new(self.arena)
     }
 
     /// Creates an Expression TupleBuilder.
     pub fn expr_tuple(&self) -> TupleBuilder<'a, Expression<'a>> {
-        self.tuple(|e| e.range())
+        self.tuple()
     }
 
     /// Creates a Type TupleBuilder.
-    pub fn type_tuple(&self) -> TupleBuilder<'a, Type<'a>> {
-        self.tuple(|t| t.range())
-    }
+    pub fn type_tuple(&self) -> TupleBuilder<'a, Type<'a>> { self.tuple() }
 
     /// Creates a TypeFactory.
     pub fn type_(&self) -> TypeFactory<'a> { TypeFactory::new(self.arena) }
@@ -268,7 +263,7 @@ impl<'a> ExprFactory<'a> {
     pub fn constructor(&self, name: Type<'a>)
         -> ConstructorBuilder<'a, Expression<'a>>
     {
-        ConstructorBuilder::new(self.arena, name, |e| e.range())
+        ConstructorBuilder::new(self.arena, name)
     }
 
     /// Creates a FieldAccess Expression.
@@ -320,7 +315,7 @@ impl<'a> ExprFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Expression<'a>> {
-        TupleBuilder::new(self.arena, |e| e.range())
+        TupleBuilder::new(self.arena)
     }
 
     /// Creates a Var Expression.
@@ -505,9 +500,7 @@ impl<'a> FunctionCallBuilder<'a> {
     )
         -> Self
     {
-        fn range(e: &Expression) -> com::Range { e.range() }
-
-        let mut arguments = TupleBuilder::new(arena, range);
+        let mut arguments = TupleBuilder::new(arena);
         arguments.parens(open, close);
 
         FunctionCallBuilder {
@@ -1085,7 +1078,7 @@ impl<'a> PatternFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
-        TupleBuilder::new(self.arena, |e| e.range())
+        TupleBuilder::new(self.arena)
     }
 
     /// Creates a Var Pattern.
@@ -1272,16 +1265,10 @@ impl<'a> VariableBindingBuilder<'a> {
 //
 impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     /// Creates a new instance.
-    pub fn new(
-        arena: &'a mem::Arena,
-        name: Type<'a>,
-        range: fn(&T) -> com::Range
-    )
-        -> Self
-    {
+    pub fn new(arena: &'a mem::Arena, name: Type<'a>) -> Self {
         ConstructorBuilder {
             type_: name,
-            arguments: TupleBuilder::new(arena, range)
+            arguments: TupleBuilder::new(arena)
         }
     }
 
@@ -1304,7 +1291,7 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
+impl<'a, T: 'a + Clone + Range> ConstructorBuilder<'a, T> {
     /// Creates a Constructor.
     pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
         Constructor {
@@ -1316,13 +1303,12 @@ impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
 
 impl<'a, T: 'a> TupleBuilder<'a, T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, range: fn(&T) -> com::Range) -> Self {
+    pub fn new(arena: &'a mem::Arena) -> Self {
         TupleBuilder {
             fields: mem::Array::new(arena),
             commas: mem::Array::new(arena),
             open: U32_NONE,
             close: U32_NONE,
-            range_extractor: range,
         }
     }
 
@@ -1349,7 +1335,7 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
     }
 }
 
-impl<'a, T: Clone + 'a> TupleBuilder<'a, T> {
+impl<'a, T: 'a + Clone + Range> TupleBuilder<'a, T> {
     /// Creates a new Tuple instance.
     pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
         assert_eq!(self.fields.len(), self.commas.len());
@@ -1364,8 +1350,6 @@ impl<'a, T: Clone + 'a> TupleBuilder<'a, T> {
                 Tuple { fields: &[], commas: &[], open: o, close: c }.into();
         }
 
-        let range = self.range_extractor;
-
         let fields = self.fields.clone().into_slice();
         let commas = self.commas.clone().into_slice();
 
@@ -1373,14 +1357,14 @@ impl<'a, T: Clone + 'a> TupleBuilder<'a, T> {
             if *c != U32_NONE { continue; }
 
             let offset = if i + 1 == fields.len() { 1 } else { 0 };
-            let pos = range(f).end_offset() - offset;
+            let pos = f.range().end_offset() - offset;
 
             *c = pos as u32;
         }
 
         let open = if self.open == U32_NONE {
             fields.first()
-                .map(|f| range(f).offset() as u32 - 1)
+                .map(|f| f.range().offset() as u32 - 1)
                 .unwrap_or(0)
         } else {
             self.open
@@ -1424,7 +1408,7 @@ impl<'a> TypeFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Type<'a>> {
-        TupleBuilder::new(self.arena, |t| t.range())
+        TupleBuilder::new(self.arena)
     }
 }
 

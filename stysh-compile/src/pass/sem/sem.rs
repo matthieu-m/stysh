@@ -4,7 +4,8 @@
 
 use basic::{com, mem};
 
-use model::{syn, sem};
+use model::syn::{self, Range};
+use model::sem;
 
 use super::nmr::{self, scp};
 

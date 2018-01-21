@@ -13,6 +13,12 @@ use basic::com;
 use model::tt;
 pub use model::tt::StringFragment;
 
+/// A Range trait.
+pub trait Range {
+    /// Returns the range spanned by self.
+    fn range(&self) -> com::Range;
+}
+
 /// A List of AST nodes.
 pub type List<'a> = &'a [Node<'a>];
 
@@ -341,66 +347,6 @@ pub struct VariableIdentifier(pub com::Range);
 //
 //  Implementations
 //
-impl<'a> Node<'a> {
-    /// Returns the range spanned by the node.
-    pub fn range(&self) -> com::Range {
-        use self::Node::*;
-
-        match *self {
-            Expr(expr) => expr.range(),
-            Item(item) => item.range(),
-            Stmt(stmt) => stmt.range(),
-        }
-    }
-}
-
-impl<'a> Expression<'a> {
-    /// Returns the range spanned by the expression.
-    pub fn range(&self) -> com::Range {
-        use self::Expression::*;
-
-        match *self {
-            BinOp(_, _, left, right) => left.range().extend(right.range()),
-            Block(_, _, range) => range,
-            Constructor(c) => c.range(),
-            FieldAccess(f) => f.range(),
-            FunctionCall(fun) => fun.range(),
-            If(if_else) => if_else.range(),
-            Lit(lit) => lit.range(),
-            PreOp(_, pos, expr)
-                => com::Range::new(pos as usize, 0).extend(expr.range()),
-            Tuple(t) => t.range(),
-            Var(VariableIdentifier(range)) => range,
-        }
-    }
-}
-
-impl<'a> Item<'a> {
-    /// Returns the range spanned by the item.
-    pub fn range(&self) -> com::Range {
-        use self::Item::*;
-
-        match *self {
-            Enum(e) => e.range(),
-            Fun(fun) => fun.range(),
-            Rec(r) => r.range(),
-        }
-    }
-}
-
-impl<'a> Pattern<'a> {
-    /// Returns the range spanned by the item.
-    pub fn range(&self) -> com::Range {
-        use self::Pattern::*;
-
-        match *self {
-            Ignored(i) => i.range(),
-            Tuple(t) => t.range(),
-            Var(v) => v.range(),
-        }
-    }
-}
-
 impl<'a> Enum<'a> {
     /// Returns the `:enum` token.
     pub fn keyword(&self) -> tt::Token {
@@ -438,11 +384,6 @@ impl<'a> Enum<'a> {
         };
         self.commas.get(i).map(make_semi)
     }
-
-    /// Returns the range spanned by the enum.
-    pub fn range(&self) -> com::Range {
-        self.keyword().range().extend(self.brace_close().range())
-    }
 }
 
 impl<'a> Record<'a> {
@@ -467,11 +408,6 @@ impl<'a> Record<'a> {
         };
         tt::Token::new(tt::Kind::SignSemiColon, offset, range)
     }
-
-    /// Returns the range spanned by the record.
-    pub fn range(&self) -> com::Range {
-        self.keyword().range().extend(self.semi_colon().range())
-    }
 }
 
 impl<'a> InnerRecord<'a> {
@@ -483,51 +419,6 @@ impl<'a> InnerRecord<'a> {
             Missing(r) | Unexpected(r) => TypeIdentifier(r),
             Tuple(t, _) | Unit(t) => t,
         }
-    }
-
-    /// Returns the range spanned by the inner record.
-    pub fn range(&self) -> com::Range {
-        use self::InnerRecord::*;
-
-        match *self {
-            Missing(r) | Unexpected(r) => r,
-            Tuple(t, tup) => t.0.extend(tup.range()),
-            Unit(t) => t.0,
-        }
-    }
-}
-
-impl<'a> Function<'a> {
-    /// Returns the range spanned by the function.
-    pub fn range(&self) -> com::Range {
-        com::Range::new(self.keyword as usize, 4).extend(self.body.range())
-    }
-}
-
-impl<'a> Argument<'a> {
-    /// Returns the range spanned by the argument.
-    pub fn range(&self) -> com::Range {
-        let offset = self.name.0.offset();
-        let end_offset = self.comma as usize + 1;
-        com::Range::new(offset, end_offset - offset)
-    }
-}
-
-impl<'a, T: 'a> Constructor<'a, T> {
-    /// Returns the range spanned by the constructor.
-    pub fn range(&self) -> com::Range {
-        if self.arguments.close == 0 {
-            self.type_.range()
-        } else {
-            self.type_.range().extend(self.arguments.range())
-        }
-    }
-}
-
-impl<'a> FieldAccess<'a> {
-    /// Returns the range spanned by the constructor.
-    pub fn range(&self) -> com::Range {
-        self.accessed.range().extend(self.field.0)
     }
 }
 
@@ -547,74 +438,6 @@ impl<'a> FunctionCall<'a> {
     pub fn parenthesis_close(&self) -> tt::Token {
         self.arguments.parenthesis_close()
     }
-
-    /// Returns the range spanned by the function call.
-    pub fn range(&self) -> com::Range {
-        self.function.range().extend(self.parenthesis_close().range())
-    }
-}
-
-impl<'a> IfElse<'a> {
-    /// Returns the range spanned by the argument.
-    pub fn range(&self) -> com::Range {
-        let offset = self.if_ as usize;
-        let end_offset = self.false_expr.range().end_offset();
-        com::Range::new(offset, end_offset - offset)
-    }
-}
-
-impl<'a> Statement<'a> {
-    /// Returns the range spanned by the statement.
-    pub fn range(&self) -> com::Range {
-        use self::Statement::*;
-
-        match *self {
-            Set(set) => set.range(),
-            Var(var) => var.range(),
-        }
-    }
-}
-
-impl<'a> Literal<'a> {
-    /// Returns the range spanned by the literal.
-    pub fn range(&self) -> com::Range {
-        use self::Literal::*;
-
-        match *self {
-            Bool(_, r) => r,
-            Bytes(_, r) => r,
-            Integral(r) => r,
-            String(_, r) => r,
-        }
-    }
-}
-
-impl<'a> VariableBinding<'a> {
-    /// Returns the range spanned by the binding.
-    pub fn range(&self) -> com::Range {
-        debug_assert!(
-            self.semi as usize >= self.expr.range().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.range()
-        );
-        com::Range::new(
-            self.var as usize,
-            (self.semi + 1 - self.var) as usize
-        )
-    }
-}
-
-impl<'a> VariableReBinding<'a> {
-       /// Returns the range spanned by the binding.
-    pub fn range(&self) -> com::Range {
-        debug_assert!(
-            self.semi as usize >= self.expr.range().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.range()
-        );
-        com::Range::new(
-            self.set as usize,
-            (self.semi + 1 - self.set) as usize
-        )
-    } 
 }
 
 impl<'a> Type<'a> {
@@ -627,18 +450,6 @@ impl<'a> Type<'a> {
             Missing(_) | Tuple(_) => None,
         }
     }
-
-    /// Returns the range spanned by the type.
-    pub fn range(&self) -> com::Range {
-        use self::Type::*;
-
-        match *self {
-            Missing(r) => r,
-            Nested(t, p) => p.range().extend(t.range()),
-            Simple(t) => t.range(),
-            Tuple(t) => t.range(),
-        }
-    }
 }
 
 impl<'a> Path<'a> {
@@ -648,13 +459,6 @@ impl<'a> Path<'a> {
         self.colons
             .get(i)
             .map(|&o| tt::Token::new(tt::Kind::SignDoubleColon, o as usize, 2))
-    }
-
-    /// Returns the range spanned by the path.
-    pub fn range(&self) -> com::Range {
-        self.components[0]
-            .range()
-            .extend(self.double_colon(self.colons.len() - 1).unwrap().range())
     }
 }
 
@@ -682,11 +486,6 @@ impl<'a, T: 'a> Tuple<'a, T> {
     pub fn parenthesis_close(&self) -> tt::Token {
         tt::Token::new(tt::Kind::ParenthesisClose, self.close as usize, 1)
     }
-
-    /// Returns the range spanned by the tuple.
-    pub fn range(&self) -> com::Range {
-        self.parenthesis_open().range().extend(self.parenthesis_close().range())
-    }
 }
 
 impl<'a, T: 'a + Clone> Tuple<'a, T> {
@@ -696,23 +495,244 @@ impl<'a, T: 'a + Clone> Tuple<'a, T> {
     }
 }
 
-impl VariableIdentifier {
-    /// Returns the range spanned by the variable identifier.
-    pub fn range(&self) -> com::Range {
-        self.0
-    }
-}
-
-impl TypeIdentifier {
-    /// Returns the range spanned by the type identifier.
-    pub fn range(&self) -> com::Range {
-        self.0
-    }
-}
-
 //
 //  Trait Implementations
 //
+impl<'a> Range for Node<'a> {
+    /// Returns the range spanned by the node.
+    fn range(&self) -> com::Range {
+        use self::Node::*;
+
+        match *self {
+            Expr(expr) => expr.range(),
+            Item(item) => item.range(),
+            Stmt(stmt) => stmt.range(),
+        }
+    }
+}
+
+impl<'a> Range for Expression<'a> {
+    /// Returns the range spanned by the expression.
+    fn range(&self) -> com::Range {
+        use self::Expression::*;
+
+        match *self {
+            BinOp(_, _, left, right) => left.range().extend(right.range()),
+            Block(_, _, range) => range,
+            Constructor(c) => c.range(),
+            FieldAccess(f) => f.range(),
+            FunctionCall(fun) => fun.range(),
+            If(if_else) => if_else.range(),
+            Lit(lit) => lit.range(),
+            PreOp(_, pos, expr)
+                => com::Range::new(pos as usize, 0).extend(expr.range()),
+            Tuple(t) => t.range(),
+            Var(VariableIdentifier(range)) => range,
+        }
+    }
+}
+
+impl<'a> Range for Item<'a> {
+    /// Returns the range spanned by the item.
+    fn range(&self) -> com::Range {
+        use self::Item::*;
+
+        match *self {
+            Enum(e) => e.range(),
+            Fun(fun) => fun.range(),
+            Rec(r) => r.range(),
+        }
+    }
+}
+
+impl<'a> Range for Pattern<'a> {
+    /// Returns the range spanned by the item.
+    fn range(&self) -> com::Range {
+        use self::Pattern::*;
+
+        match *self {
+            Ignored(i) => i.range(),
+            Tuple(t) => t.range(),
+            Var(v) => v.range(),
+        }
+    }
+}
+
+impl<'a> Range for Enum<'a> {
+    /// Returns the range spanned by the enum.
+    fn range(&self) -> com::Range {
+        self.keyword().range().extend(self.brace_close().range())
+    }
+}
+
+impl<'a> Range for Record<'a> {
+    /// Returns the range spanned by the record.
+    fn range(&self) -> com::Range {
+        self.keyword().range().extend(self.semi_colon().range())
+    }
+}
+
+impl<'a> Range for InnerRecord<'a> {
+    /// Returns the range spanned by the inner record.
+    fn range(&self) -> com::Range {
+        use self::InnerRecord::*;
+
+        match *self {
+            Missing(r) | Unexpected(r) => r,
+            Tuple(t, tup) => t.0.extend(tup.range()),
+            Unit(t) => t.0,
+        }
+    }
+}
+
+impl<'a> Range for Function<'a> {
+    /// Returns the range spanned by the function.
+    fn range(&self) -> com::Range {
+        com::Range::new(self.keyword as usize, 4).extend(self.body.range())
+    }
+}
+
+impl<'a> Range for Argument<'a> {
+    /// Returns the range spanned by the argument.
+    fn range(&self) -> com::Range {
+        let offset = self.name.0.offset();
+        let end_offset = self.comma as usize + 1;
+        com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a, T: 'a> Range for Constructor<'a, T> {
+    /// Returns the range spanned by the constructor.
+    fn range(&self) -> com::Range {
+        if self.arguments.close == 0 {
+            self.type_.range()
+        } else {
+            self.type_.range().extend(self.arguments.range())
+        }
+    }
+}
+
+impl<'a> Range for FieldAccess<'a> {
+    /// Returns the range spanned by the constructor.
+    fn range(&self) -> com::Range {
+        self.accessed.range().extend(self.field.0)
+    }
+}
+
+impl<'a> Range for FunctionCall<'a> {
+    /// Returns the range spanned by the function call.
+    fn range(&self) -> com::Range {
+        self.function.range().extend(self.parenthesis_close().range())
+    }
+}
+
+impl<'a> Range for IfElse<'a> {
+    /// Returns the range spanned by the argument.
+    fn range(&self) -> com::Range {
+        let offset = self.if_ as usize;
+        let end_offset = self.false_expr.range().end_offset();
+        com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> Range for Statement<'a> {
+    /// Returns the range spanned by the statement.
+    fn range(&self) -> com::Range {
+        use self::Statement::*;
+
+        match *self {
+            Set(set) => set.range(),
+            Var(var) => var.range(),
+        }
+    }
+}
+
+impl<'a> Range for Literal<'a> {
+    /// Returns the range spanned by the literal.
+    fn range(&self) -> com::Range {
+        use self::Literal::*;
+
+        match *self {
+            Bool(_, r) => r,
+            Bytes(_, r) => r,
+            Integral(r) => r,
+            String(_, r) => r,
+        }
+    }
+}
+
+impl<'a> Range for VariableBinding<'a> {
+    /// Returns the range spanned by the binding.
+    fn range(&self) -> com::Range {
+        debug_assert!(
+            self.semi as usize >= self.expr.range().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.range()
+        );
+        com::Range::new(
+            self.var as usize,
+            (self.semi + 1 - self.var) as usize
+        )
+    }
+}
+
+impl<'a> Range for VariableReBinding<'a> {
+    /// Returns the range spanned by the binding.
+    fn range(&self) -> com::Range {
+        debug_assert!(
+            self.semi as usize >= self.expr.range().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.range()
+        );
+        com::Range::new(
+            self.set as usize,
+            (self.semi + 1 - self.set) as usize
+        )
+    } 
+}
+
+impl<'a> Range for Type<'a> {
+    /// Returns the range spanned by the type.
+    fn range(&self) -> com::Range {
+        use self::Type::*;
+
+        match *self {
+            Missing(r) => r,
+            Nested(t, p) => p.range().extend(t.range()),
+            Simple(t) => t.range(),
+            Tuple(t) => t.range(),
+        }
+    }
+}
+
+impl<'a> Range for Path<'a> {
+    /// Returns the range spanned by the path.
+    fn range(&self) -> com::Range {
+        self.components[0]
+            .range()
+            .extend(self.double_colon(self.colons.len() - 1).unwrap().range())
+    }
+}
+
+impl<'a, T: 'a> Range for Tuple<'a, T> {
+    /// Returns the range spanned by the tuple.
+    fn range(&self) -> com::Range {
+        self.parenthesis_open().range().extend(self.parenthesis_close().range())
+    }
+}
+
+impl Range for VariableIdentifier {
+    /// Returns the range spanned by the variable identifier.
+    fn range(&self) -> com::Range {
+        self.0
+    }
+}
+
+impl Range for TypeIdentifier {
+    /// Returns the range spanned by the type identifier.
+    fn range(&self) -> com::Range {
+        self.0
+    }
+}
+
 impl<'a> convert::From<Constructor<'a, Expression<'a>>> for Expression<'a> {
     fn from(c: Constructor<'a, Expression<'a>>) -> Expression<'a> {
         Expression::Constructor(c)

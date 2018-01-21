@@ -17,7 +17,7 @@ use std::{convert, fmt};
 use basic::{com, mem};
 use basic::mem::CloneInto;
 
-use model::syn;
+use model::syn::{self, Range};
 
 /// A registry of the definitions
 pub trait Registry<'a> {

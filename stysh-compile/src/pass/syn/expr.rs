@@ -4,7 +4,7 @@
 
 use std;
 
-use basic::{com, mem};
+use basic::mem;
 use model::tt;
 use model::syn::*;
 use pass::syn::typ;
@@ -236,8 +236,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     )
         -> Tuple<'g, Expression<'g>>
     {
-        fn range(e: &Expression) -> com::Range { e.range() }
-        parse_tuple_impl(&mut self.raw, parse_expression, range, ns, o, c)
+        parse_tuple_impl(&mut self.raw, parse_expression, ns, o, c)
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
@@ -477,9 +476,8 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
     )
         -> Pattern<'g>
     {
-        fn range(p: &Pattern) -> com::Range { p.range() }
         Pattern::Tuple(
-            parse_tuple_impl(&mut self.raw, parse_pattern, range, ns, o, c)
+            parse_tuple_impl(&mut self.raw, parse_pattern, ns, o, c)
         )
     }
 }
@@ -575,10 +573,9 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 //
 //  Implementation Details (Tuple)
 //
-fn parse_tuple_impl<'a, 'g, 'local, T: Copy + 'g>(
+fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
     raw: &mut RawParser<'a, 'g, 'local>,
     inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
-    range: fn(&T) -> com::Range,
     ns: &'a [tt::Node<'a>],
     o: tt::Token,
     c: tt::Token,
@@ -597,7 +594,7 @@ fn parse_tuple_impl<'a, 'g, 'local, T: Copy + 'g>(
         if let Some(c) = inner.pop_kind(tt::Kind::SignComma) {
             commas.push(c.range().offset() as u32)
         } else {
-            commas.push(range(&f).end_offset() as u32 - 1)
+            commas.push(f.range().end_offset() as u32 - 1)
         };
     }
 

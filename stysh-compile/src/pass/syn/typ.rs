@@ -5,7 +5,7 @@
 use basic::com;
 
 use model::tt::{Kind, Node};
-use model::syn::{Enum, InnerRecord, Path, Record, Type, TypeIdentifier, Tuple};
+use model::syn::*;
 
 use super::com::RawParser;
 

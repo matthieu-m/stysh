@@ -52,6 +52,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Pattern;
 
         match *p {
+            Pattern::Constructor(..) => unimplemented!("pattern_of - {:?}", p),
             Pattern::Ignored(v) => self.pattern_of_ignored(v),
             Pattern::Tuple(t) => self.pattern_of_tuple(&t),
             Pattern::Var(v) => self.pattern_of_var(v),
@@ -737,7 +738,7 @@ mod tests {
             env.value_of(
                 &e.constructor(syn.type_().simple(0, 3))
                     .parens(3, 5)
-                    .push_argument(e.int(4, 1))
+                    .push(e.int(4, 1))
                     .build()
             ),
             v.constructor(rec).push(v.int(1, 4)).build().with_range(0, 6)
@@ -767,7 +768,7 @@ mod tests {
                 &e.field_access(
                     e.constructor(syn.type_().simple(15, 3))
                         .parens(18, 21)
-                        .push_argument(e.int(19, 2))
+                        .push(e.int(19, 2))
                         .build(),
                 ).build()
             ),
@@ -851,8 +852,8 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.function_call(e.var(0, 5), 5, 10)
-                    .push_argument(e.int(6, 1))
-                    .push_argument(e.int(9, 1))
+                    .push(e.int(6, 1))
+                    .push(e.int(9, 1))
                     .build()
             ),
             v.call()

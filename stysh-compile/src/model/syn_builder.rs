@@ -510,7 +510,7 @@ impl<'a> FunctionCallBuilder<'a> {
     }
 
     /// Appends an argument.
-    pub fn push_argument(&mut self, arg: Expression<'a>) -> &mut Self {
+    pub fn push(&mut self, arg: Expression<'a>) -> &mut Self {
         self.arguments.push(arg);
         self
     }
@@ -874,7 +874,7 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     /// Appends an argument.
-    pub fn push_argument(
+    pub fn push(
         &mut self,
         pos: usize,
         len: usize,
@@ -1069,6 +1069,13 @@ impl<'a> PatternFactory<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena) -> PatternFactory<'a> {
         PatternFactory { arena }
+    }
+
+    /// Creates a ConstructorBuilder.
+    pub fn constructor(&self, name: Type<'a>)
+        -> ConstructorBuilder<'a, Pattern<'a>>
+    {
+        ConstructorBuilder::new(self.arena, name)
     }
 
     /// Creates an Ignored Pattern.
@@ -1279,7 +1286,7 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 
     /// Appends an argument.
-    pub fn push_argument(&mut self, arg: T) -> &mut Self {
+    pub fn push(&mut self, arg: T) -> &mut Self {
         self.arguments.push(arg);
         self
     }

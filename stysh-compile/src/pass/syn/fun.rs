@@ -159,8 +159,8 @@ mod tests {
                 syn.type_().simple(28, 3),
                 e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
             )
-            .push_argument(9, 1, t.simple(12, 3))
-            .push_argument(17, 1, t.simple(20, 3))
+            .push(9, 1, t.simple(12, 3))
+            .push(17, 1, t.simple(20, 3))
             .build()
         );
     }

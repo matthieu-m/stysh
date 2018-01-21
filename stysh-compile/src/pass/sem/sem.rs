@@ -364,8 +364,8 @@ mod tests {
                     syn.type_().simple(28, 3),
                     syn.expr().var(0, 0),
                 )
-                .push_argument(9, 1, syn.type_().simple(12, 3))
-                .push_argument(17, 1, syn.type_().simple(20, 3))
+                .push(9, 1, syn.type_().simple(12, 3))
+                .push(17, 1, syn.type_().simple(20, 3))
                 .build()
             ),
             p.fun(i.id(5, 3), t.int())
@@ -413,8 +413,8 @@ mod tests {
                     e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
                         .build(),
                 )
-                .push_argument(9, 1, syn.type_().simple(12, 3))
-                .push_argument(17, 1, syn.type_().simple(17, 1))
+                .push(9, 1, syn.type_().simple(12, 3))
+                .push(17, 1, syn.type_().simple(17, 1))
                 .build()
             ),
             i.fun(f, v.block(body).build()).into()

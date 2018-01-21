@@ -72,6 +72,8 @@ pub enum Item<'a> {
 /// A Pattern.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Pattern<'a> {
+    /// A constructor.
+    Constructor(Constructor<'a, Pattern<'a>>),
     /// An ignored binding, always '_'.
     Ignored(VariableIdentifier),
     /// A tuple.
@@ -551,6 +553,7 @@ impl<'a> Range for Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Constructor(c) => c.range(),
             Ignored(i) => i.range(),
             Tuple(t) => t.range(),
             Var(v) => v.range(),
@@ -785,6 +788,12 @@ impl<'a> convert::From<Function<'a>> for Item<'a> {
 
 impl<'a> convert::From<Record<'a>> for Item<'a> {
     fn from(r: Record<'a>) -> Item<'a> { Item::Rec(r) }
+}
+
+impl<'a> convert::From<Constructor<'a, Pattern<'a>>> for Pattern<'a> {
+    fn from(c: Constructor<'a, Pattern<'a>>) -> Pattern<'a> {
+        Pattern::Constructor(c)
+    }
 }
 
 impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {

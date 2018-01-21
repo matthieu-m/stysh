@@ -240,15 +240,8 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
-        let tuple = if let Some(tt::Node::Braced(o, ns, c)) = self.raw.peek() {
-            assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
-
-            self.raw.pop_node();
-            self.parse_tuple(ns, o, c)
-        } else {
-            Default::default()
-        };
-        Expression::Constructor(Constructor { type_: ty, arguments: tuple })
+        let c = parse_constructor_impl(&mut self.raw, parse_expression, ty);
+        Expression::Constructor(c)
     }
 
     fn parse_if_else(&mut self) -> Expression<'g> {
@@ -424,6 +417,7 @@ impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
 //
 //  Implementation Details (Pattern)
 //
+#[derive(Debug)]
 struct PatternParser<'a, 'g, 'local> {
     raw: RawParser<'a, 'g, 'local>,
 }
@@ -439,17 +433,13 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         use model::tt::Kind as K;
 
         match self.raw.peek_kind() {
-            Some(K::NameValue) => self.parse_name(),
+            Some(K::NameType) => self.parse_type_name(),
+            Some(K::NameValue) => self.parse_value_name(),
             Some(K::ParenthesisOpen) => self.parse_parens(),
             Some(K::SignUnderscore) => self.parse_underscore(),
             Some(k) => unimplemented!("Expected identifier or tuple, got {:?}", k),
             None => unimplemented!("Expected identifier or tuple, got nothing"),
         }
-    }
-
-    fn parse_name(&mut self) -> Pattern<'static> {
-        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
-        Pattern::Var(VariableIdentifier(name.range()))
     }
 
     fn parse_parens(&mut self) -> Pattern<'g> {
@@ -462,10 +452,24 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         }
     }
 
+    fn parse_type_name(&mut self) -> Pattern<'g> {
+        if let Some(ty) = typ::try_parse_type(&mut self.raw) {
+            let c = parse_constructor_impl(&mut self.raw, parse_pattern, ty);
+            Pattern::Constructor(c)
+        } else {
+            unimplemented!("parse_type_name - {:?}", self)
+        }
+    }
+
     fn parse_underscore(&mut self) -> Pattern<'static> {
         let u =
             self.raw.pop_kind(tt::Kind::SignUnderscore).expect("underscore");
         Pattern::Ignored(VariableIdentifier(u.range()))
+    }
+
+    fn parse_value_name(&mut self) -> Pattern<'static> {
+        let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
+        Pattern::Var(VariableIdentifier(name.range()))
     }
 
     fn parse_tuple(
@@ -573,6 +577,25 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 //
 //  Implementation Details (Tuple)
 //
+fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
+    raw: &mut RawParser<'a, 'g, 'local>,
+    inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
+    ty: Type<'g>
+)
+    -> Constructor<'g, T>
+{
+    let tuple = if let Some(tt::Node::Braced(o, ns, c)) = raw.peek() {
+        assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
+
+        raw.pop_node();
+        parse_tuple_impl(raw, inner_parser, ns, o, c)
+    } else {
+        Default::default()
+    };
+    Constructor { type_: ty, arguments: tuple }
+}
+
+
 fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
     raw: &mut RawParser<'a, 'g, 'local>,
     inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
@@ -695,13 +718,11 @@ mod tests {
     fn basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
         let syn = Factory::new(&global_arena);
+        let (e, t) = (syn.expr(), syn.type_());
 
         assert_eq!(
             exprit(&global_arena, b"Some(1)"),
-            syn.expr()
-                .constructor(syn.type_().simple(0, 4))
-                .push_argument(syn.expr().int(5, 1))
-                .build()
+            e.constructor(t.simple(0, 4)).push(e.int(5, 1)).build()
         );
 
     }
@@ -728,8 +749,8 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"basic(1, 2)"),
             e.function_call(e.var(0, 5), 5, 10)
-                .push_argument(e.int(6, 1))
-                .push_argument(e.int(9, 1))
+                .push(e.int(6, 1))
+                .push(e.int(9, 1))
                 .build()
         );
 
@@ -738,8 +759,8 @@ mod tests {
             s.var(
                 p.var(5, 1),
                 e.function_call(e.var(10, 5), 15, 20)
-                    .push_argument(e.int(16, 1))
-                    .push_argument(e.int(19, 1))
+                    .push(e.int(16, 1))
+                    .push(e.int(19, 1))
                     .build(),
             )
             .build()
@@ -831,6 +852,21 @@ mod tests {
             syn.stmt().set(
                 e.field_access(e.var(6, 3)).build(),
                 e.int(15, 4)
+            ).build()
+        );
+    }
+
+    #[test]
+    fn var_constructor() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, p, s, t) = (syn.expr(), syn.pat(), syn.stmt(), syn.type_());
+
+        assert_eq!(
+            stmtit(&global_arena, b":var Some(x) := Some(1);"),
+            s.var(
+                p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
+                e.constructor(t.simple(16, 4)).push(e.int(21, 1)).build(),
             ).build()
         );
     }

@@ -112,12 +112,6 @@ pub struct CallBuilder<'a> {
     arguments: mem::Array<'a, Value<'a>>,
 }
 
-#[derive(Clone)]
-pub struct ConstructorBuilder<'a> {
-    record: RecordProto,
-    arguments: mem::Array<'a, Value<'a>>,
-}
-
 #[derive(Clone, Copy)]
 pub struct FieldAccessBuilder<'a> {
     index: u16,
@@ -148,14 +142,19 @@ pub struct ValueTupleBuilder<'a> {
 //  Low-Level Builders
 //
 
-/// EnumProtoBuilder
+#[derive(Clone)]
+pub struct ConstructorBuilder<'a, T: 'a> {
+    record: RecordProto,
+    arguments: mem::Array<'a, T>,
+    range: com::Range,
+}
+
 #[derive(Clone, Copy)]
 pub struct EnumProtoBuilder {
     name: ItemIdentifier,
     range: com::Range,
 }
 
-/// RecordProtoBuilder
 #[derive(Clone, Copy)]
 pub struct RecordProtoBuilder {
     name: ItemIdentifier,
@@ -297,6 +296,13 @@ impl<'a> RecordBuilder<'a> {
 impl<'a> PatternFactory<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena) -> Self { PatternFactory { arena } }
+
+    /// Creates a ConstructorBuilder.
+    pub fn constructor(&self, record: RecordProto, pos: usize, len: usize)
+        -> ConstructorBuilder<'a, Pattern<'a>>
+    {
+        ConstructorBuilder::new(self.arena, record, pos, len)
+    }
 
     /// Creates an ignored Pattern.
     pub fn ignored(&self, pos: usize) -> Pattern<'static> {
@@ -554,8 +560,10 @@ impl<'a> ValueFactory<'a> {
     pub fn call(&self) -> CallBuilder<'a> { CallBuilder::new(self.arena) }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, record: RecordProto) -> ConstructorBuilder<'a> {
-        ConstructorBuilder::new(self.arena, record)
+    pub fn constructor(&self, record: RecordProto, pos: usize, len: usize)
+        -> ConstructorBuilder<'a, Value<'a>>
+    {
+        ConstructorBuilder::new(self.arena, record, pos, len)
     }
 
     /// Creates a FieldAccessBuilder.
@@ -759,30 +767,6 @@ impl<'a> CallBuilder<'a> {
     }
 }
 
-impl<'a> ConstructorBuilder<'a> {
-    /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, record: RecordProto) -> Self {
-        ConstructorBuilder {
-            record: record,
-            arguments: mem::Array::new(arena),
-        }
-    }
-
-    /// Push an argument.
-    pub fn push(&mut self, argument: Value<'a>) -> &mut Self {
-        self.arguments.push(argument);
-        self
-    }
-
-    /// Creates an Value.
-    pub fn build(&self) -> Value<'a> {
-        value(
-            Type::Rec(self.record),
-            Expr::Constructor(self.record, self.arguments.clone().into_slice()),
-        )
-    }
-}
-
 impl<'a> FieldAccessBuilder<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena, index: u16, value: Value<'a>) -> Self {
@@ -968,6 +952,49 @@ impl RecordProtoBuilder {
     }
 }
 
+impl<'a, T> ConstructorBuilder<'a, T> {
+    /// Creates an instance.
+    pub fn new(
+        arena: &'a mem::Arena,
+        record: RecordProto,
+        pos: usize,
+        len: usize
+    )
+        -> Self
+    {
+        ConstructorBuilder {
+            record: record,
+            arguments: mem::Array::new(arena),
+            range: range(pos, len),
+        }
+    }
+
+    /// Push an argument.
+    pub fn push(&mut self, argument: T) -> &mut Self {
+        self.arguments.push(argument);
+        self
+    }
+
+}
+
+impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
+    /// Creates a Constructor.
+    pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
+        Constructor {
+            type_: self.record,
+            arguments: self.arguments.clone().into_slice(),
+            range: self.range,
+        }.into()
+    }
+}
+
+impl<'a> ConstructorBuilder<'a, Value<'a>> {
+    /// Shortcut: creates a Value.
+    pub fn build_value(&self) -> Value<'a> {
+        self.build::<Value<'a>>()
+    }
+}
+
 impl<'a, T: 'a> TupleBuilder<'a, T> {
     /// Creates a new instance.
     pub fn new(arena: &'a mem::Arena) -> Self {
@@ -981,7 +1008,7 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
     }
 }
 
-impl<'a, T: Clone + 'a> TupleBuilder<'a, T> {
+impl<'a, T: 'a + Clone> TupleBuilder<'a, T> {
     /// Creates a new Tuple instance.
     pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
         Tuple {

@@ -162,8 +162,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => self.convert_literal(current, val, r),
             sem::Expr::Call(callable, args)
                 => self.convert_call(current, callable, args, r),
-            sem::Expr::Constructor(rec, args)
-                => self.convert_constructor(current, rec, args, r),
+            sem::Expr::Constructor(c)
+                => self.convert_constructor(current, c.type_, c.arguments, r),
             sem::Expr::FieldAccess(v, i)
                 => self.convert_field_access(current, value.type_, v, i, r),
             sem::Expr::If(cond, true_, false_)
@@ -438,6 +438,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
 
         match pattern {
+            sem::Pattern::Constructor(_) => unimplemented!("{:?}", pattern),
             sem::Pattern::Ignored(_) => (),
             sem::Pattern::Tuple(pat, _) => {
                 let types = extract_tuple_types(type_);
@@ -726,7 +727,7 @@ mod tests {
         assert_eq!(
             valueit(
                 &global_arena,
-                &v.constructor(r).build().with_range(30, 12)
+                &v.constructor(r, 30, 12).build_value()
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -749,7 +750,7 @@ mod tests {
         assert_eq!(
             valueit(
                 &global_arena,
-                &v.constructor(r).push(v.int(42, 24)).build().with_range(19, 8)
+                &v.constructor(r, 19, 8).push(v.int(42, 24)).build_value()
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -770,11 +771,10 @@ mod tests {
 
         let r = p.rec(i.id(5, 4), 0).build();
         let c =
-            v.constructor(r)
+            v.constructor(r, 23, 11)
                 .push(v.int(4, 28))
                 .push(v.int(42, 31))
-                .build()
-                .with_range(23, 11);
+                .build_value();
 
         assert_eq!(
             valueit(&global_arena, &v.field_access(1, c).build()).to_string(),

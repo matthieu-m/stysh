@@ -201,7 +201,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         let index = index as usize;
 
         match self.get_value(value).expr {
-            Constructor(_, fields) => self.arena.intern(&fields[index]),
+            Constructor(c) => self.arena.intern(&c.arguments[index]),
             Tuple(tup) => self.arena.intern(&tup.fields[index]),
             _ => unreachable!(),
         }

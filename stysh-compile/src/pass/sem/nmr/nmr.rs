@@ -52,7 +52,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Pattern;
 
         match *p {
-            Pattern::Constructor(..) => unimplemented!("pattern_of - {:?}", p),
+            Pattern::Constructor(c) => self.pattern_of_constructor(c),
             Pattern::Ignored(v) => self.pattern_of_ignored(v),
             Pattern::Tuple(t) => self.pattern_of_tuple(&t),
             Pattern::Var(v) => self.pattern_of_var(v),
@@ -83,6 +83,32 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn pattern_of_constructor(
+        &mut self,
+        c: syn::Constructor<syn::Pattern>,
+    )
+        -> sem::Pattern<'g>
+    {
+        let rec = if let sem::Type::Rec(p) = self.type_of(&c.type_) {
+            p
+        } else {
+            unimplemented!("Unknown type - {:?}", c.type_)
+        };
+
+        let mut arguments =
+            mem::Array::with_capacity(c.arguments.len(), self.global_arena);
+
+        for f in c.arguments.fields {
+            arguments.push(self.pattern_of(f));
+        }
+
+        sem::Pattern::Constructor(sem::Constructor {
+            type_: rec,
+            arguments: arguments.into_slice(),
+            range: c.range(),
+        })
+    }
+
     fn pattern_of_ignored(&mut self, underscore: syn::VariableIdentifier)
         -> sem::Pattern<'static>
     {
@@ -193,6 +219,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             BlockScope::new(
                 self.code_fragment,
                 self.scope,
+                self.registry,
                 self.global_arena,
                 self.local_arena
             );
@@ -293,7 +320,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             return sem::Value {
                 type_: sem::Type::Rec(record),
                 range: c.range(),
-                expr: sem::Expr::Constructor(record, values.into_slice()),
+                expr: sem::Expr::Constructor(sem::Constructor {
+                    type_: record,
+                    arguments: values.into_slice(),
+                    range: c.range(),
+                }),
             };
         }
 
@@ -716,7 +747,7 @@ mod tests {
             env.value_of(
                 &syn.expr().constructor(syn.type_().simple(0, 3)).build()
             ),
-            v.constructor(rec).build().with_range(0, 3)
+            v.constructor(rec, 0, 3).build_value()
         );
     }
 
@@ -741,7 +772,7 @@ mod tests {
                     .push(e.int(4, 1))
                     .build()
             ),
-            v.constructor(rec).push(v.int(1, 4)).build().with_range(0, 6)
+            v.constructor(rec, 0, 6).push(v.int(1, 4)).build_value()
         );
     }
 
@@ -774,10 +805,9 @@ mod tests {
             ),
             v.field_access(
                 0,
-                v.constructor(*rec.prototype)
+                v.constructor(*rec.prototype, 15, 7)
                     .push(v.int(42, 19))
-                    .build()
-                    .with_range(15, 7)
+                    .build_value()
             ).build()
         );
     }
@@ -832,7 +862,7 @@ mod tests {
                     syn.type_().nested(38, 4).push(30, 6).build()
                 ).build()
             ),
-            v.constructor(*rec.prototype).build().with_range(30, 12)
+            v.constructor(*rec.prototype, 30, 12).build_value()
         );
     }
 
@@ -1041,6 +1071,54 @@ mod tests {
     }
 
     #[test]
+    fn value_var_pattern_constructor() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(
+            b":rec Some(Int); { :var Some(a) := Some(1); a }",
+            &global_arena
+        );
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+
+            e.block(e.var(43, 1))
+                .push_stmt(s.var(
+                    p.constructor(t.simple(23, 4)).push(p.var(28, 1)).build(),
+                    e.constructor(t.simple(34, 4)).push(e.int(39, 1)).build(),
+                ).build())
+                .build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (i, p, s, t, v) =
+                (f.item(), f.pat(), f.stmt(), f.type_(), f.value());
+
+            let a = v.id(28, 1);
+
+            let rec =
+                i.rec(f.proto().rec(i.id(5, 4), 0).build())
+                    .push(t.int())
+                    .build();
+            env.insert_record(rec, &[23, 34]);
+
+            v.block(v.int_ref(a, 43))
+                .push(s.var(
+                    p.constructor(*rec.prototype, 23, 7)
+                        .push(p.var(a))
+                        .build(),
+                    v.constructor(*rec.prototype, 34, 7)
+                        .push(v.int(1, 39))
+                        .build(),
+                ))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
+    }
+
+    #[test]
     fn value_var_pattern_tuple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
@@ -1114,7 +1192,7 @@ mod tests {
                 v.block(
                     v.implicit().enum_(
                         *enum_.prototype,
-                        v.constructor(rec).build().with_range(pos, 4),
+                        v.constructor(rec, pos, 4).build_value(),
                     )
                 ).build()
             };

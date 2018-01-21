@@ -8,7 +8,9 @@ use stysh_compile::pass::sem::scp;
 pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> sem::Value<'g> {
     let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new(raw);
-    let mut scope = scp::BlockScope::new(raw, &builtin, arena, &scope_arena);
+    let fake = sem::mocks::MockRegistry::new(arena);
+    let mut scope =
+        scp::BlockScope::new(raw, &builtin, &fake, arena, &scope_arena);
     let mut def_registry = sem::mocks::MockRegistry::new(arena);
     let mut cfg_registry = int::SimpleRegistry::new(arena);
 

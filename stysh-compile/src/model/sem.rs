@@ -97,7 +97,7 @@ pub enum Expr<'a> {
     /// A function call.
     Call(Callable<'a>, &'a [Value<'a>]),
     /// A constructor call.
-    Constructor(RecordProto, &'a [Value<'a>]),
+    Constructor(Constructor<'a , Value<'a>>),
     /// A field access.
     FieldAccess(&'a Value<'a>, u16),
     /// A if expression (condition, true-branch, false-branch).
@@ -117,6 +117,8 @@ pub enum Expr<'a> {
 /// A Pattern
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Pattern<'a> {
+    /// A constructor.
+    Constructor(Constructor<'a, Pattern<'a>>),
     /// An ignored binding, '_'.
     Ignored(com::Range),
     /// A tuple.
@@ -200,6 +202,17 @@ pub enum BuiltinFunction {
     Substract,
     /// A boolean xor.
     Xor,
+}
+
+/// A constructor.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Constructor<'a, T: 'a> {
+    /// The type.
+    pub type_: RecordProto,
+    /// The arguments.
+    pub arguments: &'a [T],
+    /// The range.
+    pub range: com::Range,
 }
 
 /// A tuple.
@@ -390,11 +403,17 @@ impl<'a> Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Constructor(c) => c.range(),
             Ignored(r) => r,
             Tuple(_, r) => r,
             Var(v) => v.0,
         }
     }
+}
+
+impl<'a, T: 'a> Constructor<'a, T> {
+    /// Returns the range spanned by the constructor.
+    pub fn range(&self) -> com::Range { self.range }
 }
 
 impl<'a> Prototype<'a> {
@@ -506,6 +525,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
                 arena.intern(&c),
                 CloneInto::clone_into(args, arena),
             ),
+            Constructor(c) => Constructor(arena.intern(&c)),
             If(c, t, f) => If(
                 arena.intern_ref(c),
                 arena.intern_ref(t),
@@ -526,6 +546,7 @@ impl<'a, 'target> CloneInto<'target> for Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Constructor(c) => Constructor(arena.intern(&c)),
             Ignored(r) => Ignored(r),
             Tuple(t, r) => Tuple(arena.intern(&t), r),
             Var(v) => Var(v),
@@ -676,6 +697,20 @@ impl<'a, 'target> CloneInto<'target> for Function<'a> {
     }
 }
 
+impl<'a, 'target, T> CloneInto<'target> for Constructor<'a, T>
+    where T: CloneInto<'target> + Copy + 'a
+{
+    type Output = Constructor<'target, <T as CloneInto<'target>>::Output>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Constructor {
+            type_: self.type_,
+            arguments: CloneInto::clone_into(self.arguments, arena),
+            range: self.range,
+        }
+    }
+}
+
 impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
     where T: CloneInto<'target> + Copy + 'a
 {
@@ -734,6 +769,10 @@ impl convert::From<syn::TypeIdentifier> for ItemIdentifier {
     }
 }
 
+impl<'a> convert::From<Constructor<'a, Value<'a>>> for Expr<'a> {
+    fn from(c: Constructor<'a, Value<'a>>) -> Self { Expr::Constructor(c) }
+}
+
 impl<'a> convert::From<Tuple<'a, Value<'a>>> for Expr<'a> {
     fn from(t: Tuple<'a, Value<'a>>) -> Self { Expr::Tuple(t) }
 }
@@ -748,6 +787,12 @@ impl<'a> convert::From<Function<'a>> for Item<'a> {
 
 impl<'a> convert::From<Record<'a>> for Item<'a> {
     fn from(r: Record<'a>) -> Self { Item::Rec(r) }
+}
+
+impl<'a> convert::From<Constructor<'a, Pattern<'a>>> for Pattern<'a> {
+    fn from(c: Constructor<'a, Pattern<'a>>) -> Self {
+        Pattern::Constructor(c)
+    }
 }
 
 impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
@@ -790,6 +835,16 @@ impl convert::From<RecordProto> for Type<'static> {
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
     fn from(t: Tuple<'a, Type<'a>>) -> Self { Type::Tuple(t) }
+}
+
+impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
+    fn from(c: Constructor<'a, Value<'a>>) -> Self {
+        Value {
+            type_: Type::Rec(c.type_),
+            range: c.range(),
+            expr: Expr::Constructor(c),
+        }
+    }
 }
 
 

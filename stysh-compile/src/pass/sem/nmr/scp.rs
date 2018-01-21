@@ -102,6 +102,7 @@ pub struct BlockScope<'a, 'g, 'local>
 {
     source: &'local [u8],
     parent: &'a Scope<'g>,
+    registry: &'a Registry<'g>,
     functions: SourceMap<'local, Callable<'g>>,
     types: SourceMap<'local, Type<'g>>,
     values: SourceMap<'local, (ValueIdentifier, Type<'g>)>,
@@ -113,6 +114,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     pub fn new(
         source: &'local [u8],
         parent: &'a Scope<'g>,
+        registry: &'a Registry<'g>,
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
     )
@@ -121,6 +123,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
         BlockScope {
             source: source,
             parent: parent,
+            registry: registry,
             functions: SourceMap::new(local_arena),
             types: SourceMap::new(local_arena),
             values: SourceMap::new(local_arena),
@@ -143,20 +146,18 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 
     /// Adds a new pattern to the scope.
     pub fn add_pattern(&mut self, pat: Pattern<'g>, type_: Type<'g>) {
-        fn type_of_field<'b>(type_: Type<'b>, index: usize) -> Type<'b> {
-            let unresolved = Type::Unresolved(ItemIdentifier::unresolved());
-            if let Type::Tuple(type_) = type_ {
-                type_.fields.get(index).cloned().unwrap_or(unresolved)
-            } else {
-                unresolved
-            }
-        }
-
         match pat {
+            Pattern::Constructor(c) => {
+                for (index, pat) in c.arguments.iter().enumerate() {
+                    let type_ = self.type_of_field(type_, index);
+                    self.add_pattern(*pat, type_)
+                }
+            },
             Pattern::Ignored(_) => (),
             Pattern::Tuple(tuple, _) => {
                 for (index, pat) in tuple.fields.iter().enumerate() {
-                    self.add_pattern(*pat, type_of_field(type_, index))
+                    let type_ = self.type_of_field(type_, index);
+                    self.add_pattern(*pat, type_)
                 }
             },
             Pattern::Var(id) => self.add_value(id, type_),
@@ -166,6 +167,19 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     /// Adds a new value identifier to the scope.
     pub fn add_value(&mut self, id: ValueIdentifier, type_: Type<'g>) {
         self.values.insert(&self.source[id.0], (id, type_));
+    }
+
+    fn type_of_field(&self, type_: Type<'g>, index: usize) -> Type<'g> {
+        let fields = match type_ {
+            Type::Rec(r)
+                => self.registry
+                    .lookup_record(r.name)
+                    .map(|r| r.fields)
+                    .unwrap_or(&[]),
+            Type::Tuple(t) => t.fields,
+            _ => &[],
+        };
+        fields.get(index).cloned().unwrap_or(Type::unresolved())
     }
 }
 

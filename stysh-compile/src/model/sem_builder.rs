@@ -298,13 +298,20 @@ impl<'a> PatternFactory<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena) -> Self { PatternFactory { arena } }
 
+    /// Creates an ignored Pattern.
+    pub fn ignored(&self, pos: usize) -> Pattern<'static> {
+        Pattern::Ignored(range(pos, 1))
+    }
+
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
         TupleBuilder::new(self.arena)
     }
 
     /// Creates a var Pattern.
-    pub fn var(&self, id: ValueIdentifier) -> Pattern<'a> { Pattern::Var(id) }
+    pub fn var(&self, id: ValueIdentifier) -> Pattern<'static> {
+        Pattern::Var(id)
+    }
 }
 
 //

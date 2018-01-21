@@ -117,6 +117,8 @@ pub enum Expr<'a> {
 /// A Pattern
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Pattern<'a> {
+    /// An ignored binding, '_'.
+    Ignored(com::Range),
     /// A tuple.
     Tuple(Tuple<'a, Pattern<'a>>, com::Range),
     /// A variable.
@@ -388,6 +390,7 @@ impl<'a> Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Ignored(r) => r,
             Tuple(_, r) => r,
             Var(v) => v.0,
         }
@@ -523,6 +526,7 @@ impl<'a, 'target> CloneInto<'target> for Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Ignored(r) => Ignored(r),
             Tuple(t, r) => Tuple(arena.intern(&t), r),
             Var(v) => Var(v),
         }

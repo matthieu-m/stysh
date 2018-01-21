@@ -438,6 +438,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
 
         match pattern {
+            sem::Pattern::Ignored(_) => (),
             sem::Pattern::Tuple(pat, _) => {
                 let types = extract_tuple_types(type_);
                 assert_eq!(pat.fields.len(), types.len());

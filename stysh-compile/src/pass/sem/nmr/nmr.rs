@@ -51,7 +51,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Pattern;
 
         match *p {
-            Pattern::Ignored(_) => unimplemented!("pattern_of - {:?}", p),
+            Pattern::Ignored(v) => self.pattern_of_ignored(v),
             Pattern::Tuple(t) => self.pattern_of_tuple(&t),
             Pattern::Var(v) => self.pattern_of_var(v),
         }
@@ -81,6 +81,12 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
+    fn pattern_of_ignored(&mut self, underscore: syn::VariableIdentifier)
+        -> sem::Pattern<'static>
+    {
+        sem::Pattern::Ignored(underscore.range())
+    }
+
     fn pattern_of_tuple(&mut self, t: &syn::Tuple<syn::Pattern>)
         -> sem::Pattern<'g>
     {
@@ -98,7 +104,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn pattern_of_var(&self, var: syn::VariableIdentifier)
-        -> sem::Pattern<'g>
+        -> sem::Pattern<'static>
     {
         sem::Pattern::Var(var.into())
     }
@@ -977,9 +983,9 @@ mod tests {
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
-                    .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
-                    .push_stmt(s.var(p.var(20, 1), e.int(25, 1)).build())
-                    .build()
+                .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
+                .push_stmt(s.var(p.var(20, 1), e.int(25, 1)).build())
+                .build()
         };
 
         let sem = {
@@ -997,6 +1003,37 @@ mod tests {
         };
 
         assert_eq!(env.value_of(&syn), sem);
+    }
+
+    #[test]
+    fn value_var_ignored() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b"{ :var a := 1; :var _ := 2; a }", &global_arena);
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+
+            e.block(e.var(28, 1))
+                .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
+                .push_stmt(s.var(p.ignored(20), e.int(25, 1)).build())
+                .build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (p, s, v) = (f.pat(), f.stmt(), f.value());
+
+            let a = v.id(7, 1);
+
+            v.block(v.int_ref(a, 28))
+                .push(s.var(p.var(a), v.int(1, 12)))
+                .push(s.var(p.ignored(20), v.int(2, 25)))
+                .build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
+
     }
 
     #[test]

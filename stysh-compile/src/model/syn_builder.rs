@@ -1112,14 +1112,23 @@ impl<'a> PatternFactory<'a> {
         PatternFactory { arena }
     }
 
+    /// Creates an Ignored Pattern.
+    pub fn ignored(&self, pos: usize) -> Pattern<'static> {
+        Pattern::Ignored(self.id(pos, 1))
+    }
+
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
         TupleBuilder::new(self.arena, |e| e.range())
     }
 
     /// Creates a Var Pattern.
-    pub fn var(&self, pos: usize, len: usize) -> Pattern<'a> {
-        Pattern::Var(VariableIdentifier(range((pos, len))))
+    pub fn var(&self, pos: usize, len: usize) -> Pattern<'static> {
+        Pattern::Var(self.id(pos, len))
+    }
+
+    fn id(&self, pos: usize, len: usize) -> VariableIdentifier {
+        VariableIdentifier(range((pos, len)))
     }
 }
 

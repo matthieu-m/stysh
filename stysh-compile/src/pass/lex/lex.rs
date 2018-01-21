@@ -233,8 +233,8 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     }
 
     fn parse_token(&mut self) -> Option<Token> {
-        //  +-*/<>=!,;
-        const SIMPLE_SIGNS: AsciiSet = AsciiSet(0x7800bc0200000000, 0x0);
+        //  +-*/<>=!,;_
+        const SIMPLE_SIGNS: AsciiSet = AsciiSet(0x7800bc0200000000, 0x80000000);
 
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
@@ -326,6 +326,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b"->" => Kind::SignArrowSingle,
             b"," => Kind::SignComma,
             b";" => Kind::SignSemiColon,
+            b"_" => Kind::SignUnderscore,
             _ => panic!("parse_sign not implemented for {}", tok),
         };
 
@@ -720,7 +721,7 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         assert_eq!(
-            lexit(&global_arena, b"-> != := : , - :: == // < <= + > >= ; *"),
+            lexit(&global_arena, b"-> != := : , - :: == // < <= + > >= ; * _"),
             &[
                 Node::Run(&[
                     Token::new(Kind::SignArrowSingle, 0, 2),
@@ -739,6 +740,7 @@ mod tests {
                     Token::new(Kind::SignRightEqual, 33, 2),
                     Token::new(Kind::SignSemiColon, 36, 1),
                     Token::new(Kind::SignStar, 38, 1),
+                    Token::new(Kind::SignUnderscore, 40, 1),
                 ]),
             ]
         )

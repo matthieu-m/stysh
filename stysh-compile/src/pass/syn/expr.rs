@@ -442,12 +442,13 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         match self.raw.peek_kind() {
             Some(K::NameValue) => self.parse_name(),
             Some(K::ParenthesisOpen) => self.parse_parens(),
+            Some(K::SignUnderscore) => self.parse_underscore(),
             Some(k) => unimplemented!("Expected identifier or tuple, got {:?}", k),
             None => unimplemented!("Expected identifier or tuple, got nothing"),
         }
     }
 
-    fn parse_name(&mut self) -> Pattern<'g> {
+    fn parse_name(&mut self) -> Pattern<'static> {
         let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
         Pattern::Var(VariableIdentifier(name.range()))
     }
@@ -460,6 +461,12 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
             },
             n => unimplemented!("Expected tuple, got {:?}", n),
         }
+    }
+
+    fn parse_underscore(&mut self) -> Pattern<'static> {
+        let u =
+            self.raw.pop_kind(tt::Kind::SignUnderscore).expect("underscore");
+        Pattern::Ignored(VariableIdentifier(u.range()))
     }
 
     fn parse_tuple(
@@ -827,6 +834,33 @@ mod tests {
             syn.stmt().set(
                 e.field_access(e.var(6, 3)).build(),
                 e.int(15, 4)
+            ).build()
+        );
+    }
+
+    #[test]
+    fn var_ignored() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+
+        assert_eq!(
+            stmtit(&global_arena, b":var _ := 1;"),
+            s.var(p.ignored(5), e.int(10, 1)).build()
+        );
+    }
+
+    #[test]
+    fn var_ignored_nested() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+
+        assert_eq!(
+            stmtit(&global_arena, b":var (_, b) := (1, 2);"),
+            s.var(
+                p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
+                e.tuple().push(e.int(16, 1)).push(e.int(19, 1)).build(),
             ).build()
         );
     }

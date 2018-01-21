@@ -51,6 +51,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::Pattern;
 
         match *p {
+            Pattern::Ignored(_) => unimplemented!("pattern_of - {:?}", p),
             Pattern::Tuple(t) => self.pattern_of_tuple(&t),
             Pattern::Var(v) => self.pattern_of_var(v),
         }

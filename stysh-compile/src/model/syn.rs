@@ -66,6 +66,8 @@ pub enum Item<'a> {
 /// A Pattern.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Pattern<'a> {
+    /// An ignored binding, always '_'.
+    Ignored(VariableIdentifier),
     /// A tuple.
     Tuple(Tuple<'a, Pattern<'a>>),
     /// A variable identifier.
@@ -392,6 +394,7 @@ impl<'a> Pattern<'a> {
         use self::Pattern::*;
 
         match *self {
+            Ignored(i) => i.range(),
             Tuple(t) => t.range(),
             Var(v) => v.range(),
         }

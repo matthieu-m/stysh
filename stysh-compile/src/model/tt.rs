@@ -124,6 +124,8 @@ pub enum Kind {
     SignSemiColon,
     /// A '*' sign.
     SignStar,
+    /// A '_' sign.
+    SignUnderscore,
     /// A format for an argument or interpolated identifier.
     StringFormat,
     /// An identifier in scope, to be interpolated.

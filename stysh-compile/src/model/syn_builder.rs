@@ -60,13 +60,6 @@ pub struct BlockBuilder<'a> {
     statements: mem::Array<'a, Statement<'a>>,
 }
 
-/// ConstructorBuilder
-#[derive(Clone)]
-pub struct ConstructorBuilder<'a> {
-    type_: Type<'a>,
-    arguments: TupleBuilder<'a, Expression<'a>>,
-}
-
 /// FieldAccessBuilder
 #[derive(Clone, Copy)]
 pub struct FieldAccessBuilder<'a> {
@@ -177,6 +170,13 @@ pub struct VariableBindingBuilder<'a> {
 //  Low-Level Builders
 //
 
+/// ConstructorBuilder
+#[derive(Clone)]
+pub struct ConstructorBuilder<'a, T:'a> {
+    type_: Type<'a>,
+    arguments: TupleBuilder<'a, T>,
+}
+
 /// TupleBuilder
 #[derive(Clone)]
 pub struct TupleBuilder<'a, T: 'a> {
@@ -265,8 +265,10 @@ impl<'a> ExprFactory<'a> {
     }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, name: Type<'a>) -> ConstructorBuilder<'a> {
-        ConstructorBuilder::new(self.arena, name)
+    pub fn constructor(&self, name: Type<'a>)
+        -> ConstructorBuilder<'a, Expression<'a>>
+    {
+        ConstructorBuilder::new(self.arena, name, |e| e.range())
     }
 
     /// Creates a FieldAccess Expression.
@@ -451,42 +453,6 @@ impl<'a> BlockBuilder<'a> {
             self.expr,
             range,
         )
-    }
-}
-
-impl<'a> ConstructorBuilder<'a> {
-    /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, name: Type<'a>) -> Self {
-        ConstructorBuilder {
-            type_: name,
-            arguments: TupleBuilder::new(arena, |e| e.range())
-        }
-    }
-
-    /// Sets up parentheses.
-    pub fn parens(&mut self, open: u32, close: u32) -> &mut Self {
-        self.arguments.parens(open, close);
-        self
-    }
-
-    /// Appends an argument.
-    pub fn push_argument(&mut self, arg: Expression<'a>) -> &mut Self {
-        self.arguments.push(arg);
-        self
-    }
-
-    /// Overrides the position of the last comma.
-    pub fn comma(&mut self, pos: u32) -> &mut Self {
-        self.arguments.comma(pos);
-        self
-    }
-
-    /// Creates a Constructor.
-    pub fn build<T: convert::From<Constructor<'a>>>(&self) -> T {
-        Constructor {
-            type_: self.type_,
-            arguments: self.arguments.build(),
-        }.into()
     }
 }
 
@@ -1304,6 +1270,50 @@ impl<'a> VariableBindingBuilder<'a> {
 //
 //  Implementations of Low-Level builders
 //
+impl<'a, T: 'a> ConstructorBuilder<'a, T> {
+    /// Creates a new instance.
+    pub fn new(
+        arena: &'a mem::Arena,
+        name: Type<'a>,
+        range: fn(&T) -> com::Range
+    )
+        -> Self
+    {
+        ConstructorBuilder {
+            type_: name,
+            arguments: TupleBuilder::new(arena, range)
+        }
+    }
+
+    /// Sets up parentheses.
+    pub fn parens(&mut self, open: u32, close: u32) -> &mut Self {
+        self.arguments.parens(open, close);
+        self
+    }
+
+    /// Appends an argument.
+    pub fn push_argument(&mut self, arg: T) -> &mut Self {
+        self.arguments.push(arg);
+        self
+    }
+
+    /// Overrides the position of the last comma.
+    pub fn comma(&mut self, pos: u32) -> &mut Self {
+        self.arguments.comma(pos);
+        self
+    }
+}
+
+impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
+    /// Creates a Constructor.
+    pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
+        Constructor {
+            type_: self.type_,
+            arguments: self.arguments.build(),
+        }.into()
+    }
+}
+
 impl<'a, T: 'a> TupleBuilder<'a, T> {
     /// Creates a new instance.
     pub fn new(arena: &'a mem::Arena, range: fn(&T) -> com::Range) -> Self {
@@ -1312,7 +1322,7 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
             commas: mem::Array::new(arena),
             open: U32_NONE,
             close: U32_NONE,
-            range_extractor: range
+            range_extractor: range,
         }
     }
 

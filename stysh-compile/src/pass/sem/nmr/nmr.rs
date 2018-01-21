@@ -275,7 +275,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_constructor(&mut self, c: syn::Constructor) -> sem::Value<'g> {
+    fn value_of_constructor(&mut self, c: syn::Constructor<syn::Expression>)
+        -> sem::Value<'g>
+    {
         if let sem::Type::Rec(record) = self.type_of(&c.type_) {
             let mut values = mem::Array::with_capacity(
                 c.arguments.len(),

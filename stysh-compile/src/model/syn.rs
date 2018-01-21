@@ -35,7 +35,7 @@ pub enum Expression<'a> {
     /// A block expression.
     Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
     /// A constructor expression.
-    Constructor(Constructor<'a>),
+    Constructor(Constructor<'a, Expression<'a>>),
     /// A field access expression.
     FieldAccess(FieldAccess<'a>),
     /// A function call expression.
@@ -200,11 +200,11 @@ pub enum PrefixOperator {
 
 /// A Constructor.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Constructor<'a> {
+pub struct Constructor<'a, T: 'a> {
     /// Type of the constructor.
     pub type_: Type<'a>,
     /// Arguments of the constructor.
-    pub arguments: Tuple<'a, Expression<'a>>,
+    pub arguments: Tuple<'a, T>,
 }
 
 /// A Field Access such .0 or .name.
@@ -513,7 +513,7 @@ impl<'a> Argument<'a> {
     }
 }
 
-impl<'a> Constructor<'a> {
+impl<'a, T: 'a> Constructor<'a, T> {
     /// Returns the range spanned by the constructor.
     pub fn range(&self) -> com::Range {
         if self.arguments.close == 0 {
@@ -658,17 +658,12 @@ impl<'a> Path<'a> {
     }
 }
 
-impl<'a, T: 'a + Clone> Tuple<'a, T> {
+impl<'a, T: 'a> Tuple<'a, T> {
     /// Returns whether the tuple is empty.
     pub fn is_empty(&self) -> bool { self.fields.is_empty() }
 
     /// Returns the number of fields of the tuple.
     pub fn len(&self) -> usize { self.fields.len() }
-
-    /// Returns the field at index i.
-    pub fn field(&self, i: usize) -> Option<T> {
-        self.fields.get(i).cloned()
-    }
 
     /// Returns the token of the comma following the i-th field, if there is no
     /// such comma the position it would have been at is faked.
@@ -694,6 +689,13 @@ impl<'a, T: 'a + Clone> Tuple<'a, T> {
     }
 }
 
+impl<'a, T: 'a + Clone> Tuple<'a, T> {
+    /// Returns the field at index i.
+    pub fn field(&self, i: usize) -> Option<T> {
+        self.fields.get(i).cloned()
+    }
+}
+
 impl VariableIdentifier {
     /// Returns the range spanned by the variable identifier.
     pub fn range(&self) -> com::Range {
@@ -711,8 +713,8 @@ impl TypeIdentifier {
 //
 //  Trait Implementations
 //
-impl<'a> convert::From<Constructor<'a>> for Expression<'a> {
-    fn from(c: Constructor<'a>) -> Expression<'a> {
+impl<'a> convert::From<Constructor<'a, Expression<'a>>> for Expression<'a> {
+    fn from(c: Constructor<'a, Expression<'a>>) -> Expression<'a> {
         Expression::Constructor(c)
     }
 }

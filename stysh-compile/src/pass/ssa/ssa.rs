@@ -13,24 +13,29 @@ use super::proto::*;
 /// Stysh CFG builder.
 ///
 /// Builds the Control-Flow Graph.
-pub struct GraphBuilder<'g, 'local>
-    where 'g: 'local
+pub struct GraphBuilder<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
+    registry: &'a sem::Registry<'g>,
 }
 
-impl<'g, 'local> GraphBuilder<'g, 'local>
-    where 'g: 'local
+impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
     /// Creates a new instance of a GraphBuilder.
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(global: &'g mem::Arena, local: &'local mem::Arena)
-        -> GraphBuilder<'g, 'local>
+    pub fn new(
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena,
+        registry: &'a sem::Registry<'g>,
+    )
+        -> GraphBuilder<'a, 'g, 'local>
     {
-        GraphBuilder { global_arena: global, local_arena: local }
+        GraphBuilder { global_arena, local_arena, registry }
     }
 
     /// Translates a semantic expression into its control-flow graph.
@@ -39,7 +44,8 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
     {
         let mut imp = GraphBuilderImpl::new(
             self.global_arena,
-            self.local_arena
+            self.local_arena,
+            self.registry,
         );
 
         imp.from_value(
@@ -75,7 +81,8 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
 
         let mut imp = GraphBuilderImpl::new(
             self.global_arena,
-            self.local_arena
+            self.local_arena,
+            self.registry,
         );
 
         imp.from_value(first, &fun.body);
@@ -87,16 +94,17 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
 //
 //  Implementation Details
 //
-struct GraphBuilderImpl<'g, 'local>
-    where 'g: 'local
+struct GraphBuilderImpl<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
+    registry: &'a sem::Registry<'g>,
     blocks: mem::Array<'local, RefCell<ProtoBlock<'g, 'local>>>,
 }
 
-impl<'g, 'local> GraphBuilderImpl<'g, 'local>
-    where 'g: 'local
+impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
+    where 'g: 'a + 'local
 {
     //
     //  High-level methods
@@ -104,12 +112,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
+        registry: &'a sem::Registry<'g>,
     )
-        -> GraphBuilderImpl<'g, 'local>
+        -> GraphBuilderImpl<'a, 'g, 'local>
     {
         GraphBuilderImpl {
             global_arena: global_arena,
             local_arena: local_arena,
+            registry: registry,
             blocks: mem::Array::with_capacity(1, local_arena),
         }
     }
@@ -347,8 +357,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn create_branch<'g, 'local>(
-            imp: &mut GraphBuilderImpl<'g, 'local>,
+        fn create_branch<'a, 'g, 'local>(
+            imp: &mut GraphBuilderImpl<'a, 'g, 'local>,
             pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
@@ -429,35 +439,34 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn extract_tuple_types<'b>(t: sem::Type<'b>) -> &'b [sem::Type<'b>] {
-            if let sem::Type::Tuple(ref t) = t {
-                return &t.fields;
-            }
+        use self::sem::Pattern::*;
 
-            unimplemented!("Expected tuple, got {:?}", t);
-        }
-
-        match pattern {
-            sem::Pattern::Constructor(_) => unimplemented!("{:?}", pattern),
-            sem::Pattern::Ignored(_) => (),
-            sem::Pattern::Tuple(pat, _) => {
-                let types = extract_tuple_types(type_);
-                assert_eq!(pat.fields.len(), types.len());
-
-                for (index, (p, t)) in
-                    pat.fields.iter().zip(types.iter()).enumerate() {
-                    let i = index as u16;
-                    current.push_instr(
-                        sir::Instruction::Field(*t, matched, i, p.range())
-                    );
-                    let id = current.last_value();
-                    current = self.convert_pattern(current, id, *p, *t);
-                }
-            },
-            sem::Pattern::Var(var) => {
+        let (patterns, types) = match pattern {
+            Ignored(_) => { return current; },
+            Var(var) => {
                 current.push_binding(var.0.into(), matched, type_);
+                return current;
             },
+            Constructor(pattern) => (
+                pattern.arguments,
+                self.extract_fields_types(type_),
+            ),
+            Tuple(pattern, _) => (
+                pattern.fields,
+                self.extract_fields_types(type_),
+            ),
         };
+
+        assert_eq!(patterns.len(), types.len());
+
+        for (index, (p, t)) in patterns.iter().zip(types.iter()).enumerate() {
+            let i = index as u16;
+            current.push_instr(
+                sir::Instruction::Field(*t, matched, i, p.range())
+            );
+            let id = current.last_value();
+            current = self.convert_pattern(current, id, *p, *t);
+        }
 
         current
     }
@@ -507,8 +516,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             unimplemented!("Can only access tuple fields!");
         }
 
-        fn recurse<'g, 'local>(
-            me: &mut GraphBuilderImpl<'g, 'local>,
+        fn recurse<'a, 'g, 'local>(
+            me: &mut GraphBuilderImpl<'a, 'g, 'local>,
             mut current: ProtoBlock<'g, 'local>,
             left: &sem::Value<'g>
         )
@@ -613,6 +622,20 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
     }
 
+    fn extract_fields_types(&self, type_: sem::Type<'g>) -> &'g [sem::Type<'g>]
+    {
+        match type_ {
+            sem::Type::Rec(proto) => {
+                if let Some(r) = self.registry.lookup_record(proto.name) {
+                    return r.fields;
+                }
+                unimplemented!("Unknown record {:?}", proto.name);
+            },
+            sem::Type::Tuple(t) => &t.fields,
+            _ => unimplemented!("Expected record or tuple, got {:?}", type_),
+        }
+    }
+
     fn resolve_arguments(&self)
         -> mem::ArrayMap<'local, BlockId, sir::BlockId>
     {
@@ -670,19 +693,20 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem_builder::Factory as SemFactory;
+    use model::sem_builder::*;
     use model::sem::*;
     use model::sir::*;
 
     #[test]
     fn value_simple() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
 
-        let v = SemFactory::new(&global_arena).value();
+        let v = env.sem().5;
         let val = v.call().push(v.int(1, 0)).push(v.int(2, 4)).build();
 
         assert_eq!(
-            valueit(&global_arena, &val).to_string(),
+            env.valueit(&val).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@0",
@@ -697,12 +721,12 @@ mod tests {
     #[test]
     fn tuple_simple() {
         let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
 
-        let v = SemFactory::new(&global_arena).value();
+        let v = env.sem().5;
 
         assert_eq!(
-            valueit(
-                &global_arena,
+            env.valueit(
                 &v.tuple().push(v.int(1, 1)).push(v.int(2, 5)).build()
             ).to_string(),
             cat(&[
@@ -719,16 +743,13 @@ mod tests {
     #[test]
     fn enum_simple() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, v) = (f.item(), f.proto(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, _, v) = env.sem();
 
         let r = p.rec(i.id(15, 4), 15).enum_(i.id(6, 6)).build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
-                &v.constructor(r, 30, 12).build_value()
-            ).to_string(),
+            env.valueit(&v.constructor(r, 30, 12).build_value()).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := new <4@15> () ; 12@30",
@@ -742,14 +763,13 @@ mod tests {
     fn record_arguments() {
         //  ":rec Args(Int);    Args(42)"
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, v) = (f.item(), f.proto(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, _, v) = env.sem();
 
         let r = p.rec(i.id(5, 4), 0).build();
 
         assert_eq!(
-            valueit(
-                &global_arena,
+            env.valueit(
                 &v.constructor(r, 19, 8).push(v.int(42, 24)).build_value()
             ).to_string(),
             cat(&[
@@ -766,8 +786,8 @@ mod tests {
     fn record_field() {
         //  ":rec Args(Int, Int);   Args(4, 42).1"
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, v) = (f.item(), f.proto(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, _, v) = env.sem();
 
         let r = p.rec(i.id(5, 4), 0).build();
         let c =
@@ -777,7 +797,7 @@ mod tests {
                 .build_value();
 
         assert_eq!(
-            valueit(&global_arena, &v.field_access(1, c).build()).to_string(),
+            env.valueit(&v.field_access(1, c).build()).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 4 ; 1@28",
@@ -793,8 +813,8 @@ mod tests {
     #[test]
     fn block_simple() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (s, v) = (f.stmt(), f.value());
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
 
         //  { :var a := 1; :var b := 2; a + b }
         let (a, b) = (v.id(7, 1), v.id(20, 1));
@@ -807,7 +827,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            valueit(&global_arena, &block).to_string(),
+            env.valueit(&block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -822,8 +842,8 @@ mod tests {
     #[test]
     fn block_rebinding() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (s, v) = (f.stmt(), f.value());
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
 
         //  { :var a := 1; :set a := 2; a }
         let a = v.id(7, 1);
@@ -834,7 +854,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            valueit(&global_arena, &block).to_string(),
+            env.valueit(&block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -848,8 +868,8 @@ mod tests {
     #[test]
     fn block_rebinding_nested_field() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (s, v) = (f.stmt(), f.value());
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
 
         //  { :var a := (1, (2, 3)); :set a.1.0 := 4; a }
         let a = v.id(7, 1);
@@ -870,7 +890,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            valueit(&global_arena, &block).to_string(),
+            env.valueit(&block).to_string(),
             cat(&[
                 "0 ():",
                 //  :var a := (1, (2, 3));
@@ -894,10 +914,48 @@ mod tests {
     }
 
     #[test]
+    fn block_constructor_binding() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(&global_arena);
+        let (i, p, po, s, t, v) = env.sem();
+
+        //  :rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }
+        let r = po.rec(i.id(5, 1), 0).build();
+        env.insert_record(i.rec(r).push(t.int()).push(t.int()).build());
+
+        let (a, b) = (v.id(29, 1), v.id(32, 1));
+        let binding =
+            p.constructor(r, 27, 7).push(p.var(a)).push(p.var(b)).build();
+        let value: Value =
+            v.constructor(r, 38, 7)
+                .push(v.int(1, 40))
+                .push(v.int(2, 43))
+                .build();
+        let block =
+            v.block(v.var_ref(value.type_, a, 47))
+                .push(s.var(binding, value))
+                .build();
+
+        assert_eq!(
+            env.valueit(&block).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 1 ; 1@40",
+                "    $1 := load 2 ; 1@43",
+                "    $2 := new <1@5> ($0, $1) ; 7@38",
+                "    $3 := field 0 of $2 ; 1@29",
+                "    $4 := field 1 of $2 ; 1@32",
+                "    return $3",
+                ""
+            ])
+        );
+    }
+
+    #[test]
     fn block_tuple_binding() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (p, s, v) = (f.pat(), f.stmt(), f.value());
+        let env = Env::new(&global_arena);
+        let (_, p, _, s, _, v) = env.sem();
 
         //  { :var (a, b) := (1, 2); a }
         let (a, b) = (v.id(8, 1), v.id(11, 1));
@@ -909,7 +967,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            valueit(&global_arena, &block).to_string(),
+            env.valueit(&block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -926,8 +984,8 @@ mod tests {
     #[test]
     fn fun_simple() {
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, t, v) = env.sem();
 
         let (a, b) = (v.id(9, 1), v.id(17, 1));
 
@@ -947,7 +1005,7 @@ mod tests {
         let function = i.fun(f, v.block(body).build());
 
         assert_eq!(
-            funit(&global_arena, &function).to_string(),
+            env.funit(&function).to_string(),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -960,13 +1018,14 @@ mod tests {
     #[test]
     fn if_simple() {
         let global_arena = mem::Arena::new();
-        let v = SemFactory::new(&global_arena).value();
+        let env = Env::new(&global_arena);
+        let v = env.sem().5;
 
         //  ":if true { 1 } :else { 2 }"
         let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
 
         assert_eq!(
-            valueit(&global_arena, &if_).to_string(),
+            env.valueit(&if_).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load true ; 4@4",
@@ -992,8 +1051,8 @@ mod tests {
         use self::BuiltinFunction::*;
 
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, t, v) = env.sem();
 
         let (a, b, c) = (v.id(8, 1), v.id(16, 1), v.id(24, 1));
 
@@ -1026,7 +1085,7 @@ mod tests {
 
         //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :and b < c }"
         assert_eq!(
-            funit(&global_arena, &maker(And)).to_string(),
+            env.funit(&maker(And)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1044,7 +1103,7 @@ mod tests {
 
         //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :or  b < c }"
         assert_eq!(
-            funit(&global_arena, &maker(Or)).to_string(),
+            env.funit(&maker(Or)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1066,8 +1125,8 @@ mod tests {
         use self::BuiltinFunction::*;
 
         let global_arena = mem::Arena::new();
-        let f = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let env = Env::new(&global_arena);
+        let (i, _, p, _, t, v) = env.sem();
 
         //  ":fun fib(current: Int, next: Int, count: Int) -> Int {"     55
         //  "    :if count == 0 {"                                       76
@@ -1122,7 +1181,7 @@ mod tests {
         let fun = i.fun(proto, v.block(if_).build().with_range(53, 105));
 
         assert_eq!(
-            funit(&global_arena, &fun).to_string(),
+            env.funit(&fun).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := load 0 ; 1@72",
@@ -1146,34 +1205,63 @@ mod tests {
         )
     }
 
-    fn valueit<'g>(global_arena: &'g mem::Arena, expr: &Value<'g>)
-        -> ControlFlowGraph<'g>
-    {
-        use pass::ssa::GraphBuilder;
-
-        let mut local_arena = mem::Arena::new();
-
-        let result =
-            GraphBuilder::new(global_arena, &local_arena)
-                .from_value(expr);
-        local_arena.recycle();
-
-        result
+    struct Env<'g> {
+        global_arena: &'g mem::Arena,
+        registry: mocks::MockRegistry<'g>,
     }
 
-    fn funit<'g>(global_arena: &'g mem::Arena, fun: &Function<'g>)
-        -> ControlFlowGraph<'g>
-    {
-        use pass::ssa::GraphBuilder;
+    impl<'g> Env<'g> {
+        fn new(global_arena: &'g mem::Arena) -> Env<'g> {
+            Env {
+                global_arena: global_arena,
+                registry: mocks::MockRegistry::new(global_arena),
+            }
+        }
 
-        let mut local_arena = mem::Arena::new();
+        fn sem(&self) -> (
+            ItemFactory<'g>,
+            PatternFactory<'g>,
+            PrototypeFactory<'g>,
+            StmtFactory<'g>,
+            TypeFactory<'g>,
+            ValueFactory<'g>,
+        )
+        {
+            let f = Factory::new(self.global_arena);
+            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
+        }
 
-        let result =
-            GraphBuilder::new(global_arena, &local_arena)
-                .from_function(fun);
-        local_arena.recycle();
+        fn insert_record(&mut self, r: Record<'g>) {
+            self.registry.records.insert(r.prototype.name, r);
+        }
 
-        result
+        fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {
+            let mut local_arena = mem::Arena::new();
+
+            let result = self.builder(&local_arena).from_function(fun);
+            local_arena.recycle();
+
+            result
+        }
+
+        fn valueit(&self, expr: &Value<'g>) -> ControlFlowGraph<'g> {
+            let mut local_arena = mem::Arena::new();
+
+            let result = self.builder(&local_arena).from_value(expr);
+            local_arena.recycle();
+
+            result
+        }
+
+        fn builder<'a, 'local>(&'a self, local_arena: &'local mem::Arena)
+            -> super::GraphBuilder<'a, 'g, 'local>
+        {
+            super::GraphBuilder::new(
+                self.global_arena,
+                local_arena,
+                &self.registry,
+            )
+        }
     }
 
     fn cat(lines: &[&str]) -> String {

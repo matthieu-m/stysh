@@ -170,7 +170,9 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         sem::Item::Fun(sem::Function {
             prototype: p,
-            body: self.resolver(&scope).value_of(&fun.body)
+            body:
+                self.resolver(&scope)
+                    .value_of(&syn::Expression::Block(&fun.body))
         })
     }
 
@@ -348,7 +350,7 @@ mod tests {
     fn prototype_fun() {
         let global_arena = mem::Arena::new();
         let env = Env::new(
-            b":fun add(a: Int, b: Int) -> Int { 1 + 2 }",
+            b":fun add(a: Int, b: Int) -> Int { a + b }",
             &global_arena
         );
 
@@ -362,7 +364,7 @@ mod tests {
                     5,
                     3,
                     syn.type_().simple(28, 3),
-                    syn.expr().var(0, 0),
+                    syn.expr().block(syn.expr().var(34, 5)).build(),
                 )
                 .push(9, 1, syn.type_().simple(12, 3))
                 .push(17, 1, syn.type_().simple(20, 3))

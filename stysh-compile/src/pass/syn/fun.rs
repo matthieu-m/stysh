@@ -63,11 +63,22 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 
         let body = expr::parse_expression(&mut self.raw);
 
+        let block = if let Expression::Block(body) = body { 
+            *body
+        } else {
+            Block {
+                statements: &[],
+                expression: body,
+                open: body.range().offset() as u32,
+                close: body.range().end_offset() as u32 - 1
+            }
+        };
+
         Function {
             name: name,
             arguments: arguments,
             result: result,
-            body: body,
+            body: block,
             keyword: keyword,
             open: open,
             close: close,

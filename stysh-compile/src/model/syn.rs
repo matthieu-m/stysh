@@ -39,7 +39,7 @@ pub enum Expression<'a> {
     /// A binary operation.
     BinOp(BinaryOperator, u32, &'a Expression<'a>, &'a Expression<'a>),
     /// A block expression.
-    Block(&'a [Statement<'a>], &'a Expression<'a>, com::Range),
+    Block(&'a Block<'a>),
     /// A constructor expression.
     Constructor(Constructor<'a, Expression<'a>>),
     /// A field access expression.
@@ -47,7 +47,7 @@ pub enum Expression<'a> {
     /// A function call expression.
     FunctionCall(FunctionCall<'a>),
     /// A if expression.
-    If(IfElse<'a>),
+    If(&'a IfElse<'a>),
     /// A literal.
     Lit(Literal<'a>),
     /// A prefix unary operation.
@@ -144,7 +144,7 @@ pub struct Function<'a> {
     /// Return type of the function.
     pub result: Type<'a>,
     /// Body of the function.
-    pub body: Expression<'a>,
+    pub body: Block<'a>,
     /// Offset of the ":fun" keyword.
     pub keyword: u32,
     /// Offset of the "(" token.
@@ -206,6 +206,19 @@ pub enum PrefixOperator {
     Not,
 }
 
+/// A Block.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Block<'a> {
+    /// Statements.
+    pub statements: &'a [Statement<'a>],
+    /// Last Expression.
+    pub expression: Expression<'a>,
+    /// Offset of open brace.
+    pub open: u32,
+    /// Offset of close brace.
+    pub close: u32,
+}
+
 /// A Constructor.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Constructor<'a, T: 'a> {
@@ -237,11 +250,11 @@ pub struct FunctionCall<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct IfElse<'a> {
     /// Condition.
-    pub condition: &'a Expression<'a>,
+    pub condition: Expression<'a>,
     /// Expression evaluated if condition evaluates to true.
-    pub true_expr: &'a Expression<'a>,
+    pub true_expr: Block<'a>,
     /// Expression evaluated if condition evaluates to false.
-    pub false_expr: &'a Expression<'a>,
+    pub false_expr: Block<'a>,
     /// Offset of :if.
     pub if_: u32,
     /// Offset of :else.
@@ -520,7 +533,7 @@ impl<'a> Range for Expression<'a> {
 
         match *self {
             BinOp(_, _, left, right) => left.range().extend(right.range()),
-            Block(_, _, range) => range,
+            Block(block) => block.range(),
             Constructor(c) => c.range(),
             FieldAccess(f) => f.range(),
             FunctionCall(fun) => fun.range(),
@@ -601,6 +614,14 @@ impl<'a> Range for Argument<'a> {
         let offset = self.name.0.offset();
         let end_offset = self.comma as usize + 1;
         com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> Range for Block<'a> {
+    /// Returns the range spanned by the block.
+    fn range(&self) -> com::Range {
+        let end_offset = self.close + 1;
+        com::Range::new(self.open as usize, (end_offset - self.open) as usize)
     }
 }
 
@@ -754,12 +775,6 @@ impl<'a> convert::From<FunctionCall<'a>> for Expression<'a> {
     }
 }
 
-impl<'a> convert::From<IfElse<'a>> for Expression<'a> {
-    fn from(i: IfElse<'a>) -> Expression<'a> {
-        Expression::If(i)
-    }
-}
-
 impl<'a> convert::From<Literal<'a>> for Expression<'a> {
     fn from(l: Literal<'a>) -> Expression<'a> {
         Expression::Lit(l)
@@ -890,16 +905,17 @@ mod tests {
         let syn = Factory::new(&global_arena);
         let e = syn.expr();
 
-        //  "   :fun add() -> Int 1 + 1"
+        //  "   :fun add() -> Int { 1 + 1 }"
         let item: Item =
             syn.item()
                 .function(
                     8,
                     3,
                     syn.type_().simple(16, 3),
-                    e.bin_op(e.int(21, 1), e.int(25, 1)).build(),
+                    e.block(e.bin_op(e.int(23, 1), e.int(27, 1)).build())
+                        .build(),
                 ).build();
-        assert_eq!(item.range(), range(3, 23));
+        assert_eq!(item.range(), range(3, 27), "{:?}", item);
     }
 
     #[test]

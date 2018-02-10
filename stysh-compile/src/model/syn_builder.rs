@@ -55,9 +55,10 @@ pub struct BinOpBuilder<'a> {
 /// BlockBuilder
 #[derive(Clone)]
 pub struct BlockBuilder<'a> {
-    expr: &'a Expression<'a>,
-    range: com::Range,
     statements: mem::Array<'a, Statement<'a>>,
+    expr: Expression<'a>,
+    open: u32,
+    close: u32,
 }
 
 /// FieldAccessBuilder
@@ -78,9 +79,9 @@ pub struct FunctionCallBuilder<'a> {
 /// IfElseBuilder
 #[derive(Clone, Copy)]
 pub struct IfElseBuilder<'a> {
-    condition: &'a Expression<'a>,
-    true_: &'a Expression<'a>,
-    false_: &'a Expression<'a>,
+    condition: Expression<'a>,
+    true_: Block<'a>,
+    false_: Block<'a>,
     if_: u32,
     else_: u32,
 }
@@ -120,7 +121,7 @@ pub struct EnumBuilder<'a> {
 pub struct FunctionBuilder<'a> {
     name: VariableIdentifier,
     result: Type<'a>,
-    body: Expression<'a>,
+    body: Block<'a>,
     keyword: u32,
     open: u32,
     close: u32,
@@ -284,12 +285,12 @@ impl<'a> ExprFactory<'a> {
     pub fn if_else(
         &self,
         cond: Expression<'a>,
-        true_: Expression<'a>,
-        false_: Expression<'a>,
+        true_: Block<'a>,
+        false_: Block<'a>,
     )
         -> IfElseBuilder<'a>
     {
-        IfElseBuilder::new(self.arena, cond, true_, false_)
+        IfElseBuilder::new(cond, true_, false_)
     }
 
     /// Creates a LiteralBuilder.
@@ -407,15 +408,17 @@ impl<'a> BlockBuilder<'a> {
     /// Creates a new instance, defaults the range.
     pub fn new(arena: &'a mem::Arena, expr: Expression<'a>) -> Self {
         BlockBuilder {
-            expr: arena.insert(expr),
-            range: range((U32_NONE as usize, 0)),
             statements: mem::Array::new(arena),
+            expr: expr,
+            open: U32_NONE,
+            close: U32_NONE,
         }
     }
 
     /// Sets the range of the block.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range((pos, len));
+        self.open = pos as u32;
+        self.close = (pos + len - 1) as u32;
         self
     }
 
@@ -425,29 +428,32 @@ impl<'a> BlockBuilder<'a> {
         self
     }
 
-    /// Creates an Expression.
-    pub fn build(&self) -> Expression<'a> {
-        fn adjust(r: com::Range) -> com::Range {
-            com::Range::new(r.offset() - 2, r.length() + 4)
-        }
-
-        let range = if self.range.offset() as u32 == U32_NONE {
-            adjust(
-                if let Some(s) = self.statements.as_slice().first() {
-                    s.range().extend(self.expr.range())
-                } else {
-                    self.expr.range()
-                }
-            )
+    /// Creates a Block.
+    pub fn build(&self) -> Block<'a> {
+        let open = if self.open == U32_NONE {
+            let range =
+                self.statements
+                    .as_slice()
+                    .first()
+                    .map(|s| s.range())
+                    .unwrap_or(self.expr.range());
+            range.offset() as u32 - 2
         } else {
-            self.range
+            self.open
         };
 
-        Expression::Block(
-            self.statements.clone().into_slice(),
-            self.expr,
-            range,
-        )
+        let close = if self.close == U32_NONE {
+            self.expr.range().end_offset() as u32 + 1
+        } else {
+            self.close
+        };
+
+        Block {
+            statements: self.statements.clone().into_slice(),
+            expression: self.expr,
+            open: open,
+            close: close,
+        }
     }
 }
 
@@ -533,17 +539,16 @@ impl<'a> FunctionCallBuilder<'a> {
 impl<'a> IfElseBuilder<'a> {
     /// Creates an instance, defaults the offset of :if and :else.
     pub fn new(
-        arena: &'a mem::Arena,
         condition: Expression<'a>,
-        true_: Expression<'a>,
-        false_: Expression<'a>,
+        true_: Block<'a>,
+        false_: Block<'a>,
     )
         -> Self
     {
         IfElseBuilder {
-            condition: arena.insert(condition),
-            true_: arena.insert(true_),
-            false_: arena.insert(false_),
+            condition: condition,
+            true_: true_,
+            false_: false_,
             if_: U32_NONE,
             else_: U32_NONE,
         }
@@ -562,7 +567,7 @@ impl<'a> IfElseBuilder<'a> {
     }
 
     /// Creates a IfElse.
-    pub fn build<T: convert::From<IfElse<'a>>>(&self) -> T {
+    pub fn build(&self) -> IfElse<'a> {
         let if_ = if self.if_ == U32_NONE {
             self.condition.range().offset() as u32 - 4
         } else {
@@ -581,7 +586,7 @@ impl<'a> IfElseBuilder<'a> {
             false_expr: self.false_,
             if_: if_,
             else_: else_,
-        }.into()
+        }
     }
 }
 
@@ -718,7 +723,7 @@ impl<'a> ItemFactory<'a> {
         pos: usize,
         len: usize,
         result: Type<'a>,
-        body: Expression<'a>,
+        body: Block<'a>,
     )
         ->  FunctionBuilder<'a>
     {
@@ -857,7 +862,7 @@ impl<'a> FunctionBuilder<'a> {
         arena: &'a mem::Arena,
         name: (usize, usize),
         result: Type<'a>,
-        body: Expression<'a>,
+        body: Block<'a>,
     )
         -> Self
     {

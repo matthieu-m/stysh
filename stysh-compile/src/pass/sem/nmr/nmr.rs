@@ -194,7 +194,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         match *expr {
             BinOp(op, _, left, right)
                  => self.value_of_binary_operator(op, left, right),
-            Block(s, e, r) => self.value_of_block(s, e, r),
+            Block(b) => self.value_of_block(b),
             Constructor(c) => self.value_of_constructor(c),
             FieldAccess(f) => self.value_of_field(f),
             FunctionCall(fun) => self.value_of_call(fun),
@@ -207,14 +207,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_block(
-        &mut self,
-        stmts: &[syn::Statement],
-        expr: &syn::Expression,
-        range: com::Range
-    )
-        -> sem::Value<'g>
-    {
+    fn value_of_block(&mut self, block: &syn::Block) -> sem::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.code_fragment,
@@ -225,7 +218,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             );
         let mut statements = mem::Array::new(self.local_arena);
 
-        for &s in stmts {
+        for &s in block.statements {
             let stmt = match s {
                 syn::Statement::Set(set) => {
                     let left = self.rescope(&scope).value_of_expr(&set.left);
@@ -250,11 +243,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             statements.push(stmt);
         }
 
-        let value = self.rescope(&scope).value_of_expr(expr);
+        let value = self.rescope(&scope).value_of_expr(&block.expression);
 
         sem::Value {
             type_: value.type_,
-            range: range,
+            range: block.range(),
             expr: sem::Expr::Block(
                 self.global_arena.insert_slice(statements.into_slice()),
                 self.global_arena.insert(value),
@@ -376,10 +369,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_if_else(&mut self, if_else: syn::IfElse) -> sem::Value<'g> {
-        let condition = self.value_of_expr(if_else.condition);
-        let mut true_branch = self.value_of_expr(if_else.true_expr);
-        let mut false_branch = self.value_of_expr(if_else.false_expr);
+    fn value_of_if_else(&mut self, if_else: &syn::IfElse) -> sem::Value<'g> {
+        let condition = self.value_of_expr(&if_else.condition);
+        let mut true_branch = self.value_of_block(&if_else.true_expr);
+        let mut false_branch = self.value_of_block(&if_else.false_expr);
 
         if true_branch.type_ != false_branch.type_ {
             let common = self.common_type(
@@ -904,13 +897,13 @@ mod tests {
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
         assert_eq!(
-            env.value_of(
+            env.value_of(&syn::Expression::If(
                 &e.if_else(
                     e.bool_(4, 4),
                     e.block(e.int(11, 1)).build(),
                     e.block(e.int(23, 1)).build(),
                 ).build()
-            ),
+            )),
             v.if_(
                 v.bool_(true, 4),
                 v.block(v.int(1, 11)).build(),
@@ -961,7 +954,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]
@@ -1004,7 +997,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]
@@ -1036,7 +1029,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]
@@ -1066,7 +1059,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
 
     }
 
@@ -1115,7 +1108,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]
@@ -1149,7 +1142,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]
@@ -1202,7 +1195,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
     }
 
     struct Env<'g> {

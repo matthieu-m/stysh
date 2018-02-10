@@ -152,7 +152,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                     self.raw.pop_node();
 
                     match o.kind() {
-                        K::BraceOpen => self.parse_braces(n, o, c),
+                        K::BraceOpen => {
+                            let block = self.parse_braces(n, o, c);
+                            Expression::Block(self.raw.intern(block))
+                        },
                         K::ParenthesisOpen => self.parse_parens(n, o, c),
                         _ => unimplemented!(),
                     }
@@ -195,8 +198,17 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         yard.pop_expression()
     }
 
+    fn parse_block(&mut self) -> Block<'g> {
+        if let Some(tt::Node::Braced(o, n, c)) = self.raw.peek() {
+            self.raw.pop_node();
+            return self.parse_braces(n, o, c);
+        }
+
+        unimplemented!("Expected block, got {:?}", self.raw.peek());
+    }
+
     fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
-        -> Expression<'g>
+        -> Block<'g>
     {
         let mut raw = self.raw.spawn(ns);
         let mut stmts = raw.local_array();
@@ -209,12 +221,15 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             stmts.push(parse_statement(&mut raw));
         }
 
-        let stmts = self.raw.intern_slice(&stmts);
+        let statements = self.raw.intern_slice(&stmts);
+        let expression = ExprParser::new(raw).parse();
 
-        let inner = ExprParser::new(raw).parse();
-        let inner = self.raw.intern(inner);
-
-        Expression::Block(stmts, inner, o.range().extend(c.range()))
+        Block {
+            statements: statements,
+            expression: expression,
+            open: o.offset() as u32,
+            close: c.offset() as u32,
+        }
     }
 
     fn parse_parens(
@@ -248,20 +263,21 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let if_ = self.raw.pop_kind(tt::Kind::KeywordIf).expect(":if");
 
         let condition = self.parse();
-        let true_expr = self.parse();   //  FIXME(matthieum): possibly missing.
+        //  FIXME(matthieum): possibly missing.
+        let true_expr = self.parse_block();
 
         if let Some(else_) = self.raw.pop_kind(tt::Kind::KeywordElse) {
             //  FIXME(matthieum): only ":if" and "{ ... }" are legal.
 
-            let false_expr = self.parse();
+            let false_expr = self.parse_block();
 
-            return Expression::If(IfElse {
-                condition: self.raw.intern(condition),
-                true_expr: self.raw.intern(true_expr),
-                false_expr: self.raw.intern(false_expr),
+            return Expression::If(self.raw.intern(IfElse {
+                condition: condition,
+                true_expr: true_expr,
+                false_expr: false_expr,
                 if_: if_.offset() as u32,
                 else_: else_.offset() as u32,
-            });
+            }));
         }
 
         //  FIXME(matthieum): ";" is legal.
@@ -685,10 +701,12 @@ mod tests {
 
         assert_eq!(
             exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
-            e.block(e.var(29, 4))
-                .range(0, 35)
-                .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
-                .build()
+            Expression::Block(
+                &e.block(e.var(29, 4))
+                    .range(0, 35)
+                    .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
+                    .build()
+            )
         );
     }
 
@@ -774,11 +792,13 @@ mod tests {
 
         assert_eq!(
             exprit(&global_arena, b":if true { 1 } :else { 0 }"),
-            e.if_else(
-                e.bool_(4, 4),
-                e.block(e.int(11, 1)).build(),
-                e.block(e.int(23, 1)).build(),
-            ).build()
+            Expression::If(
+                &e.if_else(
+                    e.bool_(4, 4),
+                    e.block(e.int(11, 1)).build(),
+                    e.block(e.int(23, 1)).build(),
+                ).build()
+            )
         )
     }
 

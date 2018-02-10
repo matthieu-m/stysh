@@ -200,7 +200,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit) => self.value_of_literal(lit),
-            Loop(_) => unimplemented!("Loop"),
+            Loop(loop_) => self.value_of_loop(loop_),
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, expr.range()),
             Tuple(t) => self.value_of_tuple(&t),
@@ -465,6 +465,20 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
         }
+    }
+
+    fn value_of_loop(&mut self, loop_: &syn::Loop) -> sem::Value<'g> {
+        let block = self.value_of_block(&loop_.block);
+
+        if let sem::Expr::Block(stmts, expr) = block.expr {
+            return sem::Value {
+                type_: sem::Type::Builtin(sem::BuiltinType::Void),
+                range: loop_.range(),
+                expr: sem::Expr::Loop(stmts, expr),
+            };
+        }
+
+        unreachable!("value_of_block returns a Expr::Block!");
     }
 
     fn value_of_prefix_operator(&mut self, 
@@ -926,6 +940,24 @@ mod tests {
             env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
             v.string("Hello, World!", 0)
         );
+    }
+
+    #[test]
+    fn value_loop() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b":loop { 1 }", &global_arena);
+
+        let syn = {
+            let e = SynFactory::new(&global_arena).expr();
+            e.loop_(e.block(e.int(8, 1)).build())
+        };
+
+        let sem = {
+            let v = SemFactory::new(&global_arena).value();
+            v.loop_(v.int(1, 8)).build()
+        };
+
+        assert_eq!(env.value_of(&syn), sem);
     }
 
     #[test]

@@ -52,6 +52,8 @@ pub enum BuiltinType {
     Int,
     /// A String.
     String,
+    /// An uninhabited type.
+    Void,
 }
 
 /// A Value.
@@ -104,6 +106,8 @@ pub enum Expr<'a> {
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// An implicit cast (variant to enum, anonymous to named, ...).
     Implicit(Implicit<'a>),
+    /// A loop.
+    Loop(&'a [Stmt<'a>], &'a Value<'a>),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved field access.
@@ -336,6 +340,7 @@ impl<'a> Type<'a> {
             Builtin(Bool) => 4,
             Builtin(Int) => 3,
             Builtin(String) => 6,
+            Builtin(Void) => 4,
             Enum(p) => len(p.name),
             Rec(r) => len(r.name)
                 + if len(r.enum_) > 0 { 2 + len(r.enum_) } else { 0 },
@@ -532,6 +537,10 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
                 arena.intern_ref(f),
             ),
             Implicit(i) => Implicit(arena.intern(&i)),
+            Loop(stmts, v) => Loop(
+                CloneInto::clone_into(stmts, arena),
+                arena.intern_ref(v),
+            ),
             Tuple(t) => Tuple(arena.intern(&t)),
             VariableRef(v) => VariableRef(v),
             _ => panic!("not yet implement for {:?}", self),

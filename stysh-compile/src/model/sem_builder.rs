@@ -133,6 +133,9 @@ pub struct ImplicitBuilder<'a> {
 }
 
 #[derive(Clone)]
+pub struct LoopBuilder<'a>(BlockBuilder<'a>);
+
+#[derive(Clone)]
 pub struct ValueTupleBuilder<'a> {
     type_: TupleBuilder<'a, Type<'a>>,
     expr: TupleBuilder<'a, Value<'a>>,
@@ -466,6 +469,9 @@ impl<'a> TypeFactory<'a> {
     /// Shortcut: creates a String Type.
     pub fn string(&self) -> Type<'a> { Type::Builtin(self.builtin().string()) }
 
+    /// Shortcut: creates a Void Type.
+    pub fn void(&self) -> Type<'a> { Type::Builtin(self.builtin().void()) }
+
     /// Creates an EnumProtoBuilder.
     pub fn enum_(&self, name: ItemIdentifier, pos: usize)
         -> EnumProtoBuilder
@@ -503,6 +509,9 @@ impl BuiltinTypeBuilder {
 
     /// Creates a String BuiltinType.
     pub fn string(&self) -> BuiltinType { BuiltinType::String }
+
+    /// Creates a Void BuiltinType.
+    pub fn void(&self) -> BuiltinType { BuiltinType::Void }
 }
 
 //
@@ -585,6 +594,11 @@ impl<'a> ValueFactory<'a> {
         ImplicitBuilder::new(self.arena)
     }
 
+    /// Creates a BlockBuilder.
+    pub fn loop_(&self, value: Value<'a>) -> LoopBuilder<'a> {
+        LoopBuilder::new(self.arena, value)
+    }
+
     /// Creates a ValueTupleBuilder.
     pub fn tuple(&self) -> ValueTupleBuilder<'a> {
         ValueTupleBuilder::new(self.arena)
@@ -653,10 +667,9 @@ impl<'a> BlockBuilder<'a> {
                 .unwrap_or(self.value.range.offset()) - 2;
         let end = self.value.range.end_offset() + 2;
 
-        value(
-            self.value.type_,
-            Expr::Block(self.statements.clone().into_slice(), self.value),
-        ).with_range(off, end - off)
+        let expr =
+            Expr::Block(self.statements.clone().into_slice(), self.value);
+        value(self.value.type_, expr).with_range(off, end - off)
     }
 }
 
@@ -860,6 +873,33 @@ impl<'a> ImplicitBuilder<'a> {
             Type::Enum(e),
             Expr::Implicit(Implicit::ToEnum(e, self.arena.insert(v))),
         ).with_range(v.range.offset(), v.range.length())
+    }
+}
+
+impl<'a> LoopBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
+        LoopBuilder(BlockBuilder::new(arena, value))
+    }
+
+    /// Push a statement.
+    pub fn push(&mut self, stmt: Stmt<'a>) -> &mut Self {
+        self.0.statements.push(stmt);
+        self
+    }
+
+    /// Creates a Loop Value.
+    pub fn build(&self) -> Value<'a> {
+        let result = self.0.build();
+        if let Expr::Block(stmts, value) = result.expr {
+            Value {
+                type_: Type::Builtin(BuiltinType::Void),
+                range: result.range.shift_left(6).extend(result.range),
+                expr: Expr::Loop(stmts, value)
+            }
+        } else {
+            unreachable!()
+        }
     }
 }
 

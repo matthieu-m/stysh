@@ -88,6 +88,16 @@ impl Range {
     /// Returns the length of the range.
     pub fn length(self) -> usize { self.length as usize }
 
+    /// Shifts range to the left.
+    pub fn shift_left(self, n: usize) -> Range {
+        Range { offset: self.offset - (n as u32), ..self }
+    }
+
+    /// Shifts range to the right.
+    pub fn shift_right(self, n: usize) -> Range {
+        Range { offset: self.offset + (n as u32), ..self }
+    }
+
     /// Extend one range with another, the resulting range spans both ranges,
     /// and in the case they were discontiguous also spans the interval.
     pub fn extend(self, other: Range) -> Range {

@@ -262,6 +262,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":enum" => Kind::KeywordEnum,
             b":fun" => Kind::KeywordFun,
             b":if" => Kind::KeywordIf,
+            b":loop" => Kind::KeywordLoop,
             b":not" => Kind::KeywordNot,
             b":or" => Kind::KeywordOr,
             b":rec" => Kind::KeywordRec,
@@ -675,7 +676,7 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         let keywords =
-            b":and :else :enum :fun :if :not :or :rec :set :var :xor";
+            b":and :else :enum :fun :if :loop :not :or :rec :set :var :xor";
         assert_eq!(
             lexit(&global_arena, keywords),
             &[
@@ -685,12 +686,13 @@ mod tests {
                     Token::new(Kind::KeywordEnum, 11, 5),
                     Token::new(Kind::KeywordFun, 17, 4),
                     Token::new(Kind::KeywordIf, 22, 3),
-                    Token::new(Kind::KeywordNot, 26, 4),
-                    Token::new(Kind::KeywordOr, 31, 3),
-                    Token::new(Kind::KeywordRec, 35, 4),
-                    Token::new(Kind::KeywordSet, 40, 4),
-                    Token::new(Kind::KeywordVar, 45, 4),
-                    Token::new(Kind::KeywordXor, 50, 4),
+                    Token::new(Kind::KeywordLoop, 26, 5),
+                    Token::new(Kind::KeywordNot, 32, 4),
+                    Token::new(Kind::KeywordOr, 37, 3),
+                    Token::new(Kind::KeywordRec, 41, 4),
+                    Token::new(Kind::KeywordSet, 46, 4),
+                    Token::new(Kind::KeywordVar, 51, 4),
+                    Token::new(Kind::KeywordXor, 56, 4),
                 ]),
             ]
         );

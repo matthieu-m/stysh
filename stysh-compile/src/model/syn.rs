@@ -50,6 +50,8 @@ pub enum Expression<'a> {
     If(&'a IfElse<'a>),
     /// A literal.
     Lit(Literal<'a>),
+    /// A loop.
+    Loop(&'a Loop<'a>),
     /// A prefix unary operation.
     PreOp(PrefixOperator, u32, &'a Expression<'a>),
     /// A tuple.
@@ -272,6 +274,15 @@ pub enum Literal<'a> {
     Integral(com::Range),
     /// A string value.
     String(&'a [StringFragment], com::Range),
+}
+
+/// A if-else expression.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Loop<'a> {
+    /// Block.
+    pub block: Block<'a>,
+    /// Offset of the :loop keyword.
+    pub loop_: u32,
 }
 
 /// A variable binding.
@@ -533,12 +544,13 @@ impl<'a> Range for Expression<'a> {
 
         match *self {
             BinOp(_, _, left, right) => left.range().extend(right.range()),
-            Block(block) => block.range(),
+            Block(b) => b.range(),
             Constructor(c) => c.range(),
             FieldAccess(f) => f.range(),
             FunctionCall(fun) => fun.range(),
             If(if_else) => if_else.range(),
             Lit(lit) => lit.range(),
+            Loop(l) => l.range(),
             PreOp(_, pos, expr)
                 => com::Range::new(pos as usize, 0).extend(expr.range()),
             Tuple(t) => t.range(),
@@ -655,6 +667,15 @@ impl<'a> Range for IfElse<'a> {
     fn range(&self) -> com::Range {
         let offset = self.if_ as usize;
         let end_offset = self.false_expr.range().end_offset();
+        com::Range::new(offset, end_offset - offset)
+    }
+}
+
+impl<'a> Range for Loop<'a> {
+    /// Returns the range spanned by the argument.
+    fn range(&self) -> com::Range {
+        let offset = self.loop_ as usize;
+        let end_offset = self.block.range().end_offset();
         com::Range::new(offset, end_offset - offset)
     }
 }

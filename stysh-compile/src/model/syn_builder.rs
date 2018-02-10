@@ -309,6 +309,12 @@ impl<'a> ExprFactory<'a> {
         self.literal(pos, len).build()
     }
 
+    /// Creates a Loop.
+    pub fn loop_(&self, block: Block<'a>) -> Expression<'a> {
+        let loop_ = block.range().offset() as u32 - 6;
+        Expression::Loop(self.arena.insert(Loop { block, loop_ }))
+    }
+
     /// Creates a PreOpBuilder, defaults to Not.
     pub fn pre_op(&self, expr: Expression<'a>) -> PreOpBuilder<'a> {
         PreOpBuilder::new(self.arena, expr)

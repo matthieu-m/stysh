@@ -120,6 +120,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
                     match kind {
                         K::KeywordIf => self.parse_if_else(),
+                        K::KeywordLoop => self.parse_loop(),
                         K::KeywordNot => {
                             self.raw.pop_tokens(1);
                             yard.push_operator(
@@ -282,6 +283,15 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
         //  FIXME(matthieum): ";" is legal.
         unimplemented!()
+    }
+
+    fn parse_loop(&mut self) -> Expression<'g> {
+        let loop_ = self.raw.pop_kind(tt::Kind::KeywordLoop).expect(":loop");
+        let loop_ = loop_.offset() as u32;
+
+        let block = self.parse_block();
+
+        Expression::Loop(self.raw.intern(Loop { block, loop_ }))
     }
 }
 
@@ -846,6 +856,17 @@ mod tests {
             e.field_access(e.field_access(e.var(0, 3)).length(3).build())
                 .length(3)
                 .build()
+        );
+    }
+
+    #[test]
+    fn loop_empty() {
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        assert_eq!(
+            exprit(&global_arena, b":loop { 1 }"),
+            e.loop_(e.block(e.int(8, 1)).build())
         );
     }
 

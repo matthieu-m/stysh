@@ -200,6 +200,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit) => self.value_of_literal(lit),
+            Loop(_) => unimplemented!("Loop"),
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, expr.range()),
             Tuple(t) => self.value_of_tuple(&t),

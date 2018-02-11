@@ -107,7 +107,7 @@ pub enum Expr<'a> {
     /// An implicit cast (variant to enum, anonymous to named, ...).
     Implicit(Implicit<'a>),
     /// A loop.
-    Loop(&'a [Stmt<'a>], &'a Value<'a>),
+    Loop(&'a [Stmt<'a>]),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved field access.
@@ -537,10 +537,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
                 arena.intern_ref(f),
             ),
             Implicit(i) => Implicit(arena.intern(&i)),
-            Loop(stmts, v) => Loop(
-                CloneInto::clone_into(stmts, arena),
-                arena.intern_ref(v),
-            ),
+            Loop(stmts) => Loop(CloneInto::clone_into(stmts, arena)),
             Tuple(t) => Tuple(arena.intern(&t)),
             VariableRef(v) => VariableRef(v),
             _ => panic!("not yet implement for {:?}", self),

@@ -133,7 +133,10 @@ pub struct ImplicitBuilder<'a> {
 }
 
 #[derive(Clone)]
-pub struct LoopBuilder<'a>(BlockBuilder<'a>);
+pub struct LoopBuilder<'a>{
+    statements: mem::Array<'a, Stmt<'a>>,
+    range: com::Range,
+}
 
 #[derive(Clone)]
 pub struct ValueTupleBuilder<'a> {
@@ -594,10 +597,8 @@ impl<'a> ValueFactory<'a> {
         ImplicitBuilder::new(self.arena)
     }
 
-    /// Creates a BlockBuilder.
-    pub fn loop_(&self, value: Value<'a>) -> LoopBuilder<'a> {
-        LoopBuilder::new(self.arena, value)
-    }
+    /// Creates a LoopBuilder.
+    pub fn loop_(&self) -> LoopBuilder<'a> { LoopBuilder::new(self.arena) }
 
     /// Creates a ValueTupleBuilder.
     pub fn tuple(&self) -> ValueTupleBuilder<'a> {
@@ -878,28 +879,40 @@ impl<'a> ImplicitBuilder<'a> {
 
 impl<'a> LoopBuilder<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
-        LoopBuilder(BlockBuilder::new(arena, value))
+    pub fn new(arena: &'a mem::Arena) -> Self {
+        LoopBuilder {
+            statements: mem::Array::new(arena),
+            range: Default::default(),
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, offset: usize, length: usize) -> &mut Self {
+        self.range = com::Range::new(offset, length);
+        self
     }
 
     /// Push a statement.
     pub fn push(&mut self, stmt: Stmt<'a>) -> &mut Self {
-        self.0.statements.push(stmt);
+        self.statements.push(stmt);
         self
     }
 
     /// Creates a Loop Value.
     pub fn build(&self) -> Value<'a> {
-        let result = self.0.build();
-        if let Expr::Block(stmts, value) = result.expr {
-            Value {
-                type_: Type::Builtin(BuiltinType::Void),
-                range: result.range.shift_left(6).extend(result.range),
-                expr: Expr::Loop(stmts, value)
-            }
+        let (off, len) = if self.range == Default::default() {
+            let first = self.statements.first().expect("statements");
+            let last = self.statements.last().expect("statements");
+
+            let offset = first.range().offset() - 8;
+            let end_offset = last.range().end_offset() + 2;
+            (offset, end_offset - offset)
         } else {
-            unreachable!()
-        }
+            (self.range.offset(), self.range.length())
+        };
+
+        let expr = Expr::Loop(self.statements.clone().into_slice());
+        value(Type::Builtin(BuiltinType::Void), expr).with_range(off, len)
     }
 }
 

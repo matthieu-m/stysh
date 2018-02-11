@@ -93,6 +93,14 @@ pub struct LiteralBuilder<'a> {
     fragments: mem::Array<'a, tt::StringFragment>,
 }
 
+/// LoopBuilder
+pub struct LoopBuilder<'a> {
+    statements: mem::Array<'a, Statement<'a>>,
+    loop_: u32,
+    open: u32,
+    close: u32,
+}
+
 /// PreOpBuilder
 #[derive(Clone, Copy)]
 pub struct PreOpBuilder<'a> {
@@ -310,9 +318,8 @@ impl<'a> ExprFactory<'a> {
     }
 
     /// Creates a Loop.
-    pub fn loop_(&self, block: Block<'a>) -> Expression<'a> {
-        let loop_ = block.range().offset() as u32 - 6;
-        Expression::Loop(self.arena.insert(Loop { block, loop_ }))
+    pub fn loop_(&self, pos: u32) -> LoopBuilder<'a> {
+        LoopBuilder::new(self.arena, pos)
     }
 
     /// Creates a PreOpBuilder, defaults to Not.
@@ -670,6 +677,57 @@ impl<'a> LiteralBuilder<'a> {
             String(_, r) => String(self.fragments.clone().into_slice(), r),
             other => other,
         }.into()
+    }
+}
+
+impl<'a> LoopBuilder<'a> {
+    /// Creates a new instance, defaults the range.
+    pub fn new(arena: &'a mem::Arena, loop_: u32) -> Self {
+        LoopBuilder {
+            statements: mem::Array::new(arena),
+            loop_: loop_,
+            open: U32_NONE,
+            close: U32_NONE,
+        }
+    }
+
+    /// Sets the offset of the opening and closing braces.
+    pub fn braces(&mut self, open: u32, close: u32) -> &mut Self {
+        self.open = open;
+        self.close = close;
+        self
+    }
+
+    /// Appends a statement.
+    pub fn push_stmt(&mut self, stmt: Statement<'a>) -> &mut Self {
+        self.statements.push(stmt);
+        self
+    }
+
+    /// Creates a Loop.
+    pub fn build(&self) -> Expression<'a> {
+        let open = if self.open == U32_NONE {
+            self.loop_ + 6
+        } else {
+            self.open
+        };
+
+        let close = if self.close == U32_NONE {
+            if let Some(s) = self.statements.last() {
+                s.range().end_offset() as u32 + 1
+            } else {
+                open + 2
+            }
+        } else {
+            self.close
+        };
+
+        Expression::Loop(self.statements.arena().insert(Loop {
+            statements: self.statements.clone().into_slice(),
+            loop_: self.loop_,
+            open: open,
+            close: close,
+        }))
     }
 }
 

@@ -279,10 +279,14 @@ pub enum Literal<'a> {
 /// A if-else expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Loop<'a> {
-    /// Block.
-    pub block: Block<'a>,
+    /// Statements.
+    pub statements: &'a [Statement<'a>],
     /// Offset of the :loop keyword.
     pub loop_: u32,
+    /// Offset of open brace.
+    pub open: u32,
+    /// Offset of close brace.
+    pub close: u32,
 }
 
 /// A variable binding.
@@ -675,7 +679,7 @@ impl<'a> Range for Loop<'a> {
     /// Returns the range spanned by the argument.
     fn range(&self) -> com::Range {
         let offset = self.loop_ as usize;
-        let end_offset = self.block.range().end_offset();
+        let end_offset = self.close as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
 }

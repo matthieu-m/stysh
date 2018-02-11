@@ -217,42 +217,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.global_arena,
                 self.local_arena
             );
-        let mut statements = mem::Array::new(self.local_arena);
-
-        for &s in block.statements {
-            let stmt = match s {
-                syn::Statement::Set(set) => {
-                    let left = self.rescope(&scope).value_of_expr(&set.left);
-                    let right = self.rescope(&scope).value_of_expr(&set.expr);
-                    sem::Stmt::Set(
-                        sem::ReBinding {
-                            left: left,
-                            right: right,
-                            range: set.range()
-                        }
-                    )
-                },
-                syn::Statement::Var(var) => {
-                    let value = self.rescope(&scope).value_of_expr(&var.expr);
-                    let pattern = self.pattern_of(&var.pattern);
-                    scope.add_pattern(pattern, value.type_);
-                    sem::Stmt::Var(
-                        sem::Binding::Variable(pattern, value, var.range())
-                    )
-                },
-            };
-            statements.push(stmt);
-        }
-
+        let stmts = self.statements(&block.statements, &mut scope);
         let value = self.rescope(&scope).value_of_expr(&block.expression);
 
         sem::Value {
             type_: value.type_,
             range: block.range(),
-            expr: sem::Expr::Block(
-                self.global_arena.insert_slice(statements.into_slice()),
-                self.global_arena.insert(value),
-            ),
+            expr: sem::Expr::Block(stmts, self.global_arena.insert(value)),
         }
     }
 
@@ -468,17 +439,21 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_loop(&mut self, loop_: &syn::Loop) -> sem::Value<'g> {
-        let block = self.value_of_block(&loop_.block);
+        let mut scope =
+            BlockScope::new(
+                self.code_fragment,
+                self.scope,
+                self.registry,
+                self.global_arena,
+                self.local_arena
+            );
+        let stmts = self.statements(&loop_.statements, &mut scope);
 
-        if let sem::Expr::Block(stmts, expr) = block.expr {
-            return sem::Value {
-                type_: sem::Type::Builtin(sem::BuiltinType::Void),
-                range: loop_.range(),
-                expr: sem::Expr::Loop(stmts, expr),
-            };
+        sem::Value {
+            type_: sem::Type::Builtin(sem::BuiltinType::Void),
+            range: loop_.range(),
+            expr: sem::Expr::Loop(stmts),
         }
-
-        unreachable!("value_of_block returns a Expr::Block!");
     }
 
     fn value_of_prefix_operator(&mut self, 
@@ -660,6 +635,46 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             },
             _ => f(original),
         }
+    }
+
+    fn statements<'b>(
+        &self,
+        stmts: &[syn::Statement],
+        scope: &mut BlockScope<'b, 'g, 'local>,
+    )
+        -> &'g [sem::Stmt<'g>]
+        where
+            'g: 'b
+    {
+        let mut statements = mem::Array::new(self.local_arena);
+
+        for &s in stmts {
+            let stmt = match s {
+                syn::Statement::Set(set) => {
+                    let left = self.rescope(scope).value_of_expr(&set.left);
+                    let right = self.rescope(scope).value_of_expr(&set.expr);
+                    sem::Stmt::Set(
+                        sem::ReBinding {
+                            left: left,
+                            right: right,
+                            range: set.range()
+                        }
+                    )
+                },
+                syn::Statement::Var(var) => {
+                    let value = self.rescope(scope).value_of_expr(&var.expr);
+                    let pattern =
+                        self.rescope(self.scope).pattern_of(&var.pattern);
+                    scope.add_pattern(pattern, value.type_);
+                    sem::Stmt::Var(
+                        sem::Binding::Variable(pattern, value, var.range())
+                    )
+                },
+            };
+            statements.push(stmt);
+        }
+
+        self.global_arena.insert_slice(statements.into_slice())
     }
 
     fn parse_integral(
@@ -945,16 +960,16 @@ mod tests {
     #[test]
     fn value_loop() {
         let global_arena = mem::Arena::new();
-        let env = Env::new(b":loop { 1 }", &global_arena);
+        let env = Env::new(b":loop { }", &global_arena);
 
         let syn = {
             let e = SynFactory::new(&global_arena).expr();
-            e.loop_(e.block(e.int(8, 1)).build())
+            e.loop_(0).build()
         };
 
         let sem = {
             let v = SemFactory::new(&global_arena).value();
-            v.loop_(v.int(1, 8)).build()
+            v.loop_().range(0, 9).build()
         };
 
         assert_eq!(env.value_of(&syn), sem);

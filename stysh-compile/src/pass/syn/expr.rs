@@ -212,17 +212,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         -> Block<'g>
     {
         let mut raw = self.raw.spawn(ns);
-        let mut stmts = raw.local_array();
-
-        while let Some(tok) = raw.peek().map(|n| n.front()) {
-            if tok.kind() != tt::Kind::KeywordSet &&
-                tok.kind() != tt::Kind::KeywordVar {
-                break;
-            }
-            stmts.push(parse_statement(&mut raw));
-        }
-
-        let statements = self.raw.intern_slice(&stmts);
+        let statements = parse_statements_impl(&mut raw);
         let expression = ExprParser::new(raw).parse();
 
         Block {
@@ -231,28 +221,6 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             open: o.offset() as u32,
             close: c.offset() as u32,
         }
-    }
-
-    fn parse_parens(
-        &mut self,
-        ns: &'a [tt::Node<'a>],
-        o: tt::Token,
-        c: tt::Token
-    )
-        -> Expression<'g>
-    {
-        Expression::Tuple(self.parse_tuple(ns, o, c))
-    }
-
-    fn parse_tuple(
-        &mut self,
-        ns: &'a [tt::Node<'a>],
-        o: tt::Token,
-        c: tt::Token
-    )
-        -> Tuple<'g, Expression<'g>>
-    {
-        parse_tuple_impl(&mut self.raw, parse_expression, ns, o, c)
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
@@ -289,9 +257,43 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         let loop_ = self.raw.pop_kind(tt::Kind::KeywordLoop).expect(":loop");
         let loop_ = loop_.offset() as u32;
 
-        let block = self.parse_block();
+        if let Some(tt::Node::Braced(o, ns, c)) = self.raw.peek() {
+            self.raw.pop_node();
+            let mut raw = self.raw.spawn(ns);
+            let statements = parse_statements_impl(&mut raw);
+            assert!(raw.peek().is_none());
 
-        Expression::Loop(self.raw.intern(Loop { block, loop_ }))
+            let open = o.offset() as u32;
+            let close = c.offset() as u32;
+
+            return Expression::Loop(
+                self.raw.intern(Loop { statements, loop_, open, close })
+            );
+        }
+
+        unimplemented!("Expected braces after :loop");
+    }
+
+    fn parse_parens(
+        &mut self,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token
+    )
+        -> Expression<'g>
+    {
+        Expression::Tuple(self.parse_tuple(ns, o, c))
+    }
+
+    fn parse_tuple(
+        &mut self,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token
+    )
+        -> Tuple<'g, Expression<'g>>
+    {
+        parse_tuple_impl(&mut self.raw, parse_expression, ns, o, c)
     }
 }
 
@@ -621,6 +623,21 @@ fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
     Constructor { type_: ty, arguments: tuple }
 }
 
+fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
+    -> &'g [Statement<'g>]
+{
+    let mut stmts = raw.local_array();
+
+    while let Some(tok) = raw.peek().map(|n| n.front()) {
+        if tok.kind() != tt::Kind::KeywordSet &&
+            tok.kind() != tt::Kind::KeywordVar {
+            break;
+        }
+        stmts.push(parse_statement(raw));
+    }
+
+    raw.intern_slice(&stmts)
+}
 
 fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
     raw: &mut RawParser<'a, 'g, 'local>,
@@ -865,8 +882,8 @@ mod tests {
         let e = Factory::new(&global_arena).expr();
 
         assert_eq!(
-            exprit(&global_arena, b":loop { 1 }"),
-            e.loop_(e.block(e.int(8, 1)).build())
+            exprit(&global_arena, b":loop { }"),
+            e.loop_(0).build()
         );
     }
 

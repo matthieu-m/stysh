@@ -132,8 +132,10 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     {
         current = self.convert_value(current, value);
 
-        let return_value = current.last_value();
-        current.exit = ProtoTerminator::Return(return_value);
+        if current.exit == ProtoTerminator::Unreachable {
+            let return_value = current.last_value();
+            current.exit = ProtoTerminator::Return(return_value);
+        }
 
         self.blocks.push(RefCell::new(current));
     }
@@ -178,6 +180,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 => self.convert_field_access(current, value.type_, v, i, r),
             sem::Expr::If(cond, true_, false_)
                 => self.convert_if(current, cond, true_, false_, r),
+            sem::Expr::Loop(stmts)
+                => self.convert_loop(current, stmts, r),
             sem::Expr::Tuple(tuple)
                 => self.convert_tuple(current, value.type_, tuple, r),
             sem::Expr::VariableRef(id)
@@ -188,26 +192,13 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
     fn convert_block(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
+        current: ProtoBlock<'g, 'local>,
         stmts: &[sem::Stmt<'g>],
         value: &sem::Value<'g>,
     )
         -> ProtoBlock<'g, 'local>
     {
-        for &s in stmts {
-            match s {
-                sem::Stmt::Set(re) => {
-                    current = self.convert_rebind(current, re);
-                },
-                sem::Stmt::Var(sem::Binding::Variable(pat, value, _)) => {
-                    current = self.convert_value(current, &value);
-                    let id = current.last_value();
-                    current =
-                        self.convert_pattern(current, id, pat, value.type_);
-                },
-                sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
-            }
-        }
+        let current = self.convert_statements(current, stmts);
 
         self.convert_value(current, value)
     }
@@ -430,6 +421,36 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         current
     }
 
+    fn convert_loop(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        stmts: &[sem::Stmt<'g>],
+        range: com::Range,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let current_id = current.id;
+        let head_id: BlockId = range.into();
+
+        current.exit = ProtoTerminator::Jump(self.jump(head_id));
+        self.blocks.push(RefCell::new(current));
+
+        let mut head = ProtoBlock::new(head_id, self.local_arena);
+        head.predecessors.push(current_id);
+        let head_index = self.blocks.len();
+
+        let mut tail = self.convert_statements(head, stmts);
+
+        if self.blocks.len() == head_index {
+            tail.predecessors.push(tail.id);
+        } else {
+            self.blocks[head_index].get_mut().predecessors.push(tail.id);
+        }
+
+        tail.exit = ProtoTerminator::Jump(self.jump(head_id));
+        tail
+    }
+
     fn convert_pattern(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
@@ -614,6 +635,31 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         (current, arguments.into_slice())
     }
 
+    fn convert_statements(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        stmts: &[sem::Stmt<'g>],
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        for &s in stmts {
+            match s {
+                sem::Stmt::Set(re) => {
+                    current = self.convert_rebind(current, re);
+                },
+                sem::Stmt::Var(sem::Binding::Variable(pat, value, _)) => {
+                    current = self.convert_value(current, &value);
+                    let id = current.last_value();
+                    current =
+                        self.convert_pattern(current, id, pat, value.type_);
+                },
+                sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
+            }
+        }
+
+        current
+    }
+
     fn binding_of(value: &sem::Value) -> BindingId {
         match value.expr {
             sem::Expr::ArgumentRef(a) => a.into(),
@@ -636,6 +682,10 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         }
     }
 
+    fn jump(&self, to: BlockId) -> ProtoJump<'g, 'local> {
+        ProtoJump::new(to, self.local_arena)
+    }
+
     fn resolve_arguments(&self)
         -> mem::ArrayMap<'local, BlockId, sir::BlockId>
     {
@@ -656,17 +706,28 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         //  Ensure each predecessor forwards the correct arguments to their
         //  successor.
         for block in self.blocks.iter().rev() {
-            let block = block.borrow();
+            let mut block = block.borrow_mut();
 
             bindings.clear();
             for &(argument, _) in block.arguments.as_slice() {
                 bindings.push(argument);
             }
 
+            let mut self_successor = false;
             for id in block.predecessors.as_slice() {
+                if *id == block.id {
+                    self_successor = true;
+                    continue;
+                }
+
                 let id = map.get(id).expect("Known block!");
                 let mut pred = self.blocks[id.index()].borrow_mut();
                 pred.bind_successor(block.id, &*bindings);
+            }
+
+            if self_successor {
+                let block_id = block.id;
+                block.bind_successor(block_id, &*bindings);
             }
         }
 
@@ -675,6 +736,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             let mut block = block.borrow_mut();
 
             if let Some(&pred) = block.predecessors.get(0) {
+                if block.id == pred { continue; }
+
                 let pred = map.get(&pred).expect("Known block!");
                 let pred = self.blocks[pred.index()].borrow();
 
@@ -1203,6 +1266,35 @@ mod tests {
                 "",
             ])
         )
+    }
+
+    #[test]
+    fn loop_increment() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
+
+        //  "{ :var i := 0; :loop { :set i := i + 1; } }"
+        let i = v.id(7, 1);
+        let var = s.var_id(i, v.int(0, 12));
+        let add = v.call().push(v.int_ref(i, 33)).push(v.int(1, 37)).build();
+        let loop_ = v.loop_().push(s.set(v.int_ref(i, 28), add)).build();
+        let block = v.block(loop_).push(var).build();
+
+        assert_eq!(
+            env.valueit(&block).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 0 ; 1@12",
+                "    jump <1> ($0)",
+                "",
+                "1 (Int):",
+                "    $0 := load 1 ; 1@37",
+                "    $1 := __add__(@0, $0) ; 5@33",
+                "    jump <1> ($1)",
+                "",
+            ])
+        );
     }
 
     struct Env<'g> {

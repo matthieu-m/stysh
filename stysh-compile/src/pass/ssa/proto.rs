@@ -97,15 +97,15 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     {
         let unresolved = sem::Type::unresolved();
 
-        for (index, a) in self.arguments.iter().enumerate() {
-            if a.0 == binding {
-                return (sir::ValueId::new_argument(index), a.1);
-            }
-        }
-
         for &(id, value, type_) in &self.bindings {
             if id == binding {
                 return (value, type_);
+            }
+        }
+
+        for (index, a) in self.arguments.iter().enumerate() {
+            if a.0 == binding {
+                return (sir::ValueId::new_argument(index), a.1);
             }
         }
 

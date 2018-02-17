@@ -108,6 +108,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         for a in fun.arguments {
             arguments.push(sem::Binding::Argument(
                 sem::ValueIdentifier(a.name.0),
+                Default::default(),
                 self.resolver(self.scope).type_of(&a.type_),
                 a.range()
             ));

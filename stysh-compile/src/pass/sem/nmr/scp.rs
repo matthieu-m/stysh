@@ -23,6 +23,7 @@ pub trait Scope<'g>: fmt::Debug {
             type_: Type::Unresolved(ItemIdentifier::unresolved()),
             range: name.0,
             expr: Expr::UnresolvedRef(name),
+            gvn: Default::default(),
         }
     }
 
@@ -80,7 +81,7 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
             mem::Array::with_capacity(fun.arguments.len(), local_arena);
 
         for &arg in fun.arguments {
-            if let Binding::Argument(value, type_, _) = arg {
+            if let Binding::Argument(value, _, type_, _) = arg {
                 array.push((value, type_));
                 continue;
             }
@@ -160,7 +161,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
                     self.add_pattern(*pat, type_)
                 }
             },
-            Pattern::Var(id) => self.add_value(id, type_),
+            Pattern::Var(id, _) => self.add_value(id, type_),
         }
     }
 
@@ -216,7 +217,8 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
                 return Value {
                     type_: self.global_arena.intern(&type_),
                     range: name.0,
-                    expr: Expr::ArgumentRef(identifier),
+                    expr: Expr::ArgumentRef(identifier, Default::default()),
+                    gvn: Default::default(),
                 };
             }
         }
@@ -239,8 +241,9 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
             return Value {
                 type_: self.global_arena.intern(&type_),
                 range: name.0,
-                expr: Expr::VariableRef(id)
-            }
+                expr: Expr::VariableRef(id, Default::default()),
+                gvn: Default::default(),
+            };
         }
 
         self.parent.lookup_binding(name)

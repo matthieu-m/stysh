@@ -110,6 +110,7 @@ impl<'a, 'g, 'local> FrameInterpreter<'a, 'g, 'local>
                     type_: v.type_,
                     range: com::Range::new(0, 0),
                     expr: v.expr,
+                    gvn: Default::default(),
                 },
             };
             index = i.index();
@@ -278,6 +279,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             type_: fun.result_type(),
             range: com::Range::new(0, 0),
             expr: sem::Expr::BuiltinVal(value),
+            gvn: Default::default(),
         }
     }
 
@@ -299,6 +301,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             type_: type_,
             range: range,
             expr: sem::Expr::Tuple(sem::Tuple{ fields: elements.into_slice() }),
+            gvn: Default::default(),
         }
     }
 
@@ -315,6 +318,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             type_: sem::Type::Builtin(type_),
             range: range,
             expr: sem::Expr::BuiltinVal(v),
+            gvn: Default::default(),
         };
 
         self.arena.intern(&value)
@@ -540,7 +544,8 @@ mod tests {
                 range: range(0, 0),
                 expr: sem::Expr::Tuple(sem::Tuple {
                     fields: &[sem_int(1), sem_int(2)],
-                })
+                }),
+                gvn: Default::default(),
             }
         );
     }
@@ -635,6 +640,7 @@ mod tests {
             type_: sem::Type::Builtin(sem::BuiltinType::Int),
             range: range(0, 0),
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)),
+            gvn: Default::default(),
         }
     }
 
@@ -643,6 +649,7 @@ mod tests {
             type_: sem::Type::Builtin(sem::BuiltinType::String),
             range: range(0, 0),
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(s)),
+            gvn: Default::default(),
         }
     }
 

@@ -66,7 +66,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         for &a in fun.prototype.arguments {
-            if let sem::Binding::Argument(value, type_, _) = a {
+            if let sem::Binding::Argument(value, _, type_, _) = a {
                 arguments.push((value.0.into(), type_));
                 continue;
             }
@@ -166,7 +166,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let r = value.range;
 
         match value.expr {
-            sem::Expr::ArgumentRef(id)
+            sem::Expr::ArgumentRef(id, _)
                 => self.convert_identifier(current, id),
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
@@ -184,7 +184,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 => self.convert_loop(current, stmts, r),
             sem::Expr::Tuple(tuple)
                 => self.convert_tuple(current, value.type_, tuple, r),
-            sem::Expr::VariableRef(id)
+            sem::Expr::VariableRef(id, _)
                 => self.convert_identifier(current, id),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
@@ -464,7 +464,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         let (patterns, types) = match pattern {
             Ignored(_) => { return current; },
-            Var(var) => {
+            Var(var, _) => {
                 current.push_binding(var.0.into(), matched, type_);
                 return current;
             },
@@ -544,7 +544,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         )
             -> ProtoBlock<'g, 'local>
         {
-            if let sem::Expr::VariableRef(n) = left.expr {
+            if let sem::Expr::VariableRef(n, _) = left.expr {
                 let id = current.last_value();
                 current.push_rebinding(n.0.into(), id, left.type_);
                 return current;
@@ -662,8 +662,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
     fn binding_of(value: &sem::Value) -> BindingId {
         match value.expr {
-            sem::Expr::ArgumentRef(a) => a.into(),
-            sem::Expr::VariableRef(v) => v.into(),
+            sem::Expr::ArgumentRef(a, _) => a.into(),
+            sem::Expr::VariableRef(v, _) => v.into(),
             _ => value.range.into()
         }
     }

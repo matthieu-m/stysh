@@ -134,7 +134,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn pattern_of_var(&self, var: syn::VariableIdentifier)
         -> sem::Pattern<'static>
     {
-        sem::Pattern::Var(var.into())
+        sem::Pattern::Var(var.into(), Default::default())
     }
 
     fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
@@ -224,6 +224,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: value.type_,
             range: block.range(),
             expr: sem::Expr::Block(stmts, self.global_arena.insert(value)),
+            gvn: Default::default(),
         }
     }
 
@@ -266,6 +267,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 sem::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[left, right])
             ),
+            gvn: Default::default(),
         }
     }
 
@@ -290,6 +292,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                     arguments: values.into_slice(),
                     range: c.range(),
                 }),
+                gvn: Default::default(),
             };
         }
 
@@ -316,6 +319,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: callable.result_type(),
             range: fun.range(),
             expr: sem::Expr::Call(callable, values.into_slice()),
+            gvn: Default::default(),
         }
     }
 
@@ -329,6 +333,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 type_: self.type_of_field_index(accessed, index),
                 range: field.range(),
                 expr: sem::Expr::FieldAccess(accessed, index),
+                gvn: Default::default(),
             }
         } else {
             let id = sem::ValueIdentifier(field.field.0);
@@ -336,7 +341,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             sem::Value {
                 type_: sem::Type::unresolved(),
                 range: field.range(),
-                expr: sem::Expr::UnresolvedField(accessed, id)
+                expr: sem::Expr::UnresolvedField(accessed, id),
+                gvn: Default::default(),
             }
         }
     }
@@ -365,6 +371,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.global_arena.insert(true_branch),
                 self.global_arena.insert(false_branch),
             ),
+            gvn: Default::default(),
         }
     }
 
@@ -390,6 +397,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::Bool),
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
+            gvn: Default::default(),
         }
     }
 
@@ -407,6 +415,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::String),
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+            gvn: Default::default(),
         }
     }
 
@@ -419,6 +428,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::Int),
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
+            gvn: Default::default(),
         }
     }
 
@@ -435,6 +445,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::String),
             range: range,
             expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+            gvn: Default::default(),
         }
     }
 
@@ -453,6 +464,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Builtin(sem::BuiltinType::Void),
             range: loop_.range(),
             expr: sem::Expr::Loop(stmts),
+            gvn: Default::default(),
         }
     }
 
@@ -479,6 +491,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 sem::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[expr])
             ),
+            gvn: Default::default(),
         }
     }
 
@@ -500,6 +513,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             type_: sem::Type::Tuple(sem::Tuple { fields: types.into_slice() }),
             range: tup.range(),
             expr: sem::Expr::Tuple(sem::Tuple { fields: values.into_slice() }),
+            gvn: Default::default(),
         }
     }
 
@@ -611,6 +625,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                     type_: Type::Enum(e),
                     range: v.range,
                     expr: Expr::Implicit(Implicit::ToEnum(e, v)),
+                    gvn: Default::default(),
                 }
             });
         }
@@ -631,6 +646,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                     type_: v.type_,
                     range: original.range,
                     expr: Expr::Block(stmts, v), 
+                    gvn: Default::default(),
                 }
             },
             _ => f(original),

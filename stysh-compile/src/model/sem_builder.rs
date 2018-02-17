@@ -81,6 +81,7 @@ pub struct FunctionProtoBuilder<'a> {
     range: com::Range,
     arguments: mem::Array<'a, Binding<'a>>,
     result: Type<'a>,
+    with_gvn: bool,
 }
 
 //
@@ -322,7 +323,7 @@ impl<'a> PatternFactory<'a> {
 
     /// Creates a var Pattern.
     pub fn var(&self, id: ValueIdentifier) -> Pattern<'static> {
-        Pattern::Var(id)
+        Pattern::Var(id, Default::default())
     }
 }
 
@@ -375,6 +376,7 @@ impl<'a> FunctionProtoBuilder<'a> {
             range: range(0, 0),
             arguments: mem::Array::new(arena),
             result: result,
+            with_gvn: false,
         }
     }
 
@@ -387,18 +389,25 @@ impl<'a> FunctionProtoBuilder<'a> {
     /// Pushes an argument.
     pub fn push(&mut self, name: ValueIdentifier, type_: Type<'a>) -> &mut Self
     {
+        let gvn = Default::default();
         let len = name.0.length() + 2 + type_.range().length();
         let range = range(name.0.offset(), len);
-        self.arguments.push(Binding::Argument(name, type_, range));
+        self.arguments.push(Binding::Argument(name, gvn, type_, range));
         self
     }
 
     /// Sets the range of the last argument.
     pub fn arg_range(&mut self, pos: usize, len: usize) -> &mut Self {
-        if let Some(&mut Binding::Argument(_, _, ref mut r))
+        if let Some(&mut Binding::Argument(_, _, _, ref mut r))
             = self.arguments.last_mut() {
             *r = range(pos, len);
         }
+        self
+    }
+
+    /// Toggle GVN generation.
+    pub fn with_gvn(&mut self) -> &mut Self {
+        self.with_gvn = true;
         self
     }
 
@@ -407,10 +416,11 @@ impl<'a> FunctionProtoBuilder<'a> {
         let arguments = self.arguments.clone().into_slice();
 
         for (i, a) in arguments.iter_mut().enumerate() {
-            if i + 1 == self.arguments.len() { continue; }
-            if let &mut Binding::Argument(_, _, ref mut r) = a {
-                let n = range(r.offset(), r.length() + 1);
-                *r = n;
+            if let &mut Binding::Argument(_, ref mut g, _, ref mut r) = a {
+                *g = Gvn(if self.with_gvn { i as u32 + 1 } else { 0 });
+
+                if i + 1 == self.arguments.len() { continue; }
+                *r = range(r.offset(), r.length() + 1);
             }
         }
 
@@ -449,7 +459,7 @@ impl<'a> StmtFactory<'a> {
 
     /// Shortcut: Creates a simple binding Stmt.
     pub fn var_id(&self, id: ValueIdentifier, value: Value<'a>) -> Stmt<'a> {
-        self.var(Pattern::Var(id), value)
+        self.var(Pattern::Var(id, Default::default()), value)
     }
 }
 
@@ -533,7 +543,8 @@ impl<'a> ValueFactory<'a> {
     pub fn arg_ref(&self, type_: Type<'a>, name: ValueIdentifier, pos: usize)
         -> Value<'a>
     {
-        value(type_, Expr::ArgumentRef(name)).with_range(pos, name.0.length())
+        value(type_, Expr::ArgumentRef(name, Default::default()))
+            .with_range(pos, name.0.length())
     }
 
     /// Creates a BlockBuilder.
@@ -625,7 +636,8 @@ impl<'a> ValueFactory<'a> {
     pub fn var_ref(&self, type_: Type<'a>, name: ValueIdentifier, pos: usize)
         -> Value<'a>
     {
-        value(type_, Expr::VariableRef(name)).with_range(pos, name.0.length())
+        value(type_, Expr::VariableRef(name, Default::default()))
+            .with_range(pos, name.0.length())
     }
 
     /// Shortcut: creates a Bool ref.
@@ -1087,5 +1099,6 @@ fn value<'a>(type_: Type<'a>, expr: Expr<'a>) -> Value<'a> {
         type_: type_,
         range: range(0, 0),
         expr: expr,
+        gvn: Default::default(),
     }
 }

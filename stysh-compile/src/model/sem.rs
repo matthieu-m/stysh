@@ -65,13 +65,16 @@ pub struct Value<'a> {
     pub range: com::Range,
     /// Expression evaluating to the value.
     pub expr: Expr<'a>,
+    /// Unique identifier of this value within the context;
+    /// or at least, it is unique *after* the GVN pass.
+    pub gvn: Gvn,
 }
 
 /// A binding.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Binding<'a> {
     /// A function argument.
-    Argument(ValueIdentifier, Type<'a>, com::Range),
+    Argument(ValueIdentifier, Gvn, Type<'a>, com::Range),
     /// A variable declaration.
     Variable(Pattern<'a>, Value<'a>, com::Range),
 }
@@ -91,7 +94,7 @@ pub struct ReBinding<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
     /// A reference to an existing argument binding.
-    ArgumentRef(ValueIdentifier),
+    ArgumentRef(ValueIdentifier, Gvn),
     /// A block expression.
     Block(&'a [Stmt<'a>], &'a Value<'a>),
     /// A built-in value.
@@ -115,7 +118,7 @@ pub enum Expr<'a> {
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
     /// A reference to an existing variable binding.
-    VariableRef(ValueIdentifier),
+    VariableRef(ValueIdentifier, Gvn),
 }
 
 /// A Pattern
@@ -128,7 +131,7 @@ pub enum Pattern<'a> {
     /// A tuple.
     Tuple(Tuple<'a, Pattern<'a>>, com::Range),
     /// A variable.
-    Var(ValueIdentifier),
+    Var(ValueIdentifier, Gvn),
 }
 
 /// A built-in value, the type is implicit.
@@ -316,6 +319,12 @@ pub struct ItemIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub com::Range);
 
+/// A global value number.
+///
+/// Defaults to 0, which is considered an invalid value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Gvn(pub u32);
+
 impl<'a> Stmt<'a> {
     /// Range spanned by the statement.
     pub fn range(&self) -> com::Range {
@@ -358,6 +367,25 @@ impl<'a> Type<'a> {
 }
 
 impl<'a> Value<'a> {
+    /// Sets the gvn the value refers to.
+    pub fn ref_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
+        use self::Expr::*;
+
+        self.expr = match self.expr {
+            ArgumentRef(id, _) => ArgumentRef(id, gvn.into()),
+            VariableRef(id, _) => VariableRef(id, gvn.into()),
+            _ => panic!("Cannot specify reference GVN in {:?}", self.expr),
+        };
+
+        self
+    }
+
+    /// Sets the gvn of the value.
+    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
+        self.gvn = gvn.into();
+        self
+    }
+
     /// Sets the range.
     pub fn with_range(mut self, pos: usize, len: usize) -> Value<'a> {
         self.range = com::Range::new(pos, len);
@@ -371,7 +399,17 @@ impl<'a> Binding<'a> {
         use self::Binding::*;
 
         match *self {
-            Argument(_, _, r) | Variable(_, _, r) => r,
+            Argument(_, _, _, r) | Variable(_, _, r) => r,
+        }
+    }
+
+    /// Sets the gvn of the binding.
+    pub fn with_gvn<G: convert::Into<Gvn>>(self, gvn: G) -> Binding<'a> {
+        use self::Binding::*;
+
+        match self {
+            Argument(id, _, t, r) => Argument(id, gvn.into(), t, r),
+            Variable(..) => panic!("Cannot specify GVN in {:?}", self),
         }
     }
 }
@@ -411,7 +449,19 @@ impl<'a> Pattern<'a> {
             Constructor(c) => c.range(),
             Ignored(r) => r,
             Tuple(_, r) => r,
-            Var(v) => v.0,
+            Var(v, _) => v.0,
+        }
+    }
+
+    /// Sets the gvn of the pattern.
+    ///
+    /// Panics: if the pattern is not a Var.
+    pub fn with_gvn<G: convert::Into<Gvn>>(self, gvn: G) -> Pattern<'a> {
+        use self::Pattern::*;
+
+        match self {
+            Var(v, _) => Var(v, gvn.into()),
+            _ => panic!("Cannot specify GVN in {:?}", self),
         }
     }
 }
@@ -509,6 +559,7 @@ impl<'a, 'target> CloneInto<'target> for Value<'a> {
             type_: arena.intern(&self.type_),
             range: self.range,
             expr: arena.intern(&self.expr),
+            gvn: Default::default(),
         }
     }
 }
@@ -520,7 +571,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
         use self::Expr::*;
 
         match *self {
-            ArgumentRef(v) => ArgumentRef(v),
+            ArgumentRef(v, gvn) => ArgumentRef(v, gvn),
             Block(stmts, v) => Block(
                 CloneInto::clone_into(stmts, arena),
                 arena.intern_ref(v),
@@ -539,7 +590,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
             Implicit(i) => Implicit(arena.intern(&i)),
             Loop(stmts) => Loop(CloneInto::clone_into(stmts, arena)),
             Tuple(t) => Tuple(arena.intern(&t)),
-            VariableRef(v) => VariableRef(v),
+            VariableRef(v, gvn) => VariableRef(v, gvn),
             _ => panic!("not yet implement for {:?}", self),
         }
     }
@@ -555,7 +606,7 @@ impl<'a, 'target> CloneInto<'target> for Pattern<'a> {
             Constructor(c) => Constructor(arena.intern(&c)),
             Ignored(r) => Ignored(r),
             Tuple(t, r) => Tuple(arena.intern(&t), r),
-            Var(v) => Var(v),
+            Var(v, gvn) => Var(v, gvn),
         }
     }
 }
@@ -567,8 +618,8 @@ impl<'a, 'target> CloneInto<'target> for Binding<'a> {
         use self::Binding::*;
 
         match *self {
-            Argument(id, type_, range)
-                => Argument(id, arena.intern(&type_), range),
+            Argument(id, gvn, type_, range)
+                => Argument(id, gvn, arena.intern(&type_), range),
             Variable(pat, value, range)
                 => Variable(arena.intern(&pat), arena.intern(&value), range),
         }
@@ -763,6 +814,10 @@ impl<'a> convert::From<BuiltinValue<'a>> for i64 {
     }
 }
 
+impl convert::From<u32> for Gvn {
+    fn from(v: u32) -> Gvn { Gvn(v) }
+}
+
 impl convert::From<syn::VariableIdentifier> for ValueIdentifier {
     fn from(value: syn::VariableIdentifier) -> Self {
         ValueIdentifier(value.range())
@@ -849,6 +904,7 @@ impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
             type_: Type::Rec(c.type_),
             range: c.range(),
             expr: Expr::Constructor(c),
+            gvn: Default::default(),
         }
     }
 }

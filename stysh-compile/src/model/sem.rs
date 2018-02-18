@@ -90,13 +90,22 @@ pub struct ReBinding<'a> {
     pub range: com::Range,
 }
 
+/// A return statement.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Return<'a> {
+    /// The returned value.
+    pub value: Value<'a>,
+    /// The range of the return statement.
+    pub range: com::Range,
+}
+
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
     /// A reference to an existing argument binding.
     ArgumentRef(ValueIdentifier, Gvn),
     /// A block expression.
-    Block(&'a [Stmt<'a>], &'a Value<'a>),
+    Block(&'a [Stmt<'a>], Option<&'a Value<'a>>),
     /// A built-in value.
     BuiltinVal(BuiltinValue<'a>),
     /// A function call.
@@ -149,6 +158,8 @@ pub enum BuiltinValue<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Stmt<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
+    /// A return statement.
+    Return(Return<'a>),
     /// A variable re-binding.
     Set(ReBinding<'a>),
     /// A variable binding.
@@ -331,8 +342,21 @@ impl<'a> Stmt<'a> {
         use self::Stmt::*;
 
         match *self {
+            Return(r) => r.range(),
             Set(r) => r.range(),
             Var(b) => b.range(),
+        }
+    }
+
+    /// Result type of the statement.
+    ///
+    /// Not to be mistaken for the type of the value assigned to or returned.
+    pub fn result_type(&self) -> Type<'static> {
+        use self::Stmt::*;
+
+        match *self {
+            Return(_) => Type::void(),
+            Set(_) | Var(_) => Type::unit(),
         }
     }
 }
@@ -359,9 +383,26 @@ impl<'a> Type<'a> {
 
         com::Range::new(0, len)
     }
+}
+
+impl Type<'static> {
+    /// Returns a Bool type.
+    pub fn bool_() -> Self { Type::Builtin(BuiltinType::Bool) }
+
+    /// Returns an Int type.
+    pub fn int() -> Self { Type::Builtin(BuiltinType::Int) }
+
+    /// Returns a String type.
+    pub fn string() -> Self { Type::Builtin(BuiltinType::String) }
+
+    /// Returns a Void type.
+    pub fn void() -> Self { Type::Builtin(BuiltinType::Void) }
+
+    /// Returns a unit type.
+    pub fn unit() -> Self { Type::Tuple(Tuple::unit()) }
 
     /// Returns an unresolved type.
-    pub fn unresolved() -> Type<'a> {
+    pub fn unresolved() -> Self {
         Type::Unresolved(ItemIdentifier::unresolved())
     }
 }
@@ -390,6 +431,18 @@ impl<'a> Value<'a> {
     pub fn with_range(mut self, pos: usize, len: usize) -> Value<'a> {
         self.range = com::Range::new(pos, len);
         self
+    }
+}
+
+impl Value<'static> {
+    /// Returns a unit value.
+    pub fn unit() -> Self {
+        Value {
+            type_: Type::unit(),
+            range: Default::default(),
+            expr: Expr::Tuple(Tuple::unit()),
+            gvn: Default::default(),
+        }
     }
 }
 
@@ -489,6 +542,16 @@ impl<'a> ReBinding<'a> {
     pub fn range(&self) -> com::Range { self.range }
 }
 
+impl<'a> Return<'a> {
+    /// Range spanned by the return statement.
+    pub fn range(&self) -> com::Range { self.range }
+}
+
+impl<T: 'static> Tuple<'static, T> {
+    /// Returns a unit tuple.
+    pub fn unit() -> Self { Tuple { fields: &[] } }
+}
+
 impl BuiltinFunction {
     /// Returns the number of arguments expected.
     pub fn number_arguments(&self) -> u8 {
@@ -574,7 +637,7 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
             ArgumentRef(v, gvn) => ArgumentRef(v, gvn),
             Block(stmts, v) => Block(
                 CloneInto::clone_into(stmts, arena),
-                arena.intern_ref(v),
+                v.map(|v| arena.intern_ref(v)),
             ),
             BuiltinVal(v) => BuiltinVal(arena.intern(&v)),
             Call(c, args) => Call(
@@ -638,6 +701,17 @@ impl<'a, 'target> CloneInto<'target> for ReBinding<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Return<'a> {
+    type Output = Return<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Return {
+            value: arena.intern(&self.value),
+            range: self.range,
+        }
+    }
+}
+
 impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
     type Output = Stmt<'target>;
 
@@ -645,6 +719,7 @@ impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
         use self::Stmt::*;
 
         match *self {
+            Return(r) => Return(arena.intern(&r)),
             Set(b) => Set(arena.intern(&b)),
             Var(b) => Var(arena.intern(&b)),
         }

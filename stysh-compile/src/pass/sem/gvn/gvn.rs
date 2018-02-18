@@ -119,7 +119,7 @@ impl<'g, 'local> Impl<'g, 'local> {
 
         match *expr {
             ArgumentRef(id, _) => ArgumentRef(id, self.lookup_identifier(id)),
-            Block(ss, v) => Block(self.stmts(ss), self.value_ref(v)),
+            Block(ss, v) => Block(self.stmts(ss), v.map(|v| self.value_ref(v))),
             BuiltinVal(v) => BuiltinVal(self.intern(&v)),
             Call(c, vs) => Call(self.callable(&c), self.values(vs)),
             Constructor(c) => Constructor(self.constructor_value(&c)),
@@ -187,10 +187,18 @@ impl<'g, 'local> Impl<'g, 'local> {
         }
     }
 
+    fn return_(&mut self, ret: &Return) -> Return<'g> {
+        Return {
+            value: self.value(&ret.value),
+            range: ret.range,
+        }
+    }
+
     fn stmt(&mut self, stmt: &Stmt) -> Stmt<'g> {
         use self::Stmt::*;
 
         match *stmt {
+            Return(r) => Return(self.return_(&r)),
             Set(re) => Set(self.rebinding(&re)),
             Var(b) => Var(self.binding(&b)),
         }

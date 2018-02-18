@@ -99,8 +99,9 @@ pub struct BuiltinTypeBuilder;
 //
 #[derive(Clone)]
 pub struct BlockBuilder<'a> {
-    value: &'a Value<'a>,
+    value: Option<&'a Value<'a>>,
     statements: mem::Array<'a, Stmt<'a>>,
+    range: com::Range,
 }
 
 #[derive(Clone, Copy)]
@@ -440,6 +441,23 @@ impl<'a> StmtFactory<'a> {
     /// Creates an instance.
     pub fn new(_: &'a mem::Arena) -> Self { StmtFactory(marker::PhantomData) }
 
+    /// Creates a return Stmt.
+    pub fn ret(&self, value: Value<'a>) -> Stmt<'a> {
+        let off = value.range.offset() - 8;
+        let end = value.range.end_offset() + 1;
+        let range = range(off, end - off);
+
+        Stmt::Return(Return { value, range })
+    }
+
+    /// Shortcut: Creates an empty return statement.
+    pub fn ret_unit(&self, pos: usize, len: usize) -> Stmt<'a> {
+        let value = Value::unit().with_range(pos + len - 3, 2);
+        let range = range(pos, len);
+
+        Stmt::Return(Return { value, range })
+    }
+
     /// Creates a re-binding Stmt.
     pub fn set(&self, left: Value<'a>, right: Value<'a>) -> Stmt<'a> {
         let off = left.range.offset() - 5;
@@ -552,6 +570,11 @@ impl<'a> ValueFactory<'a> {
         BlockBuilder::new(self.arena, value)
     }
 
+    /// Creates a diverging BlockBuilder.
+    pub fn block_div(&self) -> BlockBuilder<'a> {
+        BlockBuilder::diverging(self.arena)
+    }
+
     /// Creates a BuiltinValueBuilder.
     pub fn builtin(&self) -> BuiltinValueBuilder { BuiltinValueBuilder::new() }
 
@@ -660,8 +683,18 @@ impl<'a> BlockBuilder<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
         BlockBuilder {
-            value: arena.insert(value),
+            value: Some(arena.insert(value)),
             statements: mem::Array::new(arena),
+            range: Default::default(),
+        }
+    }
+
+    /// Creates an instance.
+    pub fn diverging(arena: &'a mem::Arena) -> Self {
+        BlockBuilder {
+            value: None,
+            statements: mem::Array::new(arena),
+            range: Default::default(),
         }
     }
 
@@ -671,18 +704,38 @@ impl<'a> BlockBuilder<'a> {
         self
     }
 
+    /// Sets a range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = com::Range::new(pos, len);
+        self
+    }
+
     /// Creates a Block Value.
     pub fn build(&self) -> Value<'a> {
-        let off =
-            self.statements
-                .first()
-                .map(|s| s.range().offset())
-                .unwrap_or(self.value.range.offset()) - 2;
-        let end = self.value.range.end_offset() + 2;
+        let (first, last) = (self.statements.first(), self.statements.last());
+        let value_range = self.value.map(|v| v.range);
+
+        let off = if self.range == Default::default() {
+            first.map(|s| s.range().offset())
+                .unwrap_or_else(|| value_range.unwrap().offset()) - 2
+        } else {
+            self.range.offset()
+        };
+
+        let end = if self.range == Default::default() {
+            value_range.map(|v| v.end_offset())
+                .unwrap_or_else(|| last.unwrap().range().end_offset()) + 2
+        } else {
+            self.range.end_offset()
+        };
 
         let expr =
             Expr::Block(self.statements.clone().into_slice(), self.value);
-        value(self.value.type_, expr).with_range(off, end - off)
+        let type_ =
+            self.value.map(|v| v.type_)
+                .or_else(|| last.map(|s| s.result_type()))
+                .unwrap_or(Type::unit());
+        value(type_, expr).with_range(off, end - off)
     }
 }
 

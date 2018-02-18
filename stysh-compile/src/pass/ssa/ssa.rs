@@ -195,13 +195,17 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         &mut self,
         current: ProtoBlock<'g, 'local>,
         stmts: &[sem::Stmt<'g>],
-        value: &sem::Value<'g>,
+        value: Option<&sem::Value<'g>>,
     )
         -> ProtoBlock<'g, 'local>
     {
         let current = self.convert_statements(current, stmts);
 
-        self.convert_value(current, value)
+        if let Some(value) = value {
+            self.convert_value(current, value)
+        } else {
+            current
+        }
     }
 
     fn convert_call(
@@ -667,6 +671,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     {
         for &s in stmts {
             match s {
+                sem::Stmt::Return(..) => unimplemented!("Return"),
                 sem::Stmt::Set(re) => {
                     current = self.convert_rebind(current, re);
                 },

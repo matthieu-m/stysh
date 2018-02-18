@@ -137,6 +137,55 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         sem::Pattern::Var(var.into(), Default::default())
     }
 
+    fn stmt_of_return<'b>(&self,
+        ret: &syn::Return,
+        scope: &mut BlockScope<'b, 'g, 'local>,
+    )
+        -> sem::Stmt<'g>
+        where
+            'g: 'b
+    {
+        let range = ret.range();
+        let unit = sem::Value::unit().with_range(range.end_offset() - 3, 2);
+
+        let value =
+            ret.expr
+                .map(|e| self.rescope(scope).value_of_expr(&e))
+                .unwrap_or(unit);
+
+        sem::Stmt::Return(sem::Return { value, range })
+    }
+
+    fn stmt_of_set<'b>(
+        &self,
+        set: &syn::VariableReBinding,
+        scope: &mut BlockScope<'b, 'g, 'local>,
+    )
+        -> sem::Stmt<'g>
+        where
+            'g: 'b
+    {
+        let range = set.range();
+        let left = self.rescope(scope).value_of_expr(&set.left);
+        let right = self.rescope(scope).value_of_expr(&set.expr);
+        sem::Stmt::Set(sem::ReBinding { left, right, range })
+    }
+
+    fn stmt_of_var<'b>(
+        &self,
+        var: &syn::VariableBinding,
+        scope: &mut BlockScope<'b, 'g, 'local>,
+    )
+        -> sem::Stmt<'g>
+        where
+            'g: 'b
+    {
+        let value = self.rescope(scope).value_of_expr(&var.expr);
+        let pattern = self.rescope(self.scope).pattern_of(&var.pattern);
+        scope.add_pattern(pattern, value.type_);
+        sem::Stmt::Var(sem::Binding::Variable(pattern, value, var.range()))
+    }
+
     fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
         -> sem::Type<'g>
     {
@@ -218,12 +267,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.local_arena
             );
         let stmts = self.statements(&block.statements, &mut scope);
-        let value = self.rescope(&scope).value_of_expr(block.expression.unwrap());
+        let value = block.expression.map(
+            |e| self.rescope(&scope).value_of_expr(e)
+        );
+        let type_ =
+            value.map(|v| v.type_)
+                .or_else(|| stmts.last().map(|s| s.result_type()))
+                .unwrap_or(sem::Type::unit());
+        let expr = value.map(|v| &*self.global_arena.insert(v));
 
         sem::Value {
-            type_: value.type_,
+            type_: type_,
             range: block.range(),
-            expr: sem::Expr::Block(stmts, self.global_arena.insert(value)),
+            expr: sem::Expr::Block(stmts, expr),
             gvn: Default::default(),
         }
     }
@@ -641,9 +697,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         match original.expr {
             Expr::Block(stmts, v) => {
-                let v = self.global_arena.insert(f(*v));
+                let v = v.map(|v| &*self.global_arena.insert(f(*v)));
                 Value {
-                    type_: v.type_,
+                    type_: v.map(|v| v.type_).unwrap_or(original.type_),
                     range: original.range,
                     expr: Expr::Block(stmts, v), 
                     gvn: Default::default(),
@@ -666,27 +722,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         for &s in stmts {
             let stmt = match s {
-                syn::Statement::Return(..) => unimplemented!("return"),
-                syn::Statement::Set(set) => {
-                    let left = self.rescope(scope).value_of_expr(&set.left);
-                    let right = self.rescope(scope).value_of_expr(&set.expr);
-                    sem::Stmt::Set(
-                        sem::ReBinding {
-                            left: left,
-                            right: right,
-                            range: set.range()
-                        }
-                    )
-                },
-                syn::Statement::Var(var) => {
-                    let value = self.rescope(scope).value_of_expr(&var.expr);
-                    let pattern =
-                        self.rescope(self.scope).pattern_of(&var.pattern);
-                    scope.add_pattern(pattern, value.type_);
-                    sem::Stmt::Var(
-                        sem::Binding::Variable(pattern, value, var.range())
-                    )
-                },
+                syn::Statement::Return(r) => self.stmt_of_return(&r, scope),
+                syn::Statement::Set(set) => self.stmt_of_set(&set, scope),
+                syn::Statement::Var(var) => self.stmt_of_var(&var, scope),
             };
             statements.push(stmt);
         }
@@ -975,6 +1013,24 @@ mod tests {
     }
 
     #[test]
+    fn value_block_empty() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b"{}", &global_arena);
+
+        let syn = {
+            let e = SynFactory::new(&global_arena).expr();
+            e.block_div().range(0, 2).build()
+        };
+
+        let sem = {
+            let v = SemFactory::new(&global_arena).value();
+            v.block_div().range(0, 2).build()
+        };
+
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+    }
+
+    #[test]
     fn value_loop() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":loop { }", &global_arena);
@@ -990,6 +1046,30 @@ mod tests {
         };
 
         assert_eq!(env.value_of(&syn), sem);
+    }
+
+    #[test]
+    fn value_return_basic() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(b"{ :return 1; }", &global_arena);
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, s) = (f.expr(), f.stmt());
+
+            e.block_div()
+                .push_stmt(s.ret().expr(e.int(10, 1)).build())
+                .build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (s, v) = (f.stmt(), f.value());
+
+            v.block_div().push(s.ret(v.int(1, 10))).build()
+        };
+
+        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
     }
 
     #[test]

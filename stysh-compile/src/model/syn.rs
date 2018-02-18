@@ -90,6 +90,8 @@ pub enum Statement<'a> {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A variable re-binding.
     Set(VariableReBinding<'a>),
+    /// A return statement.
+    Return(Return<'a>),
     /// A variable definition.
     Var(VariableBinding<'a>),
 }
@@ -214,7 +216,7 @@ pub struct Block<'a> {
     /// Statements.
     pub statements: &'a [Statement<'a>],
     /// Last Expression.
-    pub expression: Expression<'a>,
+    pub expression: Option<&'a Expression<'a>>,
     /// Offset of open brace.
     pub open: u32,
     /// Offset of close brace.
@@ -287,6 +289,17 @@ pub struct Loop<'a> {
     pub open: u32,
     /// Offset of close brace.
     pub close: u32,
+}
+
+/// A return statement.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Return<'a> {
+    /// Expression being returned.
+    pub expr: Option<Expression<'a>>,
+    /// Offset of the :return keyword.
+    pub ret: u32,
+    /// Offset of the ; sign.
+    pub semi: u32,
 }
 
 /// A variable binding.
@@ -690,6 +703,7 @@ impl<'a> Range for Statement<'a> {
         use self::Statement::*;
 
         match *self {
+            Return(ret) => ret.range(),
             Set(set) => set.range(),
             Var(var) => var.range(),
         }
@@ -707,6 +721,14 @@ impl<'a> Range for Literal<'a> {
             Integral(r) => r,
             String(_, r) => r,
         }
+    }
+}
+
+impl<'a> Range for Return<'a> {
+    /// Returns the range spanned by the return statement.
+    fn range(&self) -> com::Range {
+        let len = self.semi + 1 - self.ret;
+        com::Range::new(self.ret as usize, len as usize)
     }
 }
 
@@ -840,6 +862,10 @@ impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
     fn from(t: Tuple<'a, Pattern<'a>>) -> Pattern<'a> {
         Pattern::Tuple(t)
     }
+}
+
+impl<'a> convert::From<Return<'a>> for Statement<'a> {
+    fn from(r: Return<'a>) -> Statement<'a> { Statement::Return(r) }
 }
 
 impl<'a> convert::From<VariableBinding<'a>> for Statement<'a> {

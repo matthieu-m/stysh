@@ -68,7 +68,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
         } else {
             Block {
                 statements: &[],
-                expression: body,
+                expression: Some(self.raw.intern(body)),
                 open: body.range().offset() as u32,
                 close: body.range().end_offset() as u32 - 1
             }

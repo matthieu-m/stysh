@@ -56,7 +56,7 @@ pub struct BinOpBuilder<'a> {
 #[derive(Clone)]
 pub struct BlockBuilder<'a> {
     statements: mem::Array<'a, Statement<'a>>,
-    expr: Expression<'a>,
+    expr: Option<&'a Expression<'a>>,
     open: u32,
     close: u32,
 }
@@ -152,6 +152,14 @@ pub struct RecordBuilder<'a> {
 //
 //  Statement Builders
 //
+
+/// ReturnBuilder
+#[derive(Clone, Copy)]
+pub struct ReturnBuilder<'a> {
+    expr: Option<Expression<'a>>,
+    ret: u32,
+    semi: u32,
+}
 
 /// VariableReBindingBuilder
 #[derive(Clone, Copy)]
@@ -266,6 +274,11 @@ impl<'a> ExprFactory<'a> {
     /// Creates a BlockBuilder.
     pub fn block(&self, expr: Expression<'a>) -> BlockBuilder<'a> {
         BlockBuilder::new(self.arena, expr)
+    }
+
+    /// Creates a diverging BlockBuilder.
+    pub fn block_div(&self) -> BlockBuilder<'a> {
+        BlockBuilder::diverging(self.arena)
     }
 
     /// Creates a ConstructorBuilder.
@@ -422,7 +435,17 @@ impl<'a> BlockBuilder<'a> {
     pub fn new(arena: &'a mem::Arena, expr: Expression<'a>) -> Self {
         BlockBuilder {
             statements: mem::Array::new(arena),
-            expr: expr,
+            expr: Some(arena.insert(expr)),
+            open: U32_NONE,
+            close: U32_NONE,
+        }
+    }
+
+    /// Creates a new instance, defaults the range.
+    pub fn diverging(arena: &'a mem::Arena) -> Self {
+        BlockBuilder {
+            statements: mem::Array::new(arena),
+            expr: None,
             open: U32_NONE,
             close: U32_NONE,
         }
@@ -443,20 +466,22 @@ impl<'a> BlockBuilder<'a> {
 
     /// Creates a Block.
     pub fn build(&self) -> Block<'a> {
+        let ends =
+            ends(self.statements.as_slice())
+                .map(|e| (e.0.range(), e.1.range()));
+        let expr_range = self.expr.map(|e| e.range());
+
         let open = if self.open == U32_NONE {
             let range =
-                self.statements
-                    .as_slice()
-                    .first()
-                    .map(|s| s.range())
-                    .unwrap_or(self.expr.range());
+                ends.map(|e| e.0).unwrap_or_else(|| expr_range.unwrap());
             range.offset() as u32 - 2
         } else {
             self.open
         };
 
         let close = if self.close == U32_NONE {
-            self.expr.range().end_offset() as u32 + 1
+            let range = expr_range.unwrap_or_else(|| ends.unwrap().1);
+            range.end_offset() as u32 + 1
         } else {
             self.close
         };
@@ -1174,6 +1199,9 @@ impl<'a> StmtFactory<'a> {
     /// Creates a new instance.
     pub fn new(_: &'a mem::Arena) -> Self { StmtFactory(marker::PhantomData) }
 
+    /// Creates a ReturnBuilder.
+    pub fn ret(&self) -> ReturnBuilder<'a> { ReturnBuilder::new() }
+
     /// Creates a VariableReBindingBuilder.
     pub fn set(&self, left: Expression<'a>, expr: Expression<'a>)
         -> VariableReBindingBuilder<'a>
@@ -1186,6 +1214,46 @@ impl<'a> StmtFactory<'a> {
         -> VariableBindingBuilder<'a>
     {
         VariableBindingBuilder::new(pattern, expr)
+    }
+}
+
+impl<'a> ReturnBuilder<'a> {
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        ReturnBuilder { expr: None, ret: U32_NONE, semi: U32_NONE }
+    }
+
+    /// Sets up an expression.
+    pub fn expr(&mut self, expr: Expression<'a>) -> &mut Self {
+        self.expr = Some(expr);
+        self
+    }
+
+    /// Sets up a range.
+    pub fn range(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.ret = pos;
+        self.semi = len - 1 - self.ret;
+        self
+    }
+
+    pub fn build<T: convert::From<Return<'a>>>(&self) -> T {
+        let ret = if self.ret == U32_NONE {
+            self.expr.unwrap().range().offset() as u32 - 8
+        } else {
+            self.ret
+        };
+
+        let semi = if self.semi == U32_NONE {
+            self.expr.unwrap().range().end_offset() as u32
+        } else {
+            self.semi
+        };
+
+        Return {
+            expr: self.expr,
+            ret: ret,
+            semi: semi,
+        }.into()
     }
 }
 
@@ -1528,6 +1596,14 @@ impl<'a> NestedTypeBuilder<'a> {
 //
 const U32_NONE: u32 = std::u32::MAX;
 const USIZE_NONE: usize = std::usize::MAX;
+
+fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
+    if !slice.is_empty() {
+        Some((slice.first().unwrap(), slice.last().unwrap()))
+    } else {
+        None
+    }
+}
 
 fn range(tup: (usize, usize)) -> com::Range { com::Range::new(tup.0, tup.1) }
 

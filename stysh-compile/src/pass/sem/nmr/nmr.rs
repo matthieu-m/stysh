@@ -218,7 +218,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 self.local_arena
             );
         let stmts = self.statements(&block.statements, &mut scope);
-        let value = self.rescope(&scope).value_of_expr(&block.expression);
+        let value = self.rescope(&scope).value_of_expr(block.expression.unwrap());
 
         sem::Value {
             type_: value.type_,
@@ -666,6 +666,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         for &s in stmts {
             let stmt = match s {
+                syn::Statement::Return(..) => unimplemented!("return"),
                 syn::Statement::Set(set) => {
                     let left = self.rescope(scope).value_of_expr(&set.left);
                     let right = self.rescope(scope).value_of_expr(&set.expr);

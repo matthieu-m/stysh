@@ -213,7 +213,11 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     {
         let mut raw = self.raw.spawn(ns);
         let statements = parse_statements_impl(&mut raw);
-        let expression = ExprParser::new(raw).parse();
+        let expression = if let Some(_) = raw.peek_kind() {
+            Some(raw.intern(ExprParser::new(raw).parse()))
+        } else {
+            None
+        };
 
         Block {
             statements: statements,
@@ -532,39 +536,49 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
         use model::tt::Kind as K;
 
         match self.raw.peek_kind() {
+            Some(K::KeywordReturn) => self.parse_return(),
             Some(K::KeywordSet) => self.parse_set(),
             Some(K::KeywordVar) => self.parse_var(),
-            Some(k) => unimplemented!("Expected :set or :var, got {:?}", k),
-            None => unimplemented!("Expected :set or :var, got nothing"),
+            Some(k) => unimplemented!(
+                "Expected :return, :set or :var, got {:?}",
+                k
+            ),
+            None => unimplemented!(
+                "Expected :return, :set or :var, got nothing"
+            ),
         }
     }
 
+    fn parse_return(&mut self) -> Statement<'g> {
+        use model::tt::Kind as K;
+
+        let ret = self.pop(K::KeywordReturn).expect(":return");
+
+        let expr = if self.raw.peek_kind() != Some(K::SignSemiColon) {
+            Some(parse_expression(&mut self.raw))
+        } else {
+            None
+        };
+
+        let semi = self.pop(K::SignSemiColon).unwrap_or(
+            expr.map(|e| e.range().end_offset() as u32 - 1).unwrap_or(ret + 6)
+        );
+
+        Statement::Return(Return { expr, ret, semi })
+    }
+
     fn parse_set(&mut self) -> Statement<'g> {
-        let set =
-            self.raw
-                .pop_kind(tt::Kind::KeywordSet)
-                .map(|t| t.offset() as u32)
-                .expect(":set");
+        let set = self.pop(tt::Kind::KeywordSet).expect(":set");
 
         let left = parse_expression(&mut self.raw);
 
         let (expr, bind, semi) = self.parse_bind();
 
-        Statement::Set(VariableReBinding {
-            left: left,
-            expr: expr,
-            set: set,
-            bind: bind,
-            semi: semi,
-        })
+        Statement::Set(VariableReBinding { left, expr, set, bind, semi })
     }
 
     fn parse_var(&mut self) -> Statement<'g> {
-        let var =
-            self.raw
-                .pop_kind(tt::Kind::KeywordVar)
-                .map(|t| t.offset() as u32)
-                .expect(":var");
+        let var = self.pop(tt::Kind::KeywordVar).expect(":var");
 
         let pattern = parse_pattern(&mut self.raw);
 
@@ -584,21 +598,21 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
     }
 
     fn parse_bind(&mut self) -> (Expression<'g>, u32, u32) {
-        let bind =
-            self.raw
-                .pop_kind(tt::Kind::SignBind)
-                .map(|t| t.offset() as u32)
-                .unwrap_or(0);
+        let bind = self.pop(tt::Kind::SignBind).unwrap_or(0);
 
         let expr = parse_expression(&mut self.raw);
 
         let semi =
-            self.raw
-                .pop_kind(tt::Kind::SignSemiColon)
-                .map(|t| t.offset())
-                .unwrap_or(expr.range().end_offset() - 1) as u32;
+            self.pop(tt::Kind::SignSemiColon)
+                .unwrap_or(expr.range().end_offset() as u32 - 1);
 
         (expr, bind, semi)
+    }
+
+    fn pop(&mut self, kind: tt::Kind) -> Option<u32> {
+        self.raw
+            .pop_kind(kind)
+            .map(|t| t.offset() as u32)
     }
 }
 
@@ -629,7 +643,8 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     let mut stmts = raw.local_array();
 
     while let Some(tok) = raw.peek().map(|n| n.front()) {
-        if tok.kind() != tt::Kind::KeywordSet &&
+        if tok.kind() != tt::Kind::KeywordReturn &&
+            tok.kind() != tt::Kind::KeywordSet &&
             tok.kind() != tt::Kind::KeywordVar {
             break;
         }
@@ -717,23 +732,6 @@ mod tests {
                 .bind(0)
                 .semi_colon(14)
                 .build()
-        );
-    }
-
-    #[test]
-    fn basic_block() {
-        let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
-
-        assert_eq!(
-            exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
-            Expression::Block(
-                &e.block(e.var(29, 4))
-                    .range(0, 35)
-                    .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
-                    .build()
-            )
         );
     }
 
@@ -837,6 +835,39 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"'1 + 2'"),
             e.literal(0, 7).push_text(1, 5).string().build()
+        );
+    }
+
+    #[test]
+    fn block_basic() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+
+        assert_eq!(
+            exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
+            Expression::Block(
+                &e.block(e.var(29, 4))
+                    .range(0, 35)
+                    .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
+                    .build()
+            )
+        );
+    }
+
+    #[test]
+    fn block_return() {
+        let global_arena = mem::Arena::new();
+        let syn = Factory::new(&global_arena);
+        let (e, s) = (syn.expr(), syn.stmt());
+
+        assert_eq!(
+            exprit(&global_arena, b"{ :return 1; }"),
+            Expression::Block(
+                &e.block_div()
+                    .push_stmt(s.ret().expr(e.int(10, 1)).build())
+                    .build()
+            )
         );
     }
 

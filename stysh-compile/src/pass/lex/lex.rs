@@ -267,6 +267,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":or" => Kind::KeywordOr,
             b":rec" => Kind::KeywordRec,
             b":set" => Kind::KeywordSet,
+            b":return" => Kind::KeywordReturn,
             b":var" => Kind::KeywordVar,
             b":xor" => Kind::KeywordXor,
             _ => panic!("parse_colon not implemented for {}", tok),
@@ -676,7 +677,7 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         let keywords =
-            b":and :else :enum :fun :if :loop :not :or :rec :set :var :xor";
+            b":and :else :enum :fun :if :loop :not :or :rec :return :set :var :xor";
         assert_eq!(
             lexit(&global_arena, keywords),
             &[
@@ -690,9 +691,10 @@ mod tests {
                     Token::new(Kind::KeywordNot, 32, 4),
                     Token::new(Kind::KeywordOr, 37, 3),
                     Token::new(Kind::KeywordRec, 41, 4),
-                    Token::new(Kind::KeywordSet, 46, 4),
-                    Token::new(Kind::KeywordVar, 51, 4),
-                    Token::new(Kind::KeywordXor, 56, 4),
+                    Token::new(Kind::KeywordReturn, 46, 7),
+                    Token::new(Kind::KeywordSet, 54, 4),
+                    Token::new(Kind::KeywordVar, 59, 4),
+                    Token::new(Kind::KeywordXor, 64, 4),
                 ]),
             ]
         );

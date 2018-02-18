@@ -68,6 +68,8 @@ pub enum Kind {
     KeywordRec,
     /// The :set keyword.
     KeywordSet,
+    /// The :return keyword.
+    KeywordReturn,
     /// The :var keyword.
     KeywordVar,
     /// The :xor keyword.

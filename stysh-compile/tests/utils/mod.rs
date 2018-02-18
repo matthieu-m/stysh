@@ -186,10 +186,16 @@ fn create_cfg_from_value<'g>(
 )
     -> sir::ControlFlowGraph<'g>
 {
+    use stysh_compile::pass::sem::GlobalValueNumberer;
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result = GraphBuilder::new(global_arena, local_arena, registry)
-        .from_value(value);
+    let value =
+        GlobalValueNumberer::new(global_arena, local_arena)
+            .number_value(value);
+
+    let result =
+        GraphBuilder::new(global_arena, local_arena, registry)
+            .from_value(&value);
     local_arena.recycle();
 
     result
@@ -203,11 +209,16 @@ fn create_cfg_from_function<'g>(
 )
     -> sir::ControlFlowGraph<'g>
 {
+    use stysh_compile::pass::sem::GlobalValueNumberer;
     use stysh_compile::pass::ssa::GraphBuilder;
+
+    let fun =
+        GlobalValueNumberer::new(global_arena, local_arena)
+            .number_function(fun);
 
     let result =
         GraphBuilder::new(global_arena, local_arena, registry)
-            .from_function(fun);
+            .from_function(&fun);
     local_arena.recycle();
 
     result

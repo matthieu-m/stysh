@@ -2,7 +2,7 @@
 
 use std::convert;
 
-use basic::{com, mem};
+use basic::mem;
 use model::{sem, sir};
 
 //  A sir::BasicBlock in the process of being constructed.
@@ -39,11 +39,13 @@ pub struct ProtoJump<'g, 'local>
     pub arguments: mem::Array<'local, (sir::ValueId, sem::Type<'g>)>,
 }
 
-//  Use the offset at which the block starts.
+//  Also known as Global Value Number.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BlockId(pub u32);
 
-//  Use the offset at which the binding is declared.
+//  Also known as Global Value Number.
+//
+//  Note:   For a function argument, the GVN is the index of the argument + 1.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BindingId(pub u32);
 
@@ -186,11 +188,18 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         self.bindings.push((binding, id, type_));
     }
 
-    pub fn push_instr(&mut self, instr: sir::Instruction<'g>) {
+    pub fn push_instr(&mut self, b: BindingId, ins: sir::Instruction<'g>) {
+        let id = self.push_immediate(ins);
+        self.bindings.push((b, id, ins.result_type()));
+    }
+
+    pub fn push_immediate(&mut self, ins: sir::Instruction<'g>)
+        -> sir::ValueId
+    {
         let id = sir::ValueId::new_instruction(self.instructions.len());
-        self.instructions.push(instr);
+        self.instructions.push(ins);
         self.last_value = None;
-        self.bindings.push((instr.range().into(), id, instr.result_type()));
+        id
     }
 }
 
@@ -273,21 +282,15 @@ impl<'g, 'local> ProtoJump<'g, 'local>
     }
 }
 
-impl convert::From<com::Range> for BlockId {
-    fn from(range: com::Range) -> BlockId {
-        BlockId(range.offset() as u32)
+impl convert::From<sem::Gvn> for BlockId {
+    fn from(gvn: sem::Gvn) -> BlockId {
+        BlockId(gvn.0)
     }
 }
 
-impl convert::From<com::Range> for BindingId {
-    fn from(range: com::Range) -> BindingId {
-        BindingId(range.offset() as u32)
-    }
-}
-
-impl convert::From<sem::ValueIdentifier> for BindingId {
-    fn from(value: sem::ValueIdentifier) -> BindingId {
-        value.0.into()
+impl convert::From<sem::Gvn> for BindingId {
+    fn from(gvn: sem::Gvn) -> BindingId {
+        BindingId(gvn.0)
     }
 }
 

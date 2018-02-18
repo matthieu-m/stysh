@@ -49,7 +49,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         imp.from_value(
-            ProtoBlock::new(expr.range.into(), self.local_arena),
+            ProtoBlock::new(expr.gvn.into(), self.local_arena),
             expr
         );
 
@@ -66,15 +66,15 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         for &a in fun.prototype.arguments {
-            if let sem::Binding::Argument(value, _, type_, _) = a {
-                arguments.push((value.0.into(), type_));
+            if let sem::Binding::Argument(_, gvn, type_, _) = a {
+                arguments.push((gvn.into(), type_));
                 continue;
             }
             panic!("All arguments should be of type Binding::Argument");
         }
 
         let mut first = ProtoBlock::new(
-            fun.body.range.into(),
+            fun.body.gvn.into(),
             self.local_arena
         );
         first.arguments = arguments;
@@ -164,28 +164,29 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         -> ProtoBlock<'g, 'local>
     {
         let r = value.range;
+        let gvn = value.gvn;
 
         match value.expr {
-            sem::Expr::ArgumentRef(id, _)
-                => self.convert_identifier(current, id),
+            sem::Expr::ArgumentRef(_, gvn)
+                => self.convert_identifier(current, gvn),
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
             sem::Expr::BuiltinVal(val)
-                => self.convert_literal(current, val, r),
+                => self.convert_literal(current, val, gvn, r),
             sem::Expr::Call(callable, args)
-                => self.convert_call(current, callable, args, r),
+                => self.convert_call(current, callable, args, gvn, r),
             sem::Expr::Constructor(c)
-                => self.convert_constructor(current, c.type_, c.arguments, r),
+                => self.convert_constructor(current, c.type_, c.arguments, gvn, r),
             sem::Expr::FieldAccess(v, i)
                 => self.convert_field_access(current, value.type_, v, i, r),
             sem::Expr::If(cond, true_, false_)
-                => self.convert_if(current, cond, true_, false_, r),
+                => self.convert_if(current, cond, true_, false_, gvn),
             sem::Expr::Loop(stmts)
-                => self.convert_loop(current, stmts, r),
+                => self.convert_loop(current, stmts, gvn),
             sem::Expr::Tuple(tuple)
-                => self.convert_tuple(current, value.type_, tuple, r),
-            sem::Expr::VariableRef(id, _)
-                => self.convert_identifier(current, id),
+                => self.convert_tuple(current, value.type_, tuple, gvn, r),
+            sem::Expr::VariableRef(_, gvn)
+                => self.convert_identifier(current, gvn),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
     }
@@ -208,6 +209,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         current: ProtoBlock<'g, 'local>,
         callable: sem::Callable<'g>,
         args: &[sem::Value<'g>],
+        gvn: sem::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -221,6 +223,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                     current,
                     b,
                     args,
+                    gvn,
                     range
                 ),
                 _ => (),
@@ -230,7 +233,10 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let (mut current, arguments) =
             self.convert_array_of_values(current, args);
 
-        current.push_instr(sir::Instruction::Call(callable, arguments, range));
+        current.push_instr(
+            gvn.into(),
+            sir::Instruction::Call(callable, arguments, range)
+        );
 
         current
     }
@@ -240,6 +246,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         current: ProtoBlock<'g, 'local>,
         fun: sem::BuiltinFunction,
         args: &[sem::Value<'g>],
+        gvn: sem::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -256,14 +263,14 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 &args[0],
                 Some(&args[1]),
                 None,
-                range
+                gvn
             ),
             Or => self.convert_if_impl(
                 current,
                 &args[0],
                 None,
                 Some(&args[1]),
-                range
+                gvn
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
         }
@@ -274,6 +281,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         current: ProtoBlock<'g, 'local>,
         rec: sem::RecordProto,
         args: &[sem::Value<'g>],
+        gvn: sem::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -282,6 +290,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             self.convert_array_of_values(current, args);
 
         current.push_instr(
+            gvn.into(),
             sir::Instruction::New(sem::Type::Rec(rec), arguments, range)
         );
 
@@ -302,6 +311,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let value_id = current.last_value();
 
         current.push_instr(
+            value.gvn.into(),
             sir::Instruction::Field(type_, value_id, field, range)
         );
 
@@ -311,11 +321,11 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_identifier(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        value: sem::ValueIdentifier,
+        gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
-        current.last_value = Some(current.bind(value.into()).0);
+        current.last_value = Some(current.bind(gvn.into()).0);
         current
     }
 
@@ -325,7 +335,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         condition: &sem::Value<'g>,
         true_: &sem::Value<'g>,
         false_: &sem::Value<'g>,
-        range: com::Range,
+        gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -334,7 +344,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             condition,
             Some(true_),
             Some(false_),
-            range
+            gvn
         )
     }
 
@@ -344,7 +354,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         condition: &sem::Value<'g>,
         true_: Option<&sem::Value<'g>>,
         false_: Option<&sem::Value<'g>>,
-        range: com::Range,
+        gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -370,12 +380,18 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             imp.blocks.push(RefCell::new(block));
         }
 
-        let if_id: BlockId = range.into();
-        let true_id: Option<BlockId> = true_.map(|t| t.range.into());
-        let false_id: Option<BlockId> = false_.map(|f| f.range.into());
+        let if_id: BlockId = gvn.into();
+        let true_id: Option<BlockId> = true_.map(|t| t.gvn.into());
+        let false_id: Option<BlockId> = false_.map(|f| f.gvn.into());
 
         current = self.convert_value(current, condition);
         let current_id = current.id;
+
+        if true_.is_none() || false_.is_none() {
+            let last_value = current.last_value();
+            let type_ = sem::Type::Builtin(sem::BuiltinType::Bool);
+            current.bindings.push((BindingId(if_id.0), last_value, type_));
+        }
 
         current.exit = ProtoTerminator::Branch(
             current.last_value(),
@@ -413,11 +429,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
         val: sem::BuiltinValue<'g>,
+        gvn: sem::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
     {
-        current.push_instr(sir::Instruction::Load(val, range));
+        current.push_instr(gvn.into(), sir::Instruction::Load(val, range));
         current
     }
 
@@ -425,12 +442,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
         stmts: &[sem::Stmt<'g>],
-        range: com::Range,
+        gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
         let current_id = current.id;
-        let head_id: BlockId = range.into();
+        let head_id: BlockId = gvn.into();
 
         current.exit = ProtoTerminator::Jump(self.jump(head_id));
         self.blocks.push(RefCell::new(current));
@@ -464,8 +481,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         let (patterns, types) = match pattern {
             Ignored(_) => { return current; },
-            Var(var, _) => {
-                current.push_binding(var.0.into(), matched, type_);
+            Var(_, gvn) => {
+                current.push_binding(gvn.into(), matched, type_);
                 return current;
             },
             Constructor(pattern) => (
@@ -482,10 +499,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         for (index, (p, t)) in patterns.iter().zip(types.iter()).enumerate() {
             let i = index as u16;
-            current.push_instr(
-                sir::Instruction::Field(*t, matched, i, p.range())
+            let id = current.push_immediate(
+                sir::Instruction::Field(*t, matched, i, p.range()),
             );
-            let id = current.last_value();
             current = self.convert_pattern(current, id, *p, *t);
         }
 
@@ -544,9 +560,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         )
             -> ProtoBlock<'g, 'local>
         {
-            if let sem::Expr::VariableRef(n, _) = left.expr {
+            if let sem::Expr::VariableRef(_, gvn) = left.expr {
                 let id = current.last_value();
-                current.push_rebinding(n.0.into(), id, left.type_);
+                current.push_rebinding(gvn.into(), id, left.type_);
                 return current;
             }
 
@@ -572,23 +588,26 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 if i == index {
                     args.push(id);
                 } else {
-                    current.push_instr(sir::Instruction::Field(
+                    let id = current.push_immediate(sir::Instruction::Field(
                         fields[i as usize],
                         tuple_id,
                         i,
                         value.range
                     ));
-                    args.push(current.last_value());
+                    args.push(id);
                 }
             }
 
             //  Construct a new tuple, identical to the former except for the
             //  one new field.
-            current.push_instr(sir::Instruction::New(
-                value.type_,
-                args.into_slice(),
-                value.range,
-            ));
+            current.push_instr(
+                left.gvn.into(),
+                sir::Instruction::New(
+                    value.type_,
+                    args.into_slice(),
+                    value.range,
+                ),
+            );
 
             recurse(me, current, &value)
         }
@@ -603,6 +622,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         current: ProtoBlock<'g, 'local>,
         type_: sem::Type<'g>,
         tuple: sem::Tuple<'g, sem::Value<'g>>,
+        gvn: sem::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -610,7 +630,10 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let (mut current, arguments) =
             self.convert_array_of_values(current, tuple.fields);
 
-        current.push_instr(sir::Instruction::New(type_, arguments, range));
+        current.push_instr(
+            gvn.into(),
+            sir::Instruction::New(type_, arguments, range)
+        );
 
         current
     }
@@ -662,9 +685,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
     fn binding_of(value: &sem::Value) -> BindingId {
         match value.expr {
-            sem::Expr::ArgumentRef(a, _) => a.into(),
-            sem::Expr::VariableRef(v, _) => v.into(),
-            _ => value.range.into()
+            sem::Expr::ArgumentRef(_, gvn) => gvn.into(),
+            sem::Expr::VariableRef(_, gvn) => gvn.into(),
+            _ => value.gvn.into()
         }
     }
 
@@ -1328,18 +1351,32 @@ mod tests {
         }
 
         fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {
+            use pass::sem::GlobalValueNumberer;
+
             let mut local_arena = mem::Arena::new();
 
-            let result = self.builder(&local_arena).from_function(fun);
+            let fun =
+                GlobalValueNumberer::new(self.global_arena, &local_arena)
+                    .number_function(fun);
+            println!("{:?}", fun);
+
+            let result = self.builder(&local_arena).from_function(&fun);
             local_arena.recycle();
 
             result
         }
 
         fn valueit(&self, expr: &Value<'g>) -> ControlFlowGraph<'g> {
+            use pass::sem::GlobalValueNumberer;
+
             let mut local_arena = mem::Arena::new();
 
-            let result = self.builder(&local_arena).from_value(expr);
+            let expr =
+                GlobalValueNumberer::new(self.global_arena, &local_arena)
+                    .number_value(expr);
+            println!("{:?}", expr);
+
+            let result = self.builder(&local_arena).from_value(&expr);
             local_arena.recycle();
 
             result

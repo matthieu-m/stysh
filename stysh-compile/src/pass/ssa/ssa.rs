@@ -274,19 +274,21 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         debug_assert!(args.len() == 2, "Too many arguments: {:?}", args);
 
+        let r = args[0].range;
+
         match fun {
             And => self.convert_if_impl(
                 current,
                 &args[0],
-                Some(&args[1]),
-                None,
+                &args[1],
+                &sem::Value::bool_(false).with_range(r.offset(), r.length()),
                 gvn
             ),
             Or => self.convert_if_impl(
                 current,
                 &args[0],
-                None,
-                Some(&args[1]),
+                &sem::Value::bool_(true).with_range(r.offset(), r.length()),
+                &args[1],
                 gvn
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
@@ -359,8 +361,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         self.convert_if_impl(
             current,
             condition,
-            Some(true_),
-            Some(false_),
+            true_,
+            false_,
             gvn
         )
     }
@@ -369,8 +371,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
         condition: &sem::Value<'g>,
-        true_: Option<&sem::Value<'g>>,
-        false_: Option<&sem::Value<'g>>,
+        true_: &sem::Value<'g>,
+        false_: &sem::Value<'g>,
         gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
@@ -399,24 +401,18 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         }
 
         let if_id: BlockId = gvn.into();
-        let true_id: Option<BlockId> = true_.map(|t| t.gvn.into());
-        let false_id: Option<BlockId> = false_.map(|f| f.gvn.into());
+        let true_id: BlockId = true_.gvn.into();
+        let false_id: BlockId = false_.gvn.into();
 
         current = self.convert_value(current, condition).expect("!Void");
         let current_id = current.id;
-
-        if true_.is_none() || false_.is_none() {
-            let last_value = current.last_value();
-            let type_ = sem::Type::bool_();
-            current.bindings.push((BindingId(if_id.0), last_value, type_));
-        }
 
         current.exit = ProtoTerminator::Branch(
             current.last_value(),
             mem::Array::from_slice(
                 &[
-                    ProtoJump::new(true_id.unwrap_or(if_id), self.local_arena),
-                    ProtoJump::new(false_id.unwrap_or(if_id), self.local_arena),
+                    ProtoJump::new(true_id, self.local_arena),
+                    ProtoJump::new(false_id, self.local_arena),
                 ],
                 self.local_arena
             ),
@@ -424,22 +420,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         self.blocks.push(RefCell::new(current));
 
-        if let Some(true_) = true_ {
-            create_branch(self, current_id, if_id, true_id.unwrap(), true_);
-        }
-        if let Some(false_) = false_ {
-            create_branch(self, current_id, if_id, false_id.unwrap(), false_);
-        }
-
-        let either_branch =
-            true_.unwrap_or_else(|| false_.expect("One branch shall be valid"));
+        create_branch(self, current_id, if_id, true_id, true_);
+        create_branch(self, current_id, if_id, false_id, false_);
 
         let mut result = ProtoBlock::new(if_id, self.local_arena);
-        result.arguments.push((BindingId(if_id.0), either_branch.type_));
-        result.predecessors.extend(&[
-            true_id.unwrap_or(current_id),
-            false_id.unwrap_or(current_id),
-        ]);
+        result.arguments.push((BindingId(if_id.0), true_.type_));
+        result.predecessors.extend(&[ true_id, false_id ]);
         result
     }
 
@@ -1224,13 +1210,17 @@ mod tests {
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
-                "    branch $0 in [0 => <1> (@1, @2), 1 => <2> ($0)]",
+                "    branch $0 in [0 => <1> (@1, @2), 1 => <2> ()]",
                 "",
                 "1 (Int, Int):",
                 "    $0 := __lt__(@0, @1) ; 5@54",
-                "    jump <2> ($0)",
+                "    jump <3> ($0)",
                 "",
-                "2 (Bool):",
+                "2 ():",
+                "    $0 := load false ; 6@42",
+                "    jump <3> ($0)",
+                "",
+                "3 (Bool):",
                 "    return @0",
                 ""
             ])
@@ -1242,13 +1232,17 @@ mod tests {
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
-                "    branch $0 in [0 => <2> ($0), 1 => <1> (@1, @2)]",
+                "    branch $0 in [0 => <1> (), 1 => <2> (@1, @2)]",
                 "",
-                "1 (Int, Int):",
+                "1 ():",
+                "    $0 := load true ; 6@42",
+                "    jump <3> ($0)",
+                "",
+                "2 (Int, Int):",
                 "    $0 := __lt__(@0, @1) ; 5@54",
-                "    jump <2> ($0)",
+                "    jump <3> ($0)",
                 "",
-                "2 (Bool):",
+                "3 (Bool):",
                 "    return @0",
                 ""
             ])

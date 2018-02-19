@@ -336,6 +336,14 @@ pub struct ValueIdentifier(pub com::Range);
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Gvn(pub u32);
 
+impl Expr<'static> {
+    /// Returns a builtin Bool expr.
+    pub fn bool_(b: bool) -> Self { Expr::BuiltinVal(BuiltinValue::Bool(b)) }
+
+    /// Returns a builtin Int expr.
+    pub fn int(i: i64) -> Self { Expr::BuiltinVal(BuiltinValue::Int(i)) }
+}
+
 impl<'a> Stmt<'a> {
     /// Range spanned by the statement.
     pub fn range(&self) -> com::Range {
@@ -435,6 +443,26 @@ impl<'a> Value<'a> {
 }
 
 impl Value<'static> {
+    /// Returns a Bool Value.
+    pub fn bool_(b: bool) -> Self {
+        Value {
+            type_: Type::bool_(),
+            range: Default::default(),
+            expr: Expr::bool_(b),
+            gvn: Default::default(),
+        }
+    }
+
+    /// Returns an Int Value.
+    pub fn int(i: i64) -> Self {
+        Value {
+            type_: Type::int(),
+            range: Default::default(),
+            expr: Expr::int(i),
+            gvn: Default::default(),
+        }
+    }
+
     /// Returns a unit value.
     pub fn unit() -> Self {
         Value {

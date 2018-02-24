@@ -161,6 +161,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
+        let t = value.type_;
         let r = value.range;
         let gvn = value.gvn;
 
@@ -184,7 +185,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             sem::Expr::FieldAccess(v, i)
                 => Some(self.convert_field_access(current, value.type_, v, i, r)),
             sem::Expr::If(cond, true_, false_)
-                => Some(self.convert_if(current, cond, true_, false_, gvn)),
+                => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
             sem::Expr::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
             sem::Expr::Tuple(tuple)
@@ -282,6 +283,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 &args[0],
                 &args[1],
                 &sem::Value::bool_(false).with_range(r.offset(), r.length()),
+                sem::Type::bool_(),
                 gvn
             ),
             Or => self.convert_if_impl(
@@ -289,6 +291,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 &args[0],
                 &sem::Value::bool_(true).with_range(r.offset(), r.length()),
                 &args[1],
+                sem::Type::bool_(),
                 gvn
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
@@ -354,6 +357,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         condition: &sem::Value<'g>,
         true_: &sem::Value<'g>,
         false_: &sem::Value<'g>,
+        type_: sem::Type<'g>,
         gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
@@ -363,6 +367,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             condition,
             true_,
             false_,
+            type_,
             gvn
         )
     }
@@ -373,6 +378,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         condition: &sem::Value<'g>,
         true_: &sem::Value<'g>,
         false_: &sem::Value<'g>,
+        type_: sem::Type<'g>,
         gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
@@ -382,13 +388,15 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
-            value: &sem::Value<'g>,
+            value: &sem::Value<'g>
         )
+            -> Option<BlockId>
         {
             let mut block = ProtoBlock::new(branch_id, imp.local_arena);
             block.predecessors.push(pred_id);
 
-            block = imp.convert_value(block, value).expect("!Void");
+            block = imp.convert_value(block, value)?;
+
             let id = BindingId(if_id.0);
             let last_value = block.last_value();
             block.bindings.push((id, last_value, value.type_));
@@ -398,6 +406,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             );
 
             imp.blocks.push(RefCell::new(block));
+
+            Some(branch_id)
         }
 
         let if_id: BlockId = gvn.into();
@@ -420,12 +430,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         self.blocks.push(RefCell::new(current));
 
-        create_branch(self, current_id, if_id, true_id, true_);
-        create_branch(self, current_id, if_id, false_id, false_);
-
         let mut result = ProtoBlock::new(if_id, self.local_arena);
-        result.arguments.push((BindingId(if_id.0), true_.type_));
-        result.predecessors.extend(&[ true_id, false_id ]);
+        result.arguments.push((BindingId(if_id.0), type_));
+
+        if let Some(id) = create_branch(self, current_id, if_id, true_id, true_) {
+            result.predecessors.push(id);
+        }
+        if let Some(id) = create_branch(self, current_id, if_id, false_id, false_) {
+            result.predecessors.push(id);
+        }
+
         result
     }
 
@@ -1243,6 +1257,41 @@ mod tests {
                 "    jump <3> ($0)",
                 "",
                 "3 (Bool):",
+                "    return @0",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn if_return() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
+
+        //  ":if true { :return 1; } :else { 2 }"
+        let if_ = v.if_(
+            v.bool_(true, 4),
+            v.block_div().push(s.ret(v.int(1, 19))).build(),
+            v.block(v.int(2, 32)).build(),
+        ).build();
+
+        assert_eq!(
+            env.valueit(&if_).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load true ; 4@4",
+                "    branch $0 in [0 => <1> (), 1 => <2> ()]",
+                "",
+                "1 ():",
+                "    $0 := load 1 ; 1@19",
+                "    return $0",
+                "",
+                "2 ():",
+                "    $0 := load 2 ; 1@32",
+                "    jump <0> ($0)",
+                "",
+                "3 (Int):",
                 "    return @0",
                 ""
             ])

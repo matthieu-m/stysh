@@ -408,7 +408,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let mut true_branch = self.value_of_block(&if_else.true_expr);
         let mut false_branch = self.value_of_block(&if_else.false_expr);
 
-        if true_branch.type_ != false_branch.type_ {
+        let result = if true_branch.type_ != false_branch.type_ {
             let common = self.common_type(
                 &[true_branch.type_, false_branch.type_]
             );
@@ -417,10 +417,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 true_branch = self.implicit_cast(true_branch, common);
                 false_branch = self.implicit_cast(false_branch, common);
             }
-        }
+
+            common
+        } else {
+            Some(true_branch.type_)
+        };
 
         sem::Value {
-            type_: true_branch.type_,
+            type_: result.unwrap_or(sem::Type::unresolved()),
             range: if_else.range(),
             expr: sem::Expr::If(
                 self.global_arena.insert(condition),
@@ -598,9 +602,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn common_type(&self, types: &[sem::Type<'g>]) -> Option<sem::Type<'g>> {
-        let original = types[0];
-
-        types[1..].iter().fold(Some(original), |acc, current| {
+        types.iter().fold(Some(sem::Type::void()), |acc, current| {
             self.common_type_impl(acc?, *current)
         })
     }
@@ -628,16 +630,17 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             None
         }
 
-        if left == right {
+        if left == right || left == sem::Type::void() {
+            return Some(right);
+        }
+        if right == sem::Type::void() {
             return Some(left);
         }
 
-        if let Type::Rec(left) = left {
-            if let Type::Rec(right) = right {
-                if left.enum_ == right.enum_ {
-                    if let Some(e) = self.registry.lookup_enum(left.enum_) {
-                        return Some(Type::Enum(*e.prototype));
-                    }
+        if let (Type::Rec(left), Type::Rec(right)) = (left, right) {
+            if left.enum_ == right.enum_ {
+                if let Some(e) = self.registry.lookup_enum(left.enum_) {
+                    return Some(Type::Enum(*e.prototype));
                 }
             }
         }
@@ -656,9 +659,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     {
         use model::sem::Type::*;
 
+        if original.type_ == target || original.type_ == sem::Type::void() {
+            return original;
+        }
+
         match target {
             Enum(e) => self.implicit_to_enum(original, e),
-            _ => unimplemented!("Conversion to {:?}", target),
+            _ => unimplemented!("Conversion to {:?} of {:?}", target, original),
         }
     }
 
@@ -1070,6 +1077,113 @@ mod tests {
         };
 
         assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+    }
+
+    #[test]
+    fn value_return_if_and_else() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(
+            b":if true { :return 1; } :else { :return 2; }",
+            &global_arena
+        );
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, s) = (f.expr(), f.stmt());
+
+            e.if_else(
+                e.bool_(4, 4),
+                e.block_div()
+                    .push_stmt(s.ret().expr(e.int(19, 1)).build())
+                    .build(),
+                e.block_div()
+                    .push_stmt(s.ret().expr(e.int(40, 1)).build())
+                    .build(),
+            ).build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (s, v) = (f.stmt(), f.value());
+
+            v.if_(
+                v.bool_(true, 4),
+                v.block_div().push(s.ret(v.int(1, 19))).build(),
+                v.block_div().push(s.ret(v.int(2, 40))).build(),
+            ).build()
+        };
+
+        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+    }
+
+    #[test]
+    fn value_return_else() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(
+            b":if true { 1 } :else { :return 2; }",
+            &global_arena
+        );
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, s) = (f.expr(), f.stmt());
+
+            e.if_else(
+                e.bool_(4, 4),
+                e.block(e.int(11, 1)).build(),
+                e.block_div()
+                    .push_stmt(s.ret().expr(e.int(31, 1)).build())
+                    .build(),
+            ).build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (s, v) = (f.stmt(), f.value());
+
+            v.if_(
+                v.bool_(true, 4),
+                v.block(v.int(1, 11)).build(),
+                v.block_div().push(s.ret(v.int(2, 31))).build(),
+            ).build()
+        };
+
+        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+    }
+
+    #[test]
+    fn value_return_if() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(
+            b":if true { :return 1; } :else { 2 }",
+            &global_arena
+        );
+
+        let syn = {
+            let f = SynFactory::new(&global_arena);
+            let (e, s) = (f.expr(), f.stmt());
+
+            e.if_else(
+                e.bool_(4, 4),
+                e.block_div()
+                    .push_stmt(s.ret().expr(e.int(19, 1)).build())
+                    .build(),
+                e.block(e.int(32, 1)).build(),
+            ).build()
+        };
+
+        let sem = {
+            let f = SemFactory::new(&global_arena);
+            let (s, v) = (f.stmt(), f.value());
+
+            v.if_(
+                v.bool_(true, 4),
+                v.block_div().push(s.ret(v.int(1, 19))).build(),
+                v.block(v.int(2, 32)).build(),
+            ).build()
+        };
+
+        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
     }
 
     #[test]

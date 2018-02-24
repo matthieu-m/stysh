@@ -912,9 +912,14 @@ impl<'a> IfBuilder<'a> {
         let off = self.condition.range.offset() - 4;
         let end = self.false_.range.end_offset();
 
+        let true_ = self.true_.type_;
+        let false_ = self.false_.type_;
+
         let type_ = self.type_.unwrap_or_else(|| {
-            if self.true_.type_ == self.false_.type_ {
-                self.true_.type_
+            if true_ == false_ || false_ == Type::void() {
+                true_
+            } else if true_ == Type::void() {
+                false_
             } else {
                 Type::unresolved()
             }

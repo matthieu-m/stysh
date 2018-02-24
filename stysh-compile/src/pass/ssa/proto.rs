@@ -94,57 +94,65 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         }
     }
 
-    pub fn bind(&mut self, binding: BindingId)
-        -> (sir::ValueId, sem::Type<'g>)
+    pub fn bind(&mut self, binding: BindingId, type_: sem::Type<'g>)
+        -> sir::ValueId
     {
-        let unresolved = sem::Type::unresolved();
-
-        for &(id, value, type_) in &self.bindings {
+        for &(id, value, _) in &self.bindings {
             if id == binding {
-                return (value, type_);
+                return value;
             }
         }
 
         for (index, a) in self.arguments.iter().enumerate() {
             if a.0 == binding {
-                return (sir::ValueId::new_argument(index), a.1);
+                return sir::ValueId::new_argument(index);
             }
         }
 
-        self.arguments.push((binding, unresolved));
+        self.arguments.push((binding, type_));
 
-        (sir::ValueId::new_argument(self.arguments.len() - 1), unresolved)
+        sir::ValueId::new_argument(self.arguments.len() - 1)
     }
 
-    pub fn bind_successor(&mut self, id: BlockId, bindings: &[BindingId]) {
+    /// Returns the number of arguments it bound.
+    pub fn bind_successor(
+        &mut self,
+        id: BlockId,
+        bindings: &[(BindingId, sem::Type<'g>)],
+    )
+        -> usize
+    {
+        let result = {
+            let jump = self.get_jump_mut(id);
+            debug_assert!(jump.dest == id);
+
+            if jump.arguments.len() == bindings.len() {
+                return 0;
+            } else {
+                bindings.len() - jump.arguments.len()
+            }
+        };
+
         let mut arguments =
             mem::Array::with_capacity(bindings.len(), self.arguments.arena());
 
-        for b in bindings {
-            arguments.push(self.bind(*b));
+        for &(b, t) in bindings {
+            arguments.push((self.bind(b, t), t));
         }
 
         let jump = self.get_jump_mut(id);
+        debug_assert!(jump.dest == id);
 
-        assert_eq!(jump.dest, id);
         jump.arguments = arguments;
+        result
     }
 
-    pub fn set_arguments_types(&mut self, jump: &ProtoJump<'g, 'local>) {
-        debug_assert!(
-            self.arguments.len() == jump.arguments.len(),
-            "{:?} != {:?}", self.arguments, jump.arguments
-        );
+    /// Returns the number of arguments it bound.
+    pub fn bind_self_successor(&mut self) -> usize {
+        let id = self.id;
+        let arguments = self.arguments.clone();
 
-        let unresolved = sem::Type::unresolved();
-
-        for (a, j) in self.arguments.iter_mut().zip(jump.arguments.iter()) {
-            if a.1 != unresolved {
-                debug_assert!(a.1 == j.1, "{:?} != {:?}", a, j);
-            } else {
-                a.1 = j.1;
-            }
-        }
+        self.bind_successor(id, arguments.as_slice())
     }
 
     pub fn push_binding(

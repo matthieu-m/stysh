@@ -167,7 +167,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         match value.expr {
             sem::Expr::ArgumentRef(_, gvn)
-                => Some(self.convert_identifier(current, gvn)),
+                => Some(self.convert_identifier(current, t, gvn)),
             sem::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
             sem::Expr::BuiltinVal(val)
@@ -191,7 +191,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             sem::Expr::Tuple(tuple)
                 => Some(self.convert_tuple(current, value.type_, tuple, gvn, r)),
             sem::Expr::VariableRef(_, gvn)
-                => Some(self.convert_identifier(current, gvn)),
+                => Some(self.convert_identifier(current, t, gvn)),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
     }
@@ -343,11 +343,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_identifier(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
+        type_: sem::Type<'g>,
         gvn: sem::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
-        current.last_value = Some(current.bind(gvn.into()).0);
+        current.last_value = Some(current.bind(gvn.into(), type_));
         current
     }
 
@@ -580,10 +581,14 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         )
             -> ProtoBlock<'g, 'local>
         {
-            if let sem::Expr::VariableRef(_, gvn) = left.expr {
-                let id = current.last_value();
-                current.push_rebinding(gvn.into(), id, left.type_);
-                return current;
+            match left.expr {
+                sem::Expr::ArgumentRef(_, gvn) |
+                    sem::Expr::VariableRef(_, gvn) => {
+                    let id = current.last_value();
+                    current.push_rebinding(gvn.into(), id, left.type_);
+                    return current;
+                },
+                _ => (),
             }
 
             let (value, index) =
@@ -672,7 +677,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let mut arguments =
             mem::Array::with_capacity(values.len(), self.global_arena);
         for a in values {
-            arguments.push(current.bind(Self::binding_of(a)).0);
+            arguments.push(current.bind(Self::binding_of(a), a.type_));
         }
 
         (current, arguments.into_slice())
@@ -753,48 +758,51 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             map
         };
 
-        let mut bindings = mem::Array::new(self.local_arena);
-
         //  Ensure each predecessor forwards the correct arguments to their
-        //  successor.
-        for block in self.blocks.iter().rev() {
-            let mut block = block.borrow_mut();
+        //  successor. Beware of potential loops.
+        let mut bound = 1;
+        while bound > 0 {
+            bound = 0;
 
-            bindings.clear();
-            for &(argument, _) in block.arguments.as_slice() {
-                bindings.push(argument);
-            }
+            for block in self.blocks.iter().rev() {
+                let mut block = block.borrow_mut();
 
-            let mut self_successor = false;
-            for id in block.predecessors.as_slice() {
-                if *id == block.id {
-                    self_successor = true;
-                    continue;
+                let mut self_successor = false;
+                for id in block.predecessors.as_slice() {
+                    if *id == block.id {
+                        self_successor = true;
+                        continue;
+                    }
+
+                    let id = map.get(id).expect("Known block!");
+                    let mut pred = self.blocks[id.index()].borrow_mut();
+                    bound += pred.bind_successor(block.id, &block.arguments);
                 }
 
-                let id = map.get(id).expect("Known block!");
-                let mut pred = self.blocks[id.index()].borrow_mut();
-                pred.bind_successor(block.id, &*bindings);
-            }
-
-            if self_successor {
-                let block_id = block.id;
-                block.bind_successor(block_id, &*bindings);
+                if self_successor {
+                    bound += block.bind_self_successor();
+                }
             }
         }
 
-        //  Propagate the types of the arguments from predecessor to successor.
+        //  Check that each jump correctly forwards the right number of
+        //  arguments.
         for block in self.blocks.iter() {
-            let mut block = block.borrow_mut();
+            let block = block.borrow();
 
-            if let Some(&pred) = block.predecessors.get(0) {
-                if block.id == pred { continue; }
-
-                let pred = map.get(&pred).expect("Known block!");
+            for pred in block.predecessors.iter() {
+                let pred = map.get(pred).expect("Known block!");
                 let pred = self.blocks[pred.index()].borrow();
-
                 let jump = pred.exit.get_jump(block.id);
-                block.set_arguments_types(jump);
+
+                debug_assert!(
+                    block.arguments.len() == jump.arguments.len(),
+                    "Mismatched jump from {:?} ({:?}) to {:?} ({:?})",
+                    pred.id,
+                    jump.arguments,
+                    block.id,
+                    block.arguments
+                );
             }
         }
 
@@ -1407,6 +1415,92 @@ mod tests {
                 "    $0 := load 1 ; 1@37",
                 "    $1 := __add__(@0, $0) ; 5@33",
                 "    jump <1> ($1)",
+                "",
+            ])
+        );
+    }
+
+    #[test]
+    fn loop_argument_forwarding() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
+        let (_, _, _, s, _, v) = env.sem();
+
+        //  "{"                                               2
+        //  "    :var n := 8;"                               19
+        //  "    :var current := 0;"                         41
+        //  "    :loop {"                                    53
+        //  "        :set n := :if n == 0 {"                 84
+        //  "            :return current;"                  113
+        //  "        } :else {"                             131
+        //  "            :set current := current + 1;"      172
+        //  "            n - 1"                             190
+        //  "        };"                                    201
+        //  "    }"                                         206
+        //  "}"                                             208
+        let (n, current) = (v.id(11, 1), v.id(27, 7));
+
+        let block = v.block(
+            v.loop_()
+                .push(s.set(
+                    v.int_ref(n, 66),
+                    v.if_(
+                        v.call()
+                            .builtin(BuiltinFunction::Equal)
+                            .push(v.int_ref(n, 75))
+                            .push(v.int(0, 80))
+                            .build(),
+                        v.block_div()
+                            .push(s.ret(v.int_ref(current, 104)))
+                            .build(),
+                        v.block(
+                            v.call()
+                                .builtin(BuiltinFunction::Substract)
+                                .push(v.int_ref(n, 184))
+                                .push(v.int(1, 188))
+                                .build()
+                        )
+                            .push(s.set(
+                                v.int_ref(current, 148),
+                                v.call()
+                                    .push(v.int_ref(current, 159))
+                                    .push(v.int(1, 169))
+                                    .build(),
+                            ))
+                            .build()
+                    ).build()
+                ))
+                .build()
+        )
+            .push(s.var_id(n, v.int(8, 16)))
+            .push(s.var_id(current, v.int(0, 38)))
+            .build();
+
+        assert_eq!(
+            env.valueit(&block).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 8 ; 1@16",
+                "    $1 := load 0 ; 1@38",
+                "    jump <1> ($0, $1)",
+                "",
+                "1 (Int, Int):",
+                "    $0 := load 0 ; 1@80",
+                "    $1 := __eq__(@0, $0) ; 6@75",
+                "    branch $1 in [0 => <2> (@1), 1 => <3> (@1, @0)]",
+                "",
+                "2 (Int):",
+                "    return @0",
+                "",
+                "3 (Int, Int):",
+                "    $0 := load 1 ; 1@169",
+                "    $1 := __add__(@0, $0) ; 11@159",
+                "    $2 := load 1 ; 1@188",
+                "    $3 := __sub__(@1, $2) ; 5@184",
+                "    jump <4> ($3, $1)",
+                "",
+                "4 (Int, Int):",
+                "    jump <1> (@0, @1)",
                 "",
             ])
         );

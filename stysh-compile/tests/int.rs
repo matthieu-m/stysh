@@ -7,7 +7,7 @@ use stysh_compile::basic::mem;
 mod utils;
 
 #[test]
-fn fibonacci() {
+fn fibonacci_recursive() {
     assert_eq!(
         interpret(
             b"
@@ -19,6 +19,32 @@ fn fibonacci() {
                 }
             }
             fib(0, 1, 8)
+            "
+        ),
+        "BuiltinVal(Int(21))"
+    )
+}
+
+#[test]
+fn fibonnacci_iterative() {
+    assert_eq!(
+        interpret(
+            b"
+            :fun fib(n: Int) -> Int {
+                :var current := 0;
+                :var next := 1;
+                :loop {
+                    :set n := :if n == 0 {
+                        :return current;
+                    } :else {
+                        :var sum := current + next;
+                        :set current := next;
+                        :set next := sum;
+                        n - 1
+                    };
+                }
+            }
+            fib(8)
             "
         ),
         "BuiltinVal(Int(21))"

@@ -536,6 +536,18 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
+        current = self.convert_value(current, &re.right).expect("!Void");
+
+        self.convert_rebind_recurse(current, &re.left)
+    }
+
+    fn convert_rebind_recurse(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        left: &sem::Value<'g>,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
         //  Rebinding is binding an existing name to a new value.
         //
         //  This means that despite the familiar syntax "a.0 := 1;" does NOT
@@ -562,7 +574,30 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         //  analysis is the job of the optimizer; here only semantics matter.
         //
         //  The following bit of code captures this reversal.
+        match left.expr {
+            sem::Expr::ArgumentRef(_, gvn) |
+                sem::Expr::VariableRef(_, gvn) => {
+                let id = current.last_value();
+                current.push_rebinding(gvn.into(), id, left.type_);
+                return current;
+            },
+            sem::Expr::FieldAccess(v, i)
+                => self.convert_rebind_recurse_field(current, v, i, left.gvn),
+            sem::Expr::Tuple(t)
+                => self.convert_rebind_recurse_tuple(current, &t),
+            _ => unimplemented!("{:?}", left),
+        }
+    }
 
+    fn convert_rebind_recurse_field(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        value: &sem::Value<'g>,
+        index: u16,
+        gvn: sem::Gvn,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
         fn extract_fields<'a, 'g>(v: &'a sem::Value<'g>)
             -> &'a [sem::Type<'g>]
         {
@@ -574,72 +609,69 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             unimplemented!("Can only access tuple fields!");
         }
 
-        fn recurse<'a, 'g, 'local>(
-            me: &mut GraphBuilderImpl<'a, 'g, 'local>,
-            mut current: ProtoBlock<'g, 'local>,
-            left: &sem::Value<'g>
-        )
-            -> ProtoBlock<'g, 'local>
-        {
-            match left.expr {
-                sem::Expr::ArgumentRef(_, gvn) |
-                    sem::Expr::VariableRef(_, gvn) => {
-                    let id = current.last_value();
-                    current.push_rebinding(gvn.into(), id, left.type_);
-                    return current;
-                },
-                _ => (),
+        let id = current.last_value();
+
+        //  Load tuple
+        current = self.convert_value(current, value).expect("!Void");
+        let tuple_id = current.last_value();
+
+        //  Load other fields
+        let fields = extract_fields(&value);
+        let mut args =
+            mem::Array::with_capacity(fields.len(), self.global_arena);
+
+        for i in 0..(fields.len() as u16) {
+            if i == index {
+                args.push(id);
+            } else {
+                let id = current.push_immediate(sir::Instruction::Field(
+                    fields[i as usize],
+                    tuple_id,
+                    i,
+                    value.range
+                ));
+                args.push(id);
             }
+        }
 
-            let (value, index) =
-                if let sem::Expr::FieldAccess(v, i) = left.expr {
-                    (v, i)
-                } else {
-                    unimplemented!("{:?}", left);
-                };
+        //  Construct a new tuple, identical to the former except for the
+        //  one new field.
+        current.push_instr(
+            gvn.into(),
+            sir::Instruction::New(
+                value.type_,
+                args.into_slice(),
+                value.range,
+            ),
+        );
 
-            let id = current.last_value();
+        self.convert_rebind_recurse(current, &value)
+    }
 
-            //  Load tuple
-            current = me.convert_value(current, value).expect("!Void");
-            let tuple_id = current.last_value();
+    fn convert_rebind_recurse_tuple(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        tuple: &sem::Tuple<'g, sem::Value<'g>>,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        let id = current.last_value();
 
-            //  Load other fields
-            let fields = extract_fields(&value);
-            let mut args =
-                mem::Array::with_capacity(fields.len(), me.global_arena);
-
-            for i in 0..(fields.len() as u16) {
-                if i == index {
-                    args.push(id);
-                } else {
-                    let id = current.push_immediate(sir::Instruction::Field(
-                        fields[i as usize],
-                        tuple_id,
-                        i,
-                        value.range
-                    ));
-                    args.push(id);
-                }
-            }
-
-            //  Construct a new tuple, identical to the former except for the
-            //  one new field.
+        for (index, field) in tuple.fields.iter().enumerate() {
             current.push_instr(
-                left.gvn.into(),
-                sir::Instruction::New(
-                    value.type_,
-                    args.into_slice(),
-                    value.range,
+                field.gvn.into(),
+                sir::Instruction::Field(
+                    field.type_,
+                    id,
+                    index as u16,
+                    field.range,
                 ),
             );
 
-            recurse(me, current, &value)
+            current = self.convert_rebind_recurse(current, field);
         }
 
-        current = self.convert_value(current, &re.right).expect("!Void");
-
-        recurse(self, current, &re.left)
+        current
     }
 
     fn convert_tuple(
@@ -1031,6 +1063,50 @@ mod tests {
                 "    $10 := new (Int, (Int, Int)) ($9, $8) ; 1@30",
                 //  a
                 "    return $10",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn block_rebinding_tuple() {
+        let global_arena = mem::Arena::new();
+        let env = Env::new(&global_arena);
+        let (_, p, _, s, _, v) = env.sem();
+
+        //  "{ :var (a, b) := (1, 2); :set (a, b) := (b, a); a }"
+        let (a, b) = (v.id(8, 1), v.id(11, 1));
+        let block =
+            v.block(v.int_ref(a, 48))
+                .push(s.var(
+                    p.tuple().push(p.var(a)).push(p.var(b)).build(),
+                    v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build(),
+                ))
+                .push(s.set(
+                    v.tuple()
+                        .push(v.int_ref(a, 31))
+                        .push(v.int_ref(b, 34))
+                        .build(),
+                    v.tuple()
+                        .push(v.int_ref(b, 41))
+                        .push(v.int_ref(a, 44))
+                        .build(),
+                ))
+                .build();
+
+        assert_eq!(
+            env.valueit(&block).to_string(),
+            cat(&[
+                "0 ():",
+                "    $0 := load 1 ; 1@18",
+                "    $1 := load 2 ; 1@21",
+                "    $2 := new (Int, Int) ($0, $1) ; 6@17",
+                "    $3 := field 0 of $2 ; 1@8",
+                "    $4 := field 1 of $2 ; 1@11",
+                "    $5 := new (Int, Int) ($4, $3) ; 6@40",
+                "    $6 := field 0 of $5 ; 1@31",
+                "    $7 := field 1 of $5 ; 1@34",
+                "    return $6",
                 ""
             ])
         );

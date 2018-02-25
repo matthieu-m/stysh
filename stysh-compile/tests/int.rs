@@ -31,15 +31,12 @@ fn fibonnacci_iterative() {
         interpret(
             b"
             :fun fib(n: Int) -> Int {
-                :var current := 0;
-                :var next := 1;
+                :var (current, next) := (0, 1);
                 :loop {
                     :set n := :if n == 0 {
                         :return current;
                     } :else {
-                        :var sum := current + next;
-                        :set current := next;
-                        :set next := sum;
+                        :set (current, next) := (next, current + next);
                         n - 1
                     };
                 }

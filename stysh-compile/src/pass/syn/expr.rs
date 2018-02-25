@@ -697,7 +697,7 @@ fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
 mod tests {
     use basic::mem;
     use model::syn::*;
-    use model::syn_builder::Factory;
+    use model::syn::builder::Factory;
 
     #[test]
     fn basic_add() {

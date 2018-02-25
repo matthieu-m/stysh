@@ -235,7 +235,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 mod tests {
     use basic::{com, mem};
     use model::syn;
-    use model::syn_builder::Factory as SynFactory;
+    use model::syn::builder::Factory as SynFactory;
     use model::sem_builder::Factory as SemFactory;
     use model::sem::*;
     use model::sem::mocks::MockRegistry;

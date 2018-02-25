@@ -786,7 +786,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 mod tests {
     use basic::{com, mem};
     use model::{syn, sem};
-    use model::syn_builder::Factory as SynFactory;
+    use model::syn::builder::Factory as SynFactory;
     use model::sem_builder::Factory as SemFactory;
     use super::super::scp::mocks::MockScope;
 

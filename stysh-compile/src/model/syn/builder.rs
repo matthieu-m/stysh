@@ -1237,6 +1237,7 @@ impl<'a> ReturnBuilder<'a> {
         self
     }
 
+    /// Creates a Return.
     pub fn build<T: convert::From<Return<'a>>>(&self) -> T {
         let ret = if self.ret == U32_NONE {
             self.expr.unwrap().span().offset() as u32 - 8

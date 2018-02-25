@@ -6,6 +6,4 @@ pub mod sem;
 pub mod sir;
 
 #[cfg(test)]
-pub mod syn_builder;
-#[cfg(test)]
 pub mod sem_builder;

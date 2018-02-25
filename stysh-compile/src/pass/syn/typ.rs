@@ -270,7 +270,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 mod tests {
     use basic::mem;
     use model::syn::*;
-    use model::syn_builder::Factory;
+    use model::syn::builder::Factory;
 
     #[test]
     fn enum_empty() {

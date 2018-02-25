@@ -787,7 +787,7 @@ mod tests {
     use basic::{com, mem};
     use model::{syn, sem};
     use model::syn::builder::Factory as SynFactory;
-    use model::sem_builder::Factory as SemFactory;
+    use model::sem::builder::Factory as SemFactory;
     use super::super::scp::mocks::MockScope;
 
     #[test]

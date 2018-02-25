@@ -850,7 +850,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem_builder::*;
+    use model::sem::builder::*;
     use model::sem::*;
     use model::sir::*;
 

@@ -287,7 +287,7 @@ impl<'g, 'local> Impl<'g, 'local> {
 mod tests {
     use basic::mem;
     use model::sem::*;
-    use model::sem_builder::*;
+    use model::sem::builder::*;
 
     #[test]
     fn brush() {

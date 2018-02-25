@@ -377,7 +377,7 @@ pub mod mocks {
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem_builder::Factory as SemFactory;
+    use model::sem::builder::Factory as SemFactory;
 
     use super::{Scope, BuiltinScope, FunctionScope};
 

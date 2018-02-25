@@ -2,6 +2,8 @@
 //!
 //! Function parser.
 
+use basic::com::Span;
+
 use model::syn::*;
 use model::tt;
 
@@ -35,7 +37,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             let keyword = self.pop_token(KeywordFun).unwrap();
             let name = self.pop_token(NameValue).expect("Function Name");
 
-            (keyword.offset() as u32, VariableIdentifier(name.range()))
+            (keyword.offset() as u32, VariableIdentifier(name.span()))
         };
 
         let (open, arguments, close) = {
@@ -69,8 +71,8 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             Block {
                 statements: &[],
                 expression: Some(self.raw.intern(body)),
-                open: body.range().offset() as u32,
-                close: body.range().end_offset() as u32 - 1
+                open: body.span().offset() as u32,
+                close: body.span().end_offset() as u32 - 1
             }
         };
 
@@ -111,10 +113,10 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 
             let comma = raw.pop_kind(SignComma)
                 .map(|t| t.offset() as u32)
-                .unwrap_or(type_.range().end_offset() as u32 - 1);
+                .unwrap_or(type_.span().end_offset() as u32 - 1);
 
             buffer.push(Argument {
-                name: VariableIdentifier(name.range()),
+                name: VariableIdentifier(name.span()),
                 type_: type_,
                 colon: colon,
                 comma: comma,

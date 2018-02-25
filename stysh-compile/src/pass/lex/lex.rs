@@ -5,6 +5,8 @@
 //! This is implemented as a stream, to avoid unnecessary memory allocation.
 
 use std::iter;
+
+use basic::com::Span;
 use basic::mem;
 
 use model::tt::*;
@@ -157,8 +159,8 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             Token::new(close_kind, tok.offset, 1)
         } else {
             let offset = inner.first().map_or(
-                open.range().end_offset(),
-                |node| node.range().end_offset()
+                open.span().end_offset(),
+                |node| node.span().end_offset()
             );
         
             Token::new(close_kind, offset, 0)

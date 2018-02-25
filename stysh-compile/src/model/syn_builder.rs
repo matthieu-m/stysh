@@ -3,6 +3,7 @@
 use std::{self, convert, marker};
 
 use basic::{com, mem};
+use basic::com::Span;
 
 use model::tt;
 use model::syn::*;
@@ -422,7 +423,7 @@ impl<'a> BinOpBuilder<'a> {
     /// Creates a BinOp Expression.
     pub fn build(&self) -> Expression<'a> {
         let pos = if self.pos == U32_NONE {
-            self.left.range().end_offset() as u32 + 1
+            self.left.span().end_offset() as u32 + 1
         } else {
             self.pos
         };
@@ -468,8 +469,8 @@ impl<'a> BlockBuilder<'a> {
     pub fn build(&self) -> Block<'a> {
         let ends =
             ends(self.statements.as_slice())
-                .map(|e| (e.0.range(), e.1.range()));
-        let expr_range = self.expr.map(|e| e.range());
+                .map(|e| (e.0.span(), e.1.span()));
+        let expr_range = self.expr.map(|e| e.span());
 
         let open = if self.open == U32_NONE {
             let range =
@@ -520,7 +521,7 @@ impl<'a> FieldAccessBuilder<'a> {
     /// Creates a FieldAccess.
     pub fn build<T: convert::From<FieldAccess<'a>>>(&self) -> T {
         let pos = if self.pos == USIZE_NONE {
-            self.accessed.range().end_offset()
+            self.accessed.span().end_offset()
         } else {
             self.pos
         };
@@ -607,13 +608,13 @@ impl<'a> IfElseBuilder<'a> {
     /// Creates a IfElse.
     pub fn build(&self) -> IfElse<'a> {
         let if_ = if self.if_ == U32_NONE {
-            self.condition.range().offset() as u32 - 4
+            self.condition.span().offset() as u32 - 4
         } else {
             self.if_
         };
 
         let else_ = if self.else_ == U32_NONE {
-            self.false_.range().offset() as u32 - 6
+            self.false_.span().offset() as u32 - 6
         } else {
             self.else_
         };
@@ -639,28 +640,28 @@ impl<'a> LiteralBuilder<'a> {
 
     /// Sets up a boolean.
     pub fn bool_(&mut self, value: bool) -> &mut Self {
-        let range = self.literal.range();
+        let range = self.literal.span();
         self.literal = Literal::Bool(value, range);
         self
     }
 
     /// Sets up bytes.
     pub fn bytes(&mut self) -> &mut Self {
-        let range = self.literal.range();
+        let range = self.literal.span();
         self.literal = Literal::Bytes(&[], range);
         self
     }
 
     /// Sets up an integral.
     pub fn integral(&mut self) -> &mut Self {
-        let range = self.literal.range();
+        let range = self.literal.span();
         self.literal = Literal::Integral(range);
         self
     }
 
     /// Sets up a string.
     pub fn string(&mut self) -> &mut Self {
-        let range = self.literal.range();
+        let range = self.literal.span();
         self.literal = Literal::String(&[], range);
         self
     }
@@ -739,7 +740,7 @@ impl<'a> LoopBuilder<'a> {
 
         let close = if self.close == U32_NONE {
             if let Some(s) = self.statements.last() {
-                s.range().end_offset() as u32 + 1
+                s.span().end_offset() as u32 + 1
             } else {
                 open + 2
             }
@@ -784,7 +785,7 @@ impl<'a> PreOpBuilder<'a> {
     /// Creates a PreOp Expression.
     pub fn build(&self) -> Expression<'a> {
         let pos = if self.pos == U32_NONE {
-            self.expr.range().offset() as u32 - 5
+            self.expr.span().offset() as u32 - 5
         } else {
             self.pos
         };
@@ -911,7 +912,7 @@ impl<'a> EnumBuilder<'a> {
             if *c != U32_NONE { continue; }
 
             let offset = if i + 1 == variants.len() { 1 } else { 0 };
-            let pos = v.range().end_offset() - offset;
+            let pos = v.span().end_offset() - offset;
 
             *c = pos as u32;
         }
@@ -1031,7 +1032,7 @@ impl<'a> FunctionBuilder<'a> {
 
             if a.comma == U32_NONE {
                 let offset = if i + 1 == self.arguments.len() { 1 } else { 0 };
-                a.comma = a.type_.range().end_offset() as u32 - offset;
+                a.comma = a.type_.span().end_offset() as u32 - offset;
             }
         }
 
@@ -1049,7 +1050,7 @@ impl<'a> FunctionBuilder<'a> {
 
         let close = if self.close == U32_NONE {
             arguments.last()
-                .map(|a| a.range().end_offset() as u32)
+                .map(|a| a.span().end_offset() as u32)
                 .unwrap_or(open + 1)
         } else {
             self.close
@@ -1125,13 +1126,13 @@ impl<'a> RecordBuilder<'a> {
     /// Creates a Record instance.
     pub fn build<T: convert::From<Record<'a>>>(&self) -> T {
         let keyword = if self.keyword == U32_NONE {
-            self.inner.range().offset() as u32 - 5
+            self.inner.span().offset() as u32 - 5
         } else {
             self.keyword
         };
 
         let semi_colon = if self.semi_colon == U32_NONE {
-            self.inner.range().end_offset() as u32
+            self.inner.span().end_offset() as u32
         } else {
             self.semi_colon
         };
@@ -1238,13 +1239,13 @@ impl<'a> ReturnBuilder<'a> {
 
     pub fn build<T: convert::From<Return<'a>>>(&self) -> T {
         let ret = if self.ret == U32_NONE {
-            self.expr.unwrap().range().offset() as u32 - 8
+            self.expr.unwrap().span().offset() as u32 - 8
         } else {
             self.ret
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.unwrap().range().end_offset() as u32
+            self.expr.unwrap().span().end_offset() as u32
         } else {
             self.semi
         };
@@ -1289,7 +1290,7 @@ impl<'a> VariableReBindingBuilder<'a> {
 
     /// Creates a VariableReBinding.
     pub fn build<T: convert::From<VariableReBinding<'a>>>(&self) -> T {
-        let range = self.left.range();
+        let range = self.left.span();
 
         let set = if self.set == U32_NONE {
             range.offset() as u32 - 5
@@ -1304,7 +1305,7 @@ impl<'a> VariableReBindingBuilder<'a> {
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.range().end_offset() as u32
+            self.expr.span().end_offset() as u32
         } else {
             self.semi
         };
@@ -1365,7 +1366,7 @@ impl<'a> VariableBindingBuilder<'a> {
 
     /// Creates a VariableBinding.
     pub fn build<T: convert::From<VariableBinding<'a>>>(&self) -> T {
-        let range = self.pattern.range();
+        let range = self.pattern.span();
 
         let var = if self.var == U32_NONE {
             range.offset() as u32 - 5
@@ -1380,14 +1381,14 @@ impl<'a> VariableBindingBuilder<'a> {
         };
 
         let bind = if self.bind == U32_NONE {
-            let r = if let Some(t) = self.type_ { t.range() } else { range };
+            let r = if let Some(t) = self.type_ { t.span() } else { range };
             r.end_offset() as u32 + 1
         } else {
             self.bind
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.range().end_offset() as u32
+            self.expr.span().end_offset() as u32
         } else {
             self.semi
         };
@@ -1435,7 +1436,7 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + Clone + Range> ConstructorBuilder<'a, T> {
+impl<'a, T: 'a + Clone + Span> ConstructorBuilder<'a, T> {
     /// Creates a Constructor.
     pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
         Constructor {
@@ -1479,7 +1480,7 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + Clone + Range> TupleBuilder<'a, T> {
+impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
     /// Creates a new Tuple instance.
     pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
         assert_eq!(self.fields.len(), self.commas.len());
@@ -1501,14 +1502,14 @@ impl<'a, T: 'a + Clone + Range> TupleBuilder<'a, T> {
             if *c != U32_NONE { continue; }
 
             let offset = if i + 1 == fields.len() { 1 } else { 0 };
-            let pos = f.range().end_offset() - offset;
+            let pos = f.span().end_offset() - offset;
 
             *c = pos as u32;
         }
 
         let open = if self.open == U32_NONE {
             fields.first()
-                .map(|f| f.range().offset() as u32 - 1)
+                .map(|f| f.span().offset() as u32 - 1)
                 .unwrap_or(0)
         } else {
             self.open

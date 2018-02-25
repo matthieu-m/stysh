@@ -4,7 +4,7 @@
 //! raw tokens and simply groups them according to braces and quotes.
 
 use std;
-use basic::com;
+use basic::com::{self, Span};
 
 /// A List of Token Trees.
 pub type List<'a> = &'a [Node<'a>];
@@ -181,30 +181,30 @@ impl<'g> Node<'g> {
     pub fn range(&self) -> com::Range {
         match *self {
             Node::Run(slice) => {
-                let offset = slice.first().map_or(0, |n| n.range().offset());
-                let end = slice.last().map_or(0, |n| n.range().end_offset());
+                let offset = slice.first().map_or(0, |n| n.span().offset());
+                let end = slice.last().map_or(0, |n| n.span().end_offset());
                 com::Range::new(offset, end - offset)
             },
             Node::Bytes(o, _, c) =>
-                com::Range::new(o.offset() - 1, 1).extend(c.range()),
-            Node::Braced(o, _, c) => o.range().extend(c.range()),
-            Node::String(o, _, c) => o.range().extend(c.range()),
-            Node::UnexpectedBrace(t) => t.range(),
+                com::Range::new(o.offset() - 1, 1).extend(c.span()),
+            Node::Braced(o, _, c) => o.span().extend(c.span()),
+            Node::String(o, _, c) => o.span().extend(c.span()),
+            Node::UnexpectedBrace(t) => t.span(),
         }
     }
 }
 
 impl StringFragment {
     /// Returns the length of the fragment.
-    pub fn length(&self) -> usize { self.range().length() }
+    pub fn length(&self) -> usize { self.span().length() }
 
     /// Returns the offset of the fragment.
-    pub fn offset(&self) -> usize { self.range().offset() }
+    pub fn offset(&self) -> usize { self.span().offset() }
 
     /// Returns the range spanned by the fragment.
     pub fn range(&self) -> com::Range {
         match *self {
-            StringFragment::Text(tok) => tok.range(),
+            StringFragment::Text(tok) => tok.span(),
             StringFragment::SpecialCharacter(tok) => 
                 com::Range::new(
                     tok.offset() - 1,
@@ -247,13 +247,57 @@ impl Token {
 
     /// Returns the start position of the token.
     ///
-    /// Equivalent to calling `self.range().offset()`.
+    /// Equivalent to calling `self.span().offset()`.
     pub fn offset(&self) -> usize {
         self.offset as usize
     }
+}
 
+//
+//  Implementation of Span
+//
+
+impl<'g> Span for Node<'g> {
+    /// Returns the range spanned by the node.
+    fn span(&self) -> com::Range {
+        match *self {
+            Node::Run(slice) => {
+                let offset = slice.first().map_or(0, |n| n.span().offset());
+                let end = slice.last().map_or(0, |n| n.span().end_offset());
+                com::Range::new(offset, end - offset)
+            },
+            Node::Bytes(o, _, c) =>
+                com::Range::new(o.offset() - 1, 1).extend(c.span()),
+            Node::Braced(o, _, c) => o.span().extend(c.span()),
+            Node::String(o, _, c) => o.span().extend(c.span()),
+            Node::UnexpectedBrace(t) => t.span(),
+        }
+    }
+}
+
+impl Span for StringFragment {
+    /// Returns the range spanned by the fragment.
+    fn span(&self) -> com::Range {
+        match *self {
+            StringFragment::Text(tok) => tok.span(),
+            StringFragment::SpecialCharacter(tok) => 
+                com::Range::new(
+                    tok.offset() - 1,
+                    tok.length() + 2
+                ),
+            StringFragment::Interpolated(id, colon, format) => 
+                com::Range::new(
+                    id.offset() - 1,
+                    id.length() + colon.length() + format.length() + 2
+                ),
+            StringFragment::Unexpected(r) => r,
+        }
+    }
+}
+
+impl Span for Token {
     /// Returns the range spanned by the token.
-    pub fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         com::Range::new(self.offset(), self.length())
     }
 }
@@ -281,6 +325,6 @@ impl std::fmt::Debug for Token {
 
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "{{ {} {} }}", self.kind(), self.range())
+        write!(f, "{{ {} {} }}", self.kind(), self.span())
     }
 }

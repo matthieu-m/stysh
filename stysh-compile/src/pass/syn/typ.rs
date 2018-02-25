@@ -2,7 +2,7 @@
 //!
 //! Type Parser.
 
-use basic::com;
+use basic::com::{self, Span};
 
 use model::tt::{Kind, Node};
 use model::syn::*;
@@ -75,8 +75,8 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         let name = TypeIdentifier(
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|t| t.range())
-                .unwrap_or(com::Range::new(keyword.range().end_offset(), 0))
+                .map(|t| t.span())
+                .unwrap_or(com::Range::new(keyword.span().end_offset(), 0))
         );
 
         match self.raw.peek() {
@@ -114,7 +114,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
 
     fn parse_record(&mut self) -> Record<'g> {
         let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
-        let missing = com::Range::new(keyword.range().end_offset(), 0);
+        let missing = com::Range::new(keyword.span().end_offset(), 0);
 
         let (inner, semi) =
             self.parse_inner_record(Kind::SignSemiColon)
@@ -142,7 +142,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         match (variant, semi) {
             (Some(variant), Some(semi)) => Some((variant, semi)),
             (Some(variant), None)
-                => Some((variant, variant.range().end_offset() as u32 - 1)),
+                => Some((variant, variant.span().end_offset() as u32 - 1)),
             (None, Some(semi)) => Some((
                 InnerRecord::Missing(com::Range::new(semi as usize, 0)),
                 semi
@@ -155,7 +155,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         let identifier =
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|n| TypeIdentifier(n.range()));
+                .map(|n| TypeIdentifier(n.span()));
 
         if let Some(identifier) = identifier {
             if let Some(Node::Braced(..)) = self.raw.peek() {
@@ -184,7 +184,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
         self.try_parse()
             .or_else(||
                 self.raw.peek().map(|n|
-                    Type::Missing(com::Range::new(n.range().offset(), 0))
+                    Type::Missing(com::Range::new(n.span().offset(), 0))
                 )
             )
             .unwrap_or(Type::Missing(com::Range::new(0, 0)))
@@ -203,9 +203,9 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
             while let Some(t) = inner.try_parse() {
                 fields.push(t);
                 if let Some(c) = inner.raw.pop_kind(Kind::SignComma) {
-                    commas.push(c.range().offset() as u32)
+                    commas.push(c.span().offset() as u32)
                 } else {
-                    commas.push(t.range().end_offset() as u32 - 1)
+                    commas.push(t.span().end_offset() as u32 - 1)
                 };
             }
 
@@ -239,21 +239,21 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                     while let Some(c) =
                         self.raw.pop_kind(Kind::SignDoubleColon)
                     {
-                        components.push(TypeIdentifier(t.range()));
+                        components.push(TypeIdentifier(t.span()));
                         colons.push(c.offset() as u32);
 
                         t = self.raw.pop_kind(Kind::NameType).expect("Type");
                     }
 
                     if components.is_empty() {
-                        Some(Type::Simple(TypeIdentifier(t.range())))
+                        Some(Type::Simple(TypeIdentifier(t.span())))
                     } else {
                         let path = Path {
                             components:
                                 self.raw.intern_slice(components.into_slice()),
                             colons: self.raw.intern_slice(colons.into_slice()),
                         };
-                        Some(Type::Nested(TypeIdentifier(t.range()), path))
+                        Some(Type::Nested(TypeIdentifier(t.span()), path))
                     }
                 },
                 Node::Braced(..) => Some(Type::Tuple(self.parse_tuple())),

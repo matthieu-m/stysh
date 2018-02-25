@@ -182,6 +182,12 @@ impl<'a> std::fmt::Display for Slice<'a> {
     }
 }
 
+/// Span
+pub trait Span {
+    /// Returns the Range spanned by the element.
+    fn span(&self) -> Range;
+}
+
 //
 //  Tests
 //

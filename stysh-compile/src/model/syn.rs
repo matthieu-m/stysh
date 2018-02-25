@@ -8,16 +8,10 @@
 
 use std::convert;
 
-use basic::com;
+use basic::com::{self, Span};
 
 use model::tt;
 pub use model::tt::StringFragment;
-
-/// A Range trait.
-pub trait Range {
-    /// Returns the range spanned by self.
-    fn range(&self) -> com::Range;
-}
 
 /// A List of AST nodes.
 pub type List<'a> = &'a [Node<'a>];
@@ -410,7 +404,7 @@ impl<'a> Enum<'a> {
         if self.close == 0 {
             let last_comma = self.comma(self.commas.len().wrapping_sub(1));
             let last = last_comma.unwrap_or_else(|| self.brace_open());
-            tt::Token::new(tt::Kind::BraceClose, last.range().end_offset(), 0)
+            tt::Token::new(tt::Kind::BraceClose, last.span().end_offset(), 0)
         } else {
             tt::Token::new(tt::Kind::BraceClose, self.close as usize, 1)
         }
@@ -420,7 +414,7 @@ impl<'a> Enum<'a> {
     /// such comma the position it would have been at is faked.
     pub fn comma(&self, i: usize) -> Option<tt::Token> {
         let make_semi = |&o| if o == 0 {
-            let position = self.variants[i].range().end_offset();
+            let position = self.variants[i].span().end_offset();
             tt::Token::new(tt::Kind::SignComma, position, 0)
         } else {
             tt::Token::new(tt::Kind::SignComma, o as usize, 1)
@@ -445,7 +439,7 @@ impl<'a> Record<'a> {
     /// faked.
     pub fn semi_colon(&self) -> tt::Token {
         let (offset, range) = if self.semi_colon == 0 {
-            (self.inner.range().end_offset(), 0)
+            (self.inner.span().end_offset(), 0)
         } else {
             (self.semi_colon as usize, 1)
         };
@@ -541,178 +535,178 @@ impl<'a, T: 'a + Clone> Tuple<'a, T> {
 //
 //  Trait Implementations
 //
-impl<'a> Range for Node<'a> {
+impl<'a> Span for Node<'a> {
     /// Returns the range spanned by the node.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Node::*;
 
         match *self {
-            Expr(expr) => expr.range(),
-            Item(item) => item.range(),
-            Stmt(stmt) => stmt.range(),
+            Expr(expr) => expr.span(),
+            Item(item) => item.span(),
+            Stmt(stmt) => stmt.span(),
         }
     }
 }
 
-impl<'a> Range for Expression<'a> {
+impl<'a> Span for Expression<'a> {
     /// Returns the range spanned by the expression.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Expression::*;
 
         match *self {
-            BinOp(_, _, left, right) => left.range().extend(right.range()),
-            Block(b) => b.range(),
-            Constructor(c) => c.range(),
-            FieldAccess(f) => f.range(),
-            FunctionCall(fun) => fun.range(),
-            If(if_else) => if_else.range(),
-            Lit(lit) => lit.range(),
-            Loop(l) => l.range(),
+            BinOp(_, _, left, right) => left.span().extend(right.span()),
+            Block(b) => b.span(),
+            Constructor(c) => c.span(),
+            FieldAccess(f) => f.span(),
+            FunctionCall(fun) => fun.span(),
+            If(if_else) => if_else.span(),
+            Lit(lit) => lit.span(),
+            Loop(l) => l.span(),
             PreOp(_, pos, expr)
-                => com::Range::new(pos as usize, 0).extend(expr.range()),
-            Tuple(t) => t.range(),
+                => com::Range::new(pos as usize, 0).extend(expr.span()),
+            Tuple(t) => t.span(),
             Var(VariableIdentifier(range)) => range,
         }
     }
 }
 
-impl<'a> Range for Item<'a> {
+impl<'a> Span for Item<'a> {
     /// Returns the range spanned by the item.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Item::*;
 
         match *self {
-            Enum(e) => e.range(),
-            Fun(fun) => fun.range(),
-            Rec(r) => r.range(),
+            Enum(e) => e.span(),
+            Fun(fun) => fun.span(),
+            Rec(r) => r.span(),
         }
     }
 }
 
-impl<'a> Range for Pattern<'a> {
+impl<'a> Span for Pattern<'a> {
     /// Returns the range spanned by the item.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Pattern::*;
 
         match *self {
-            Constructor(c) => c.range(),
-            Ignored(i) => i.range(),
-            Tuple(t) => t.range(),
-            Var(v) => v.range(),
+            Constructor(c) => c.span(),
+            Ignored(i) => i.span(),
+            Tuple(t) => t.span(),
+            Var(v) => v.span(),
         }
     }
 }
 
-impl<'a> Range for Enum<'a> {
+impl<'a> Span for Enum<'a> {
     /// Returns the range spanned by the enum.
-    fn range(&self) -> com::Range {
-        self.keyword().range().extend(self.brace_close().range())
+    fn span(&self) -> com::Range {
+        self.keyword().span().extend(self.brace_close().span())
     }
 }
 
-impl<'a> Range for Record<'a> {
+impl<'a> Span for Record<'a> {
     /// Returns the range spanned by the record.
-    fn range(&self) -> com::Range {
-        self.keyword().range().extend(self.semi_colon().range())
+    fn span(&self) -> com::Range {
+        self.keyword().span().extend(self.semi_colon().span())
     }
 }
 
-impl<'a> Range for InnerRecord<'a> {
+impl<'a> Span for InnerRecord<'a> {
     /// Returns the range spanned by the inner record.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::InnerRecord::*;
 
         match *self {
             Missing(r) | Unexpected(r) => r,
-            Tuple(t, tup) => t.0.extend(tup.range()),
+            Tuple(t, tup) => t.0.extend(tup.span()),
             Unit(t) => t.0,
         }
     }
 }
 
-impl<'a> Range for Function<'a> {
+impl<'a> Span for Function<'a> {
     /// Returns the range spanned by the function.
-    fn range(&self) -> com::Range {
-        com::Range::new(self.keyword as usize, 4).extend(self.body.range())
+    fn span(&self) -> com::Range {
+        com::Range::new(self.keyword as usize, 4).extend(self.body.span())
     }
 }
 
-impl<'a> Range for Argument<'a> {
+impl<'a> Span for Argument<'a> {
     /// Returns the range spanned by the argument.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         let offset = self.name.0.offset();
         let end_offset = self.comma as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
 }
 
-impl<'a> Range for Block<'a> {
+impl<'a> Span for Block<'a> {
     /// Returns the range spanned by the block.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         let end_offset = self.close + 1;
         com::Range::new(self.open as usize, (end_offset - self.open) as usize)
     }
 }
 
-impl<'a, T: 'a> Range for Constructor<'a, T> {
+impl<'a, T: 'a> Span for Constructor<'a, T> {
     /// Returns the range spanned by the constructor.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         if self.arguments.close == 0 {
-            self.type_.range()
+            self.type_.span()
         } else {
-            self.type_.range().extend(self.arguments.range())
+            self.type_.span().extend(self.arguments.span())
         }
     }
 }
 
-impl<'a> Range for FieldAccess<'a> {
+impl<'a> Span for FieldAccess<'a> {
     /// Returns the range spanned by the constructor.
-    fn range(&self) -> com::Range {
-        self.accessed.range().extend(self.field.0)
+    fn span(&self) -> com::Range {
+        self.accessed.span().extend(self.field.0)
     }
 }
 
-impl<'a> Range for FunctionCall<'a> {
+impl<'a> Span for FunctionCall<'a> {
     /// Returns the range spanned by the function call.
-    fn range(&self) -> com::Range {
-        self.function.range().extend(self.parenthesis_close().range())
+    fn span(&self) -> com::Range {
+        self.function.span().extend(self.parenthesis_close().span())
     }
 }
 
-impl<'a> Range for IfElse<'a> {
+impl<'a> Span for IfElse<'a> {
     /// Returns the range spanned by the argument.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         let offset = self.if_ as usize;
-        let end_offset = self.false_expr.range().end_offset();
+        let end_offset = self.false_expr.span().end_offset();
         com::Range::new(offset, end_offset - offset)
     }
 }
 
-impl<'a> Range for Loop<'a> {
+impl<'a> Span for Loop<'a> {
     /// Returns the range spanned by the argument.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         let offset = self.loop_ as usize;
         let end_offset = self.close as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
 }
 
-impl<'a> Range for Statement<'a> {
+impl<'a> Span for Statement<'a> {
     /// Returns the range spanned by the statement.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Statement::*;
 
         match *self {
-            Return(ret) => ret.range(),
-            Set(set) => set.range(),
-            Var(var) => var.range(),
+            Return(ret) => ret.span(),
+            Set(set) => set.span(),
+            Var(var) => var.span(),
         }
     }
 }
 
-impl<'a> Range for Literal<'a> {
+impl<'a> Span for Literal<'a> {
     /// Returns the range spanned by the literal.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Literal::*;
 
         match *self {
@@ -724,20 +718,20 @@ impl<'a> Range for Literal<'a> {
     }
 }
 
-impl<'a> Range for Return<'a> {
+impl<'a> Span for Return<'a> {
     /// Returns the range spanned by the return statement.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         let len = self.semi + 1 - self.ret;
         com::Range::new(self.ret as usize, len as usize)
     }
 }
 
-impl<'a> Range for VariableBinding<'a> {
+impl<'a> Span for VariableBinding<'a> {
     /// Returns the range spanned by the binding.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         debug_assert!(
-            self.semi as usize >= self.expr.range().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.range()
+            self.semi as usize >= self.expr.span().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.span()
         );
         com::Range::new(
             self.var as usize,
@@ -746,12 +740,12 @@ impl<'a> Range for VariableBinding<'a> {
     }
 }
 
-impl<'a> Range for VariableReBinding<'a> {
+impl<'a> Span for VariableReBinding<'a> {
     /// Returns the range spanned by the binding.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         debug_assert!(
-            self.semi as usize >= self.expr.range().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.range()
+            self.semi as usize >= self.expr.span().end_offset() - 1,
+            "{} should occur after {}", self.semi, self.expr.span()
         );
         com::Range::new(
             self.set as usize,
@@ -760,46 +754,46 @@ impl<'a> Range for VariableReBinding<'a> {
     } 
 }
 
-impl<'a> Range for Type<'a> {
+impl<'a> Span for Type<'a> {
     /// Returns the range spanned by the type.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         use self::Type::*;
 
         match *self {
             Missing(r) => r,
-            Nested(t, p) => p.range().extend(t.range()),
-            Simple(t) => t.range(),
-            Tuple(t) => t.range(),
+            Nested(t, p) => p.span().extend(t.span()),
+            Simple(t) => t.span(),
+            Tuple(t) => t.span(),
         }
     }
 }
 
-impl<'a> Range for Path<'a> {
+impl<'a> Span for Path<'a> {
     /// Returns the range spanned by the path.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         self.components[0]
-            .range()
-            .extend(self.double_colon(self.colons.len() - 1).unwrap().range())
+            .span()
+            .extend(self.double_colon(self.colons.len() - 1).unwrap().span())
     }
 }
 
-impl<'a, T: 'a> Range for Tuple<'a, T> {
+impl<'a, T: 'a> Span for Tuple<'a, T> {
     /// Returns the range spanned by the tuple.
-    fn range(&self) -> com::Range {
-        self.parenthesis_open().range().extend(self.parenthesis_close().range())
+    fn span(&self) -> com::Range {
+        self.parenthesis_open().span().extend(self.parenthesis_close().span())
     }
 }
 
-impl Range for VariableIdentifier {
+impl Span for VariableIdentifier {
     /// Returns the range spanned by the variable identifier.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         self.0
     }
 }
 
-impl Range for TypeIdentifier {
+impl Span for TypeIdentifier {
     /// Returns the range spanned by the type identifier.
-    fn range(&self) -> com::Range {
+    fn span(&self) -> com::Range {
         self.0
     }
 }
@@ -902,7 +896,7 @@ mod tests {
 
         //  " :enum Empty { }"
         let e: Enum = item.enum_(7, 5).build();
-        assert_eq!(e.range(), range(1, 15));
+        assert_eq!(e.span(), range(1, 15));
     }
 
     #[test]
@@ -912,7 +906,7 @@ mod tests {
 
         //  ":enum Minimal"
         let e: Enum = item.enum_(6, 7).braces(12, 12).build();
-        assert_eq!(e.range(), range(0, 13));
+        assert_eq!(e.span(), range(0, 13));
     }
 
     #[test]
@@ -926,7 +920,7 @@ mod tests {
                 .push_unit(15, 3)
                 .push_unit(20, 3)
                 .build();
-        assert_eq!(e.range(), range(0, 25));
+        assert_eq!(e.span(), range(0, 25));
     }
 
     #[test]
@@ -935,7 +929,7 @@ mod tests {
         let e = Factory::new(&global_arena).expr();
 
         //  "   1"
-        assert_eq!(e.int(3, 4).range(), range(3, 4));
+        assert_eq!(e.int(3, 4).span(), range(3, 4));
     }
 
     #[test]
@@ -945,7 +939,7 @@ mod tests {
 
         //  "   1 + 1"
         assert_eq!(
-            e.bin_op(e.int(3, 1), e.int(7, 1)).build().range(),
+            e.bin_op(e.int(3, 1), e.int(7, 1)).build().span(),
             range(3, 5)
         );
     }
@@ -966,7 +960,7 @@ mod tests {
                     e.block(e.bin_op(e.int(23, 1), e.int(27, 1)).build())
                         .build(),
                 ).build();
-        assert_eq!(item.range(), range(3, 27), "{:?}", item);
+        assert_eq!(item.span(), range(3, 27), "{:?}", item);
     }
 
     #[test]
@@ -977,7 +971,7 @@ mod tests {
         //  "   1 + 1"
         let node = Node::Expr(e.bin_op(e.int(3, 1), e.int(7, 1)).build());
 
-        assert_eq!(node.range(), range(3, 5));
+        assert_eq!(node.span(), range(3, 5));
     }
 
     #[test]
@@ -988,7 +982,7 @@ mod tests {
         //  " !     1"
         let node = Node::Expr(e.pre_op(e.int(7, 2)).offset(1).build());
 
-        assert_eq!(node.range(), range(1, 8));
+        assert_eq!(node.span(), range(1, 8));
     }
 
     #[test]
@@ -1001,10 +995,10 @@ mod tests {
         let mut var = s.var(p.var(10, 4), e.int(18, 4));
 
         let with_semi: Statement = var.build();
-        assert_eq!(with_semi.range(), range(5, 18));
+        assert_eq!(with_semi.span(), range(5, 18));
 
         let without_semi: Statement = var.semi_colon(21).build();
-        assert_eq!(without_semi.range(), range(5, 17));
+        assert_eq!(without_semi.span(), range(5, 17));
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

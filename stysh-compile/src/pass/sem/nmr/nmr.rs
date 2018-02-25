@@ -3,9 +3,9 @@
 //! High-level item in charge of name resolution.
 
 use basic::{com, mem};
+use basic::com::Span;
 
-use model::syn::{self, Range};
-use model::sem;
+use model::{syn, sem};
 
 use super::scp::{BlockScope, Scope};
 
@@ -105,14 +105,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         sem::Pattern::Constructor(sem::Constructor {
             type_: rec,
             arguments: arguments.into_slice(),
-            range: c.range(),
+            range: c.span(),
         })
     }
 
     fn pattern_of_ignored(&mut self, underscore: syn::VariableIdentifier)
         -> sem::Pattern<'static>
     {
-        sem::Pattern::Ignored(underscore.range())
+        sem::Pattern::Ignored(underscore.span())
     }
 
     fn pattern_of_tuple(&mut self, t: &syn::Tuple<syn::Pattern>)
@@ -127,7 +127,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Pattern::Tuple(
             sem::Tuple { fields: fields.into_slice() },
-            t.range(),
+            t.span(),
         )
     }
 
@@ -145,7 +145,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         where
             'g: 'b
     {
-        let range = ret.range();
+        let range = ret.span();
         let unit = sem::Value::unit().with_range(range.end_offset() - 3, 2);
 
         let value =
@@ -165,7 +165,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         where
             'g: 'b
     {
-        let range = set.range();
+        let range = set.span();
         let left = self.rescope(scope).value_of_expr(&set.left);
         let right = self.rescope(scope).value_of_expr(&set.expr);
         sem::Stmt::Set(sem::ReBinding { left, right, range })
@@ -183,7 +183,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let value = self.rescope(scope).value_of_expr(&var.expr);
         let pattern = self.rescope(self.scope).pattern_of(&var.pattern);
         scope.add_pattern(pattern, value.type_);
-        sem::Stmt::Var(sem::Binding::Variable(pattern, value, var.range()))
+        sem::Stmt::Var(sem::Binding::Variable(pattern, value, var.span()))
     }
 
     fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
@@ -251,7 +251,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Lit(lit) => self.value_of_literal(lit),
             Loop(loop_) => self.value_of_loop(loop_),
             PreOp(op, _, e)
-                => self.value_of_prefix_operator(op, e, expr.range()),
+                => self.value_of_prefix_operator(op, e, expr.span()),
             Tuple(t) => self.value_of_tuple(&t),
             Var(id) => self.value_of_variable(id),
         }
@@ -278,7 +278,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Value {
             type_: type_,
-            range: block.range(),
+            range: block.span(),
             expr: sem::Expr::Block(stmts, expr),
             gvn: Default::default(),
         }
@@ -295,7 +295,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         use model::syn::BinaryOperator as O;
         use model::sem::BuiltinFunction as F;
 
-        let range = left.range().extend(right.range());
+        let range = left.span().extend(right.span());
 
         let left = self.value_of_expr(left);
         let right = self.value_of_expr(right);
@@ -342,11 +342,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
             return sem::Value {
                 type_: sem::Type::Rec(record),
-                range: c.range(),
+                range: c.span(),
                 expr: sem::Expr::Constructor(sem::Constructor {
                     type_: record,
                     arguments: values.into_slice(),
-                    range: c.range(),
+                    range: c.span(),
                 }),
                 gvn: Default::default(),
             };
@@ -373,7 +373,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Value {
             type_: callable.result_type(),
-            range: fun.range(),
+            range: fun.span(),
             expr: sem::Expr::Call(callable, values.into_slice()),
             gvn: Default::default(),
         }
@@ -387,7 +387,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
             sem::Value {
                 type_: self.type_of_field_index(accessed, index),
-                range: field.range(),
+                range: field.span(),
                 expr: sem::Expr::FieldAccess(accessed, index),
                 gvn: Default::default(),
             }
@@ -396,7 +396,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
             sem::Value {
                 type_: sem::Type::unresolved(),
-                range: field.range(),
+                range: field.span(),
                 expr: sem::Expr::UnresolvedField(accessed, id),
                 gvn: Default::default(),
             }
@@ -425,7 +425,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Value {
             type_: result.unwrap_or(sem::Type::unresolved()),
-            range: if_else.range(),
+            range: if_else.span(),
             expr: sem::Expr::If(
                 self.global_arena.insert(condition),
                 self.global_arena.insert(true_branch),
@@ -522,7 +522,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Value {
             type_: sem::Type::Builtin(sem::BuiltinType::Void),
-            range: loop_.range(),
+            range: loop_.span(),
             expr: sem::Expr::Loop(stmts),
             gvn: Default::default(),
         }
@@ -571,7 +571,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         sem::Value {
             type_: sem::Type::Tuple(sem::Tuple { fields: types.into_slice() }),
-            range: tup.range(),
+            range: tup.span(),
             expr: sem::Expr::Tuple(sem::Tuple { fields: values.into_slice() }),
             gvn: Default::default(),
         }
@@ -589,8 +589,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let mut buffer = mem::Array::new(self.local_arena);
         for &fragment in f {
             match fragment {
-                Text(tok) => buffer.extend(self.source(tok.range())),
-                SpecialCharacter(tok) => match self.source(tok.range()) {
+                Text(tok) => buffer.extend(self.source(tok.span())),
+                SpecialCharacter(tok) => match self.source(tok.span()) {
                     b"N" => buffer.push(b'\n'),
                     _ => unimplemented!(),
                 },

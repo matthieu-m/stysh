@@ -3,6 +3,7 @@
 use std::{self, convert, marker};
 
 use basic::{com, mem};
+use basic::com::Span;
 
 use model::sem::*;
 
@@ -391,7 +392,7 @@ impl<'a> FunctionProtoBuilder<'a> {
     pub fn push(&mut self, name: ValueIdentifier, type_: Type<'a>) -> &mut Self
     {
         let gvn = Default::default();
-        let len = name.0.length() + 2 + type_.range().length();
+        let len = name.0.length() + 2 + type_.span().length();
         let range = range(name.0.offset(), len);
         self.arguments.push(Binding::Argument(name, gvn, type_, range));
         self
@@ -469,7 +470,7 @@ impl<'a> StmtFactory<'a> {
 
     /// Creates a binding Stmt.
     pub fn var(&self, pattern: Pattern<'a>, value: Value<'a>) -> Stmt<'a> {
-        let off = pattern.range().offset() - 5;
+        let off = pattern.span().offset() - 5;
         let end = value.range.end_offset() + 1;
 
         Stmt::Var(Binding::Variable(pattern, value, range(off, end - off)))
@@ -716,7 +717,7 @@ impl<'a> BlockBuilder<'a> {
         let value_range = self.value.map(|v| v.range);
 
         let off = if self.range == Default::default() {
-            first.map(|s| s.range().offset())
+            first.map(|s| s.span().offset())
                 .unwrap_or_else(|| value_range.unwrap().offset()) - 2
         } else {
             self.range.offset()
@@ -724,7 +725,7 @@ impl<'a> BlockBuilder<'a> {
 
         let end = if self.range == Default::default() {
             value_range.map(|v| v.end_offset())
-                .unwrap_or_else(|| last.unwrap().range().end_offset()) + 2
+                .unwrap_or_else(|| last.unwrap().span().end_offset()) + 2
         } else {
             self.range.end_offset()
         };
@@ -974,8 +975,8 @@ impl<'a> LoopBuilder<'a> {
             let first = self.statements.first().expect("statements");
             let last = self.statements.last().expect("statements");
 
-            let offset = first.range().offset() - 8;
-            let end_offset = last.range().end_offset() + 2;
+            let offset = first.span().offset() - 8;
+            let end_offset = last.span().end_offset() + 2;
             (offset, end_offset - offset)
         } else {
             (self.range.offset(), self.range.length())
@@ -1024,7 +1025,7 @@ impl EnumProtoBuilder {
     pub fn new(name: ItemIdentifier, pos: usize) -> Self {
         EnumProtoBuilder {
             name: name,
-            range: range(pos, name.range().length()),
+            range: range(pos, name.span().length()),
         }
     }
 
@@ -1048,7 +1049,7 @@ impl RecordProtoBuilder {
     pub fn new(name: ItemIdentifier, pos: usize) -> Self {
         RecordProtoBuilder {
             name: name,
-            range: range(pos, name.range().length()),
+            range: range(pos, name.span().length()),
             enum_: ItemIdentifier::unresolved(),
         }
     }

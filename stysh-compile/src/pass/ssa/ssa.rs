@@ -6,6 +6,8 @@
 use std::cell::RefCell;
 
 use basic::{com, mem};
+use basic::com::Span;
+
 use model::{sem, sir};
 
 use super::proto::*;
@@ -521,7 +523,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         for (index, (p, t)) in patterns.iter().zip(types.iter()).enumerate() {
             let i = index as u16;
             let id = current.push_immediate(
-                sir::Instruction::Field(*t, matched, i, p.range()),
+                sir::Instruction::Field(*t, matched, i, p.span()),
             );
             current = self.convert_pattern(current, id, *p, *t);
         }

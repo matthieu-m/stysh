@@ -3,9 +3,9 @@
 //! Let's start simple here. It'll get MUCH more complicated later.
 
 use basic::{com, mem};
+use basic::com::Span;
 
-use model::syn::{self, Range};
-use model::sem;
+use model::{syn, sem};
 
 use super::nmr::{self, scp};
 
@@ -69,10 +69,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         use model::sem::Prototype::*;
 
         debug_assert!(
-            item.range().offset() == proto.range().offset(),
+            item.span().offset() == proto.span().offset(),
             "Mismatched item and prototype: {} vs {}",
-            item.range(),
-            proto.range()
+            item.span(),
+            proto.span()
         );
 
         match (*item, proto) {
@@ -96,7 +96,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         sem::Prototype::Enum(
             sem::EnumProto {
                 name: e.name.into(),
-                range: e.keyword().range().extend(e.name.range()),
+                range: e.keyword().span().extend(e.name.span()),
             }
         )
     }
@@ -110,7 +110,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                 sem::ValueIdentifier(a.name.0),
                 Default::default(),
                 self.resolver(self.scope).type_of(&a.type_),
-                a.range()
+                a.span()
             ));
         }
 
@@ -119,7 +119,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                 name: sem::ItemIdentifier(fun.name.0),
                 range: com::Range::new(
                     fun.keyword as usize,
-                    fun.result.range().end_offset() - (fun.keyword as usize)
+                    fun.result.span().end_offset() - (fun.keyword as usize)
                 ),
                 arguments: arguments.into_slice(),
                 result: self.resolver(self.scope).type_of(&fun.result),
@@ -130,7 +130,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     fn rec_prototype(&mut self, r: syn::Record) -> sem::Prototype<'g> {
         sem::Prototype::Rec(sem::RecordProto {
             name: r.name().into(),
-            range: r.range(),
+            range: r.span(),
             enum_: sem::ItemIdentifier::unresolved(),
         })
     }
@@ -149,7 +149,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                 Unit(name) => variants.push(sem::Record {
                     prototype: self.global_arena.insert(sem::RecordProto {
                         name: name.into(),
-                        range: ev.range(),
+                        range: ev.span(),
                         enum_: p.name.into()
                     }),
                     fields: &[],

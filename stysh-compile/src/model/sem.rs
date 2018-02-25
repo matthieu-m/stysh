@@ -15,9 +15,10 @@
 use std::{convert, fmt};
 
 use basic::{com, mem};
+use basic::com::Span;
 use basic::mem::CloneInto;
 
-use model::syn::{self, Range};
+use model::syn;
 
 /// A registry of the definitions
 pub trait Registry<'a> {
@@ -345,17 +346,6 @@ impl Expr<'static> {
 }
 
 impl<'a> Stmt<'a> {
-    /// Range spanned by the statement.
-    pub fn range(&self) -> com::Range {
-        use self::Stmt::*;
-
-        match *self {
-            Return(r) => r.range(),
-            Set(r) => r.range(),
-            Var(b) => b.range(),
-        }
-    }
-
     /// Result type of the statement.
     ///
     /// Not to be mistaken for the type of the value assigned to or returned.
@@ -366,30 +356,6 @@ impl<'a> Stmt<'a> {
             Return(_) => Type::void(),
             Set(_) | Var(_) => Type::unit(),
         }
-    }
-}
-
-impl<'a> Type<'a> {
-    /// Returns the range this type would cover if it was anchored at 0.
-    pub fn range(&self) -> com::Range {
-        use self::Type::*;
-        use self::BuiltinType::*;
-
-        fn len(i: ItemIdentifier) -> usize { i.range().length() }
-
-        let len = match *self {
-            Builtin(Bool) => 4,
-            Builtin(Int) => 3,
-            Builtin(String) => 6,
-            Builtin(Void) => 4,
-            Enum(p) => len(p.name),
-            Rec(r) => len(r.name)
-                + if len(r.enum_) > 0 { 2 + len(r.enum_) } else { 0 },
-            Tuple(t) => t.fields.iter().map(|t| t.range().length()).sum(),
-            Unresolved(i) => len(i),
-        };
-
-        com::Range::new(0, len)
     }
 }
 
@@ -475,15 +441,6 @@ impl Value<'static> {
 }
 
 impl<'a> Binding<'a> {
-    /// Range spanned by the binding.
-    pub fn range(&self) -> com::Range {
-        use self::Binding::*;
-
-        match *self {
-            Argument(_, _, _, r) | Variable(_, _, r) => r,
-        }
-    }
-
     /// Sets the gvn of the binding.
     pub fn with_gvn<G: convert::Into<Gvn>>(self, gvn: G) -> Binding<'a> {
         use self::Binding::*;
@@ -522,18 +479,6 @@ impl<'a> Callable<'a> {
 }
 
 impl<'a> Pattern<'a> {
-    /// Returns the range spanned by the pattern.
-    pub fn range(&self) -> com::Range {
-        use self::Pattern::*;
-
-        match *self {
-            Constructor(c) => c.range(),
-            Ignored(r) => r,
-            Tuple(_, r) => r,
-            Var(v, _) => v.0,
-        }
-    }
-
     /// Sets the gvn of the pattern.
     ///
     /// Panics: if the pattern is not a Var.
@@ -545,34 +490,6 @@ impl<'a> Pattern<'a> {
             _ => panic!("Cannot specify GVN in {:?}", self),
         }
     }
-}
-
-impl<'a, T: 'a> Constructor<'a, T> {
-    /// Returns the range spanned by the constructor.
-    pub fn range(&self) -> com::Range { self.range }
-}
-
-impl<'a> Prototype<'a> {
-    /// Returns the range spanned by the prototype.
-    pub fn range(&self) -> com::Range {
-        use self::Prototype::*;
-
-        match *self {
-            Enum(e) => e.range,
-            Fun(fun) => fun.range,
-            Rec(r) => r.range,
-        }
-    }
-}
-
-impl<'a> ReBinding<'a> {
-    /// Range spanned by the re-binding.
-    pub fn range(&self) -> com::Range { self.range }
-}
-
-impl<'a> Return<'a> {
-    /// Range spanned by the return statement.
-    pub fn range(&self) -> com::Range { self.range }
 }
 
 impl<T: 'static> Tuple<'static, T> {
@@ -604,9 +521,6 @@ impl BuiltinFunction {
 }
 
 impl ItemIdentifier {
-    /// Returns the range spanned by the ItemIdentifier.
-    pub fn range(&self) -> com::Range { self.0 }
-
     /// Returns a sentinel instance of ItemIdentifier.
     pub fn unresolved() -> ItemIdentifier {
         ItemIdentifier(com::Range::new(0, 0))
@@ -614,9 +528,6 @@ impl ItemIdentifier {
 }
 
 impl ValueIdentifier {
-    /// Returns the range spanned by the ValueIdentifier.
-    pub fn range(&self) -> com::Range { self.0 }
-
     /// Returns a sentinel instance of ValueIdentifier.
     pub fn unresolved() -> ItemIdentifier {
         ItemIdentifier(com::Range::new(0, 0))
@@ -896,6 +807,113 @@ impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
 }
 
 //
+//  Span Implementations
+//
+impl<'a> Span for Stmt<'a> {
+    /// Range spanned by the statement.
+    fn span(&self) -> com::Range {
+        use self::Stmt::*;
+
+        match *self {
+            Return(r) => r.span(),
+            Set(r) => r.span(),
+            Var(b) => b.span(),
+        }
+    }
+}
+
+impl<'a> Span for Type<'a> {
+    /// Returns the range this type would cover if it was anchored at 0.
+    fn span(&self) -> com::Range {
+        use self::Type::*;
+        use self::BuiltinType::*;
+
+        fn len(i: ItemIdentifier) -> usize { i.span().length() }
+
+        let len = match *self {
+            Builtin(Bool) => 4,
+            Builtin(Int) => 3,
+            Builtin(String) => 6,
+            Builtin(Void) => 4,
+            Enum(p) => len(p.name),
+            Rec(r) => len(r.name)
+                + if len(r.enum_) > 0 { 2 + len(r.enum_) } else { 0 },
+            Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
+            Unresolved(i) => len(i),
+        };
+
+        com::Range::new(0, len)
+    }
+}
+
+impl<'a> Span for Value<'a> {
+    /// Returns the range spanned by the value.
+    fn span(&self) -> com::Range { self.range }
+}
+
+impl<'a> Span for Binding<'a> {
+    /// Range spanned by the binding.
+    fn span(&self) -> com::Range {
+        use self::Binding::*;
+
+        match *self {
+            Argument(_, _, _, r) | Variable(_, _, r) => r,
+        }
+    }
+}
+
+impl<'a> Span for Pattern<'a> {
+    /// Returns the range spanned by the pattern.
+    fn span(&self) -> com::Range {
+        use self::Pattern::*;
+
+        match *self {
+            Constructor(c) => c.span(),
+            Ignored(r) => r,
+            Tuple(_, r) => r,
+            Var(v, _) => v.0,
+        }
+    }
+}
+
+impl<'a, T: 'a> Span for Constructor<'a, T> {
+    /// Returns the range spanned by the constructor.
+    fn span(&self) -> com::Range { self.range }
+}
+
+impl<'a> Span for Prototype<'a> {
+    /// Returns the range spanned by the prototype.
+    fn span(&self) -> com::Range {
+        use self::Prototype::*;
+
+        match *self {
+            Enum(e) => e.range,
+            Fun(fun) => fun.range,
+            Rec(r) => r.range,
+        }
+    }
+}
+
+impl<'a> Span for ReBinding<'a> {
+    /// Range spanned by the re-binding.
+    fn span(&self) -> com::Range { self.range }
+}
+
+impl<'a> Span for Return<'a> {
+    /// Range spanned by the return statement.
+    fn span(&self) -> com::Range { self.range }
+}
+
+impl Span for ItemIdentifier {
+    /// Returns the range spanned by the ItemIdentifier.
+    fn span(&self) -> com::Range { self.0 }
+}
+
+impl Span for ValueIdentifier {
+    /// Returns the range spanned by the ValueIdentifier.
+    fn span(&self) -> com::Range { self.0 }
+}
+//
 //  From Implementations
 //
 
@@ -923,13 +941,13 @@ impl convert::From<u32> for Gvn {
 
 impl convert::From<syn::VariableIdentifier> for ValueIdentifier {
     fn from(value: syn::VariableIdentifier) -> Self {
-        ValueIdentifier(value.range())
+        ValueIdentifier(value.span())
     }
 }
 
 impl convert::From<syn::TypeIdentifier> for ItemIdentifier {
     fn from(value: syn::TypeIdentifier) -> Self {
-        ItemIdentifier(value.range())
+        ItemIdentifier(value.span())
     }
 }
 
@@ -962,8 +980,8 @@ impl<'a> convert::From<Constructor<'a, Pattern<'a>>> for Pattern<'a> {
 impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
     fn from(t: Tuple<'a, Pattern<'a>>) -> Self {
         let f = &t.fields;
-        let off = f.first().map(|p| p.range().offset() - 1).unwrap_or(0);
-        let end = f.last().map(|p| p.range().end_offset() + 1).unwrap_or(0);
+        let off = f.first().map(|p| p.span().offset() - 1).unwrap_or(0);
+        let end = f.last().map(|p| p.span().end_offset() + 1).unwrap_or(0);
 
         Pattern::Tuple(t, com::Range::new(off, end - off))
     }
@@ -1005,7 +1023,7 @@ impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
     fn from(c: Constructor<'a, Value<'a>>) -> Self {
         Value {
             type_: Type::Rec(c.type_),
-            range: c.range(),
+            range: c.span(),
             expr: Expr::Constructor(c),
             gvn: Default::default(),
         }

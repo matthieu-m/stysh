@@ -5,6 +5,7 @@
 use std;
 
 use basic::mem;
+use basic::com::Span;
 use model::tt;
 use model::syn::*;
 use pass::syn::typ;
@@ -116,7 +117,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             let expr = match node {
                 tt::Node::Run(tokens) => {
                     let kind = tokens[0].kind();
-                    let range = tokens[0].range();
+                    let range = tokens[0].span();
 
                     match kind {
                         K::KeywordIf => self.parse_if_else(),
@@ -165,13 +166,13 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                     self.raw.pop_node();
 
                     let bytes = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::Bytes(bytes, node.range()))
+                    Expression::Lit(Literal::Bytes(bytes, node.span()))
                 },
                 tt::Node::String(_, f, _) => {
                     self.raw.pop_node();
 
                     let string = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::String(string, node.range()))
+                    Expression::Lit(Literal::String(string, node.span()))
                 },
                 tt::Node::UnexpectedBrace(_) => unimplemented!(),
             };
@@ -395,7 +396,7 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     fn pop_trailing_expression(&mut self) -> Option<Expression<'g>> {
         let last_op = self.op_stack.peek().map(|&(_, pos, _)| pos).unwrap_or(0);
         if let Some(expr) = self.expr_stack.peek().cloned() {
-            if last_op as usize <= expr.range().offset() {
+            if last_op as usize <= expr.span().offset() {
                 return self.expr_stack.pop();
             }
         }
@@ -426,10 +427,10 @@ impl<'g> IntoExpr<'g> for tt::Token {
         use self::Literal::*;
 
         match self.kind() {
-            LitBoolFalse => Some(Lit(Bool(false, self.range()))),
-            LitBoolTrue => Some(Lit(Bool(true, self.range()))),
-            LitIntegral => Some(Lit(Integral(self.range()))),
-            NameValue => Some(Var(VariableIdentifier(self.range()))),
+            LitBoolFalse => Some(Lit(Bool(false, self.span()))),
+            LitBoolTrue => Some(Lit(Bool(true, self.span()))),
+            LitIntegral => Some(Lit(Integral(self.span()))),
+            NameValue => Some(Var(VariableIdentifier(self.span()))),
             _ => None,
         }
     }
@@ -496,12 +497,12 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
     fn parse_underscore(&mut self) -> Pattern<'static> {
         let u =
             self.raw.pop_kind(tt::Kind::SignUnderscore).expect("underscore");
-        Pattern::Ignored(VariableIdentifier(u.range()))
+        Pattern::Ignored(VariableIdentifier(u.span()))
     }
 
     fn parse_value_name(&mut self) -> Pattern<'static> {
         let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
-        Pattern::Var(VariableIdentifier(name.range()))
+        Pattern::Var(VariableIdentifier(name.span()))
     }
 
     fn parse_tuple(
@@ -561,7 +562,7 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
         };
 
         let semi = self.pop(K::SignSemiColon).unwrap_or(
-            expr.map(|e| e.range().end_offset() as u32 - 1).unwrap_or(ret + 6)
+            expr.map(|e| e.span().end_offset() as u32 - 1).unwrap_or(ret + 6)
         );
 
         Statement::Return(Return { expr, ret, semi })
@@ -604,7 +605,7 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 
         let semi =
             self.pop(tt::Kind::SignSemiColon)
-                .unwrap_or(expr.range().end_offset() as u32 - 1);
+                .unwrap_or(expr.span().end_offset() as u32 - 1);
 
         (expr, bind, semi)
     }
@@ -619,7 +620,7 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 //
 //  Implementation Details (Tuple)
 //
-fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
+fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
     raw: &mut RawParser<'a, 'g, 'local>,
     inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
     ty: Type<'g>
@@ -654,7 +655,7 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     raw.intern_slice(&stmts)
 }
 
-fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
+fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
     raw: &mut RawParser<'a, 'g, 'local>,
     inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
     ns: &'a [tt::Node<'a>],
@@ -673,9 +674,9 @@ fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Range>(
         fields.push(f);
 
         if let Some(c) = inner.pop_kind(tt::Kind::SignComma) {
-            commas.push(c.range().offset() as u32)
+            commas.push(c.span().offset() as u32)
         } else {
-            commas.push(f.range().end_offset() as u32 - 1)
+            commas.push(f.span().end_offset() as u32 - 1)
         };
     }
 

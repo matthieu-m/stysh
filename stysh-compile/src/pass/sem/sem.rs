@@ -5,7 +5,7 @@
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::{ast, sem};
+use model::{ast, hir};
 
 use super::nmr::{self, scp};
 
@@ -17,7 +17,7 @@ pub struct GraphBuilder<'a, 'g, 'local>
 {
     code_fragment: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -32,7 +32,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn new(
         source: com::CodeFragment,
         scope: &'a scp::Scope<'g>,
-        registry: &'a sem::Registry<'g>,
+        registry: &'a hir::Registry<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
@@ -48,7 +48,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Extracts the prototypes of an item.
-    pub fn prototype(&mut self, item: &ast::Item) -> sem::Prototype<'g> {
+    pub fn prototype(&mut self, item: &ast::Item) -> hir::Prototype<'g> {
         match *item {
             ast::Item::Enum(e) => self.enum_prototype(e),
             ast::Item::Fun(fun) => self.fun_prototype(fun),
@@ -57,16 +57,16 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Translates a stand-alone expression.
-    pub fn expression(&mut self, e: &ast::Expression) -> sem::Value<'g> {
+    pub fn expression(&mut self, e: &ast::Expression) -> hir::Value<'g> {
         self.resolver(self.scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
-    pub fn item(&mut self, proto: &'g sem::Prototype<'g>, item: &ast::Item)
-        -> sem::Item<'g>
+    pub fn item(&mut self, proto: &'g hir::Prototype<'g>, item: &ast::Item)
+        -> hir::Item<'g>
     {
         use model::ast::Item;
-        use model::sem::Prototype::*;
+        use model::hir::Prototype::*;
 
         debug_assert!(
             item.span().offset() == proto.span().offset(),
@@ -92,31 +92,31 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     where 'g: 'a
 {
-    fn enum_prototype(&mut self, e: ast::Enum) -> sem::Prototype<'g> {
-        sem::Prototype::Enum(
-            sem::EnumProto {
+    fn enum_prototype(&mut self, e: ast::Enum) -> hir::Prototype<'g> {
+        hir::Prototype::Enum(
+            hir::EnumProto {
                 name: e.name.into(),
                 range: e.keyword().span().extend(e.name.span()),
             }
         )
     }
 
-    fn fun_prototype(&mut self, fun: ast::Function) -> sem::Prototype<'g> {
+    fn fun_prototype(&mut self, fun: ast::Function) -> hir::Prototype<'g> {
         let mut arguments =
             mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
 
         for a in fun.arguments {
-            arguments.push(sem::Binding::Argument(
-                sem::ValueIdentifier(a.name.0),
+            arguments.push(hir::Binding::Argument(
+                hir::ValueIdentifier(a.name.0),
                 Default::default(),
                 self.resolver(self.scope).type_of(&a.type_),
                 a.span()
             ));
         }
 
-        sem::Prototype::Fun(
-            sem::FunctionProto {
-                name: sem::ItemIdentifier(fun.name.0),
+        hir::Prototype::Fun(
+            hir::FunctionProto {
+                name: hir::ItemIdentifier(fun.name.0),
                 range: com::Range::new(
                     fun.keyword as usize,
                     fun.result.span().end_offset() - (fun.keyword as usize)
@@ -127,16 +127,16 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
-    fn rec_prototype(&mut self, r: ast::Record) -> sem::Prototype<'g> {
-        sem::Prototype::Rec(sem::RecordProto {
+    fn rec_prototype(&mut self, r: ast::Record) -> hir::Prototype<'g> {
+        hir::Prototype::Rec(hir::RecordProto {
             name: r.name().into(),
             range: r.span(),
-            enum_: sem::ItemIdentifier::unresolved(),
+            enum_: hir::ItemIdentifier::unresolved(),
         })
     }
 
-    fn enum_item(&mut self, e: ast::Enum, p: &'g sem::EnumProto)
-        -> sem::Item<'g>
+    fn enum_item(&mut self, e: ast::Enum, p: &'g hir::EnumProto)
+        -> hir::Item<'g>
     {
         let mut variants =
             mem::Array::with_capacity(e.variants.len(), self.global_arena);
@@ -146,8 +146,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
             match *ev {
                 Tuple(..) => unimplemented!("InnerRecord::Tuple"),
-                Unit(name) => variants.push(sem::Record {
-                    prototype: self.global_arena.insert(sem::RecordProto {
+                Unit(name) => variants.push(hir::Record {
+                    prototype: self.global_arena.insert(hir::RecordProto {
                         name: name.into(),
                         range: ev.span(),
                         enum_: p.name.into()
@@ -158,18 +158,18 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             }
         }
 
-        sem::Item::Enum(sem::Enum {
+        hir::Item::Enum(hir::Enum {
             prototype: p,
             variants: variants.into_slice(),
         })
     }
 
-    fn fun_item(&mut self, fun: ast::Function, p: &'g sem::FunctionProto<'g>)
-        -> sem::Item<'g>
+    fn fun_item(&mut self, fun: ast::Function, p: &'g hir::FunctionProto<'g>)
+        -> hir::Item<'g>
     {
         let scope = self.function_scope(self.scope, p);
 
-        sem::Item::Fun(sem::Function {
+        hir::Item::Fun(hir::Function {
             prototype: p,
             body:
                 self.resolver(&scope)
@@ -177,12 +177,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         })
     }
 
-    fn rec_item(&mut self, r: ast::Record, p: &'g sem::RecordProto)
-        -> sem::Item<'g>
+    fn rec_item(&mut self, r: ast::Record, p: &'g hir::RecordProto)
+        -> hir::Item<'g>
     {
         use self::ast::InnerRecord::*;
 
-        let fields: &'g [sem::Type<'g>] = match r.inner {
+        let fields: &'g [hir::Type<'g>] = match r.inner {
             Missing(_) | Unexpected(_) | Unit(_) => &[],
             Tuple(_, tup) => {
                 let mut fields =
@@ -196,13 +196,13 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             },
         };
 
-        sem::Item::Rec(sem::Record { prototype: p, fields: fields })
+        hir::Item::Rec(hir::Record { prototype: p, fields: fields })
     }
 
     fn function_scope<'b>(
         &'b self,
         parent: &'b scp::Scope<'g>,
-        p: &'b sem::FunctionProto<'b>,
+        p: &'b hir::FunctionProto<'b>,
     )
         -> scp::FunctionScope<'b, 'g>
     {
@@ -236,9 +236,9 @@ mod tests {
     use basic::{com, mem};
     use model::ast;
     use model::ast::builder::Factory as SynFactory;
-    use model::sem::builder::Factory as SemFactory;
-    use model::sem::*;
-    use model::sem::mocks::MockRegistry;
+    use model::hir::builder::Factory as SemFactory;
+    use model::hir::*;
+    use model::hir::mocks::MockRegistry;
     use super::scp::mocks::MockScope;
 
     #[test]
@@ -247,8 +247,8 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p) = (sem.item(), sem.proto());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p) = (hir.item(), hir.proto());
 
         assert_eq!(
             env.proto_of(
@@ -268,8 +268,8 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p) = (sem.item(), sem.proto());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p) = (hir.item(), hir.proto());
 
         let e = p.enum_(i.id(6, 6)).build();
 
@@ -292,11 +292,11 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
+        let hir = SemFactory::new(&global_arena);
 
         assert_eq!(
             env.proto_of(&ast.item().record(5, 6).build()),
-            sem.proto().rec(sem.item().id(5, 6), 0).range(0, 12).build()
+            hir.proto().rec(hir.item().id(5, 6), 0).range(0, 12).build()
         );
     }
 
@@ -306,8 +306,8 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p) = (sem.item(), sem.proto());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p) = (hir.item(), hir.proto());
 
         let r = p.rec(i.id(5, 6), 0).range(0, 12).build();
 
@@ -326,8 +326,8 @@ mod tests {
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t) = (sem.item(), sem.proto(), sem.type_());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p, t) = (hir.item(), hir.proto(), hir.type_());
 
         let r = p.rec(i.id(5, 3), 0).range(0, 22).build();
 
@@ -356,8 +356,8 @@ mod tests {
         );
 
         let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         assert_eq!(
             env.proto_of(
@@ -390,8 +390,8 @@ mod tests {
 
         let ast = SynFactory::new(&global_arena);
         let e = ast.expr();
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let f =
             p.fun(i.id(5, 3), t.int())
@@ -434,8 +434,8 @@ mod tests {
 
         let ast = SynFactory::new(&global_arena);
         let e = ast.expr();
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+        let hir = SemFactory::new(&global_arena);
+        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let f =
             p.fun(i.id(5, 3), t.tuple().push(t.int()).push(t.int()).build())

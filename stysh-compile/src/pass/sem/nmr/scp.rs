@@ -4,7 +4,7 @@ use std::fmt;
 
 use basic::mem;
 
-use model::sem::*;
+use model::hir::*;
 
 /// A Lexical Scope trait.
 pub trait Scope<'g>: fmt::Debug {
@@ -197,7 +197,7 @@ impl<'a, 'g> Scope<'g> for BuiltinScope<'a> {
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
-        use model::sem::BuiltinType::*;
+        use model::hir::BuiltinType::*;
 
         let builtin = match &self.source[name.0] {
             b"Bool" => Some(Bool),
@@ -250,7 +250,7 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
-        use model::sem::Callable::*;
+        use model::hir::Callable::*;
 
         let mut collection = mem::Array::new(self.functions.arena());
 
@@ -315,7 +315,7 @@ impl<'a, 'g, 'local> fmt::Debug for BlockScope<'a, 'g, 'local> {
 /// Mocks for the traits.
 pub mod mocks {
     use basic::mem;
-    use model::sem::*;
+    use model::hir::*;
 
     use super::{Scope, BuiltinScope};
 
@@ -377,7 +377,7 @@ pub mod mocks {
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem::builder::Factory as SemFactory;
+    use model::hir::builder::Factory;
 
     use super::{Scope, BuiltinScope, FunctionScope};
 
@@ -386,7 +386,7 @@ mod tests {
         let source = b":fun random() -> Int { a }";
 
         let arena = mem::Arena::new();
-        let f = SemFactory::new(&arena);
+        let f = Factory::new(&arena);
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
         let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
@@ -405,7 +405,7 @@ mod tests {
         let source = b":fun add(a: Int, b: Int) -> Int { a + b + c }";
 
         let arena = mem::Arena::new();
-        let f = SemFactory::new(&arena);
+        let f = Factory::new(&arena);
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
         let prot =

@@ -3,7 +3,7 @@
 use std::convert;
 
 use basic::mem;
-use model::{sem, sir};
+use model::{hir, sir};
 
 //  A sir::BasicBlock in the process of being constructed.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -11,9 +11,9 @@ pub struct ProtoBlock<'g, 'local>
     where 'g: 'local
 {
     pub id: BlockId,
-    pub arguments: mem::Array<'local, (BindingId, sem::Type<'g>)>,
+    pub arguments: mem::Array<'local, (BindingId, hir::Type<'g>)>,
     pub predecessors: mem::Array<'local, BlockId>,
-    pub bindings: mem::Array<'local, (BindingId, sir::ValueId, sem::Type<'g>)>,
+    pub bindings: mem::Array<'local, (BindingId, sir::ValueId, hir::Type<'g>)>,
     pub instructions: mem::Array<'local, sir::Instruction<'g>>,
     pub last_value: Option<sir::ValueId>,
     pub exit: ProtoTerminator<'g, 'local>,
@@ -36,7 +36,7 @@ pub struct ProtoJump<'g, 'local>
     where 'g: 'local
 {
     pub dest: BlockId,
-    pub arguments: mem::Array<'local, (sir::ValueId, sem::Type<'g>)>,
+    pub arguments: mem::Array<'local, (sir::ValueId, hir::Type<'g>)>,
 }
 
 //  Also known as Global Value Number.
@@ -94,7 +94,7 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         }
     }
 
-    pub fn bind(&mut self, binding: BindingId, type_: sem::Type<'g>)
+    pub fn bind(&mut self, binding: BindingId, type_: hir::Type<'g>)
         -> sir::ValueId
     {
         for &(id, value, _) in &self.bindings {
@@ -118,7 +118,7 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     pub fn bind_successor(
         &mut self,
         id: BlockId,
-        bindings: &[(BindingId, sem::Type<'g>)],
+        bindings: &[(BindingId, hir::Type<'g>)],
     )
         -> usize
     {
@@ -159,7 +159,7 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        t: sem::Type<'g>,
+        t: hir::Type<'g>,
     )
     {
         //  TODO(matthieum): The binding may already have been created by
@@ -183,7 +183,7 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        type_: sem::Type<'g>,
+        type_: hir::Type<'g>,
     )
     {
         for b in self.bindings.as_slice_mut() {
@@ -290,14 +290,14 @@ impl<'g, 'local> ProtoJump<'g, 'local>
     }
 }
 
-impl convert::From<sem::Gvn> for BlockId {
-    fn from(gvn: sem::Gvn) -> BlockId {
+impl convert::From<hir::Gvn> for BlockId {
+    fn from(gvn: hir::Gvn) -> BlockId {
         BlockId(gvn.0)
     }
 }
 
-impl convert::From<sem::Gvn> for BindingId {
-    fn from(gvn: sem::Gvn) -> BindingId {
+impl convert::From<hir::Gvn> for BindingId {
+    fn from(gvn: hir::Gvn) -> BindingId {
         BindingId(gvn.0)
     }
 }

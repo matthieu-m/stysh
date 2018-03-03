@@ -1,5 +1,8 @@
 //! Semantic model, also confusingly named AST.
 //!
+//! For differentiations purposes, it will be called HIR for High-level
+//! Intermediate Representation.
+//!
 //! This is the model describing the semantics of the language. It abstracts
 //! over syntactic sugar ("0xa", "1_0" and "0b1010" are all an integral of value
 //! "10") and resolves the names and types to their declaration.

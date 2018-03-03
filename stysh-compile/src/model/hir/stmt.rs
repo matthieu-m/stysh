@@ -6,7 +6,7 @@ use basic::{com, mem};
 use basic::com::Span;
 use basic::mem::CloneInto;
 
-use model::sem::*;
+use model::hir::*;
 
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]

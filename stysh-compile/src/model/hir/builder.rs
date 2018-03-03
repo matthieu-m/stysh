@@ -5,7 +5,7 @@ use std::{self, convert, marker};
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::sem::*;
+use model::hir::*;
 
 //
 //  High-Level Builders

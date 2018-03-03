@@ -3,7 +3,7 @@
 //! This module defines the entry point of the interpreter.
 
 use basic::{com, mem};
-use model::{sem, sir};
+use model::{hir, sir};
 use super::reg::Registry;
 
 /// Stysh Interpreter.
@@ -41,9 +41,9 @@ impl<'a, 'g, 'local> Interpreter<'a, 'g, 'local>
     pub fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph<'g>,
-        arguments: &'local [sem::Value<'local>],
+        arguments: &'local [hir::Value<'local>],
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let frame = FrameInterpreter::new(self.registry, self.local_arena);
         self.global_arena.intern(&frame.evaluate(cfg, arguments))
@@ -72,9 +72,9 @@ impl<'a, 'g, 'local> FrameInterpreter<'a, 'g, 'local>
     fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph<'g>,
-        arguments: &'local [sem::Value<'local>]
+        arguments: &'local [hir::Value<'local>]
     )
-        -> sem::Value<'local>
+        -> hir::Value<'local>
     {
         use self::BlockResult::*;
 
@@ -82,7 +82,7 @@ impl<'a, 'g, 'local> FrameInterpreter<'a, 'g, 'local>
             registry: &'a Registry<'g>,
             arena: &'local mem::Arena,
             block: &'g sir::BasicBlock<'g>,
-            arguments: &'local [sem::Value<'local>],
+            arguments: &'local [hir::Value<'local>],
         )
             -> BlockResult<'local>
         where
@@ -106,7 +106,7 @@ impl<'a, 'g, 'local> FrameInterpreter<'a, 'g, 'local>
             ) 
             {
                 Jump(index, args) => (index, args),
-                Return(v) => return sem::Value {
+                Return(v) => return hir::Value {
                     type_: v.type_,
                     range: com::Range::new(0, 0),
                     expr: v.expr,
@@ -126,8 +126,8 @@ struct BlockInterpreter<'a, 'g, 'local>
 {
     registry: &'a Registry<'g>,
     arena: &'local mem::Arena,
-    arguments: &'local [sem::Value<'local>],
-    bindings: mem::Array<'local, sem::Value<'local>>,
+    arguments: &'local [hir::Value<'local>],
+    bindings: mem::Array<'local, hir::Value<'local>>,
 }
 
 impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
@@ -136,7 +136,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
     fn new(
         registry: &'a Registry<'g>,
         arena: &'local mem::Arena,
-        arguments: &'local [sem::Value<'local>]
+        arguments: &'local [hir::Value<'local>]
     )
         -> BlockInterpreter<'a, 'g, 'local>
     {
@@ -166,7 +166,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         }
     }
 
-    fn eval_instr(&self, instr: &sir::Instruction<'g>) -> sem::Value<'local>
+    fn eval_instr(&self, instr: &sir::Instruction<'g>) -> hir::Value<'local>
     {
         use model::sir::Instruction::*;
 
@@ -178,26 +178,26 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         }
     }
 
-    fn eval_call(&self, fun: sem::Callable, args: &[sir::ValueId])
-        -> sem::Value<'local>
+    fn eval_call(&self, fun: hir::Callable, args: &[sir::ValueId])
+        -> hir::Value<'local>
     {
         match fun {
-            sem::Callable::Builtin(b) => self.eval_builtin(b, args),
-            sem::Callable::Function(ref f) => self.eval_function(f, args),
+            hir::Callable::Builtin(b) => self.eval_builtin(b, args),
+            hir::Callable::Function(ref f) => self.eval_function(f, args),
             _ => panic!("unimplemented - eval_call - {:?}", fun),
         }
     }
 
-    fn eval_builtin(&self, fun: sem::BuiltinFunction, args: &[sir::ValueId])
-        -> sem::Value<'local>
+    fn eval_builtin(&self, fun: hir::BuiltinFunction, args: &[sir::ValueId])
+        -> hir::Value<'local>
     {
         self.eval_binary_fun(fun, args)
     }
 
     fn eval_field(&self, value: sir::ValueId, index: u16)
-        -> sem::Value<'local>
+        -> hir::Value<'local>
     {
-        use self::sem::Expr::*;
+        use self::hir::Expr::*;
 
         let index = index as usize;
 
@@ -210,10 +210,10 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
 
     fn eval_function(
         &self,
-        fun: &sem::FunctionProto,
+        fun: &hir::FunctionProto,
         args: &[sir::ValueId]
     )
-        -> sem::Value<'local>
+        -> hir::Value<'local>
     {
         let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
         let interpreter = FrameInterpreter::new(self.registry, self.arena);
@@ -228,29 +228,29 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
 
     fn eval_binary_fun(
         &self,
-        fun: sem::BuiltinFunction,
+        fun: hir::BuiltinFunction,
         args: &[sir::ValueId]
     )
-        -> sem::Value<'local>
+        -> hir::Value<'local>
     {
-        use model::sem::BuiltinFunction::*;
-        use model::sem::BuiltinValue::{Bool, Int};
+        use model::hir::BuiltinFunction::*;
+        use model::hir::BuiltinValue::{Bool, Int};
 
         assert_eq!(args.len(), 2);
 
-        fn get_builtin<'a>(value: sem::Value<'a>) -> sem::BuiltinValue<'a> {
+        fn get_builtin<'a>(value: hir::Value<'a>) -> hir::BuiltinValue<'a> {
             match value.expr {
-                sem::Expr::BuiltinVal(b) => b,
+                hir::Expr::BuiltinVal(b) => b,
                 _ => unreachable!(),
             }
         }
 
-        fn to_bool(value: sem::BuiltinValue) -> bool {
+        fn to_bool(value: hir::BuiltinValue) -> bool {
             use std::convert::Into;
             Into::<bool>::into(value)
         }
 
-        fn to_int(value: sem::BuiltinValue) -> i64 {
+        fn to_int(value: hir::BuiltinValue) -> i64 {
             use std::convert::Into;
             Into::<i64>::into(value)
         }
@@ -275,21 +275,21 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             Xor => Bool(to_bool(left()) ^ to_bool(right())),
         };
 
-        sem::Value {
+        hir::Value {
             type_: fun.result_type(),
             range: com::Range::new(0, 0),
-            expr: sem::Expr::BuiltinVal(value),
+            expr: hir::Expr::BuiltinVal(value),
             gvn: Default::default(),
         }
     }
 
     fn eval_new(
         &self,
-        type_: sem::Type<'local>,
+        type_: hir::Type<'local>,
         fields: &[sir::ValueId],
         range: com::Range
     )
-        -> sem::Value<'local>
+        -> hir::Value<'local>
     {
         let mut elements = mem::Array::with_capacity(fields.len(), self.arena);
 
@@ -297,34 +297,34 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
             elements.push(self.get_value(*id))
         }
 
-        sem::Value {
+        hir::Value {
             type_: type_,
             range: range,
-            expr: sem::Expr::Tuple(sem::Tuple{ fields: elements.into_slice() }),
+            expr: hir::Expr::Tuple(hir::Tuple{ fields: elements.into_slice() }),
             gvn: Default::default(),
         }
     }
 
-    fn load(&self, v: sem::BuiltinValue, range: com::Range)
-        -> sem::Value<'local>
+    fn load(&self, v: hir::BuiltinValue, range: com::Range)
+        -> hir::Value<'local>
     {
         let type_ = match v {
-            sem::BuiltinValue::Bool(_) => sem::BuiltinType::Bool,
-            sem::BuiltinValue::Int(_) => sem::BuiltinType::Int,
-            sem::BuiltinValue::String(_) => sem::BuiltinType::String,
+            hir::BuiltinValue::Bool(_) => hir::BuiltinType::Bool,
+            hir::BuiltinValue::Int(_) => hir::BuiltinType::Int,
+            hir::BuiltinValue::String(_) => hir::BuiltinType::String,
         };
 
-        let value = sem::Value {
-            type_: sem::Type::Builtin(type_),
+        let value = hir::Value {
+            type_: hir::Type::Builtin(type_),
             range: range,
-            expr: sem::Expr::BuiltinVal(v),
+            expr: hir::Expr::BuiltinVal(v),
             gvn: Default::default(),
         };
 
         self.arena.intern(&value)
     }
 
-    fn get_value(&self, id: sir::ValueId) -> sem::Value<'local> {
+    fn get_value(&self, id: sir::ValueId) -> hir::Value<'local> {
         if let Some(i) = id.as_instruction() {
             debug_assert!(
                 i < self.bindings.len(), "{} not in {:?}", i, self.bindings
@@ -342,8 +342,8 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
 
     fn get_branch(&self, index: sir::ValueId) -> usize {
         match self.get_value(index).expr {
-            sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)) => i as usize,
-            sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(cond))
+            hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)) => i as usize,
+            hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(cond))
                 => if cond { 0 } else { 1 },
             _ => unreachable!(),
         }
@@ -362,8 +362,8 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
 }
 
 enum BlockResult<'a> {
-    Jump(sir::BlockId, &'a [sem::Value<'a>]),
-    Return(sem::Value<'a>),
+    Jump(sir::BlockId, &'a [hir::Value<'a>]),
+    Return(hir::Value<'a>),
 }
 
 //
@@ -372,7 +372,7 @@ enum BlockResult<'a> {
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::{sem, sir};
+    use model::{hir, sir};
     use super::super::reg::{Registry, SimpleRegistry};
 
     #[test]
@@ -383,7 +383,7 @@ mod tests {
         let instructions = [
             instr_load_int(1),
             instr_load_int(2),
-            instr_builtin(sem::BuiltinFunction::Add, &arguments),
+            instr_builtin(hir::BuiltinFunction::Add, &arguments),
         ];
         let blocks = [ block_return(&[], &instructions) ];
         let cfg = sir::ControlFlowGraph { blocks: &blocks };
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn add_with_arguments() {
         let global_arena = mem::Arena::new();
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = hir::Type::Builtin(hir::BuiltinType::Int);
 
         assert_eq!(
             eval(
@@ -408,7 +408,7 @@ mod tests {
                         &[int, int],
                         &[
                             instr_builtin(
-                                sem::BuiltinFunction::Add,
+                                hir::BuiltinFunction::Add,
                                 &[ val_arg(0), val_arg(1) ]
                             ),
                         ]
@@ -424,7 +424,7 @@ mod tests {
         use model::sir::TerminatorInstruction::*;
 
         let global_arena = mem::Arena::new();
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = hir::Type::Builtin(hir::BuiltinType::Int);
 
         for &(condition, result) in &[(true, sem_int(1)), (false, sem_int(2))] {
             assert_eq!(
@@ -465,8 +465,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let mut registry = SimpleRegistry::new(&global_arena);
 
-        let id = sem::ItemIdentifier(range(42, 5));
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let id = hir::ItemIdentifier(range(42, 5));
+        let int = hir::Type::Builtin(hir::BuiltinType::Int);
         
         registry.insert(
             id,
@@ -488,7 +488,7 @@ mod tests {
                     &[],
                     &[
                         sir::Instruction::Call(
-                            sem::Callable::Function(sem::FunctionProto {
+                            hir::Callable::Function(hir::FunctionProto {
                                 name: id,
                                 range: range(0, 0),
                                 arguments: &[],
@@ -517,9 +517,9 @@ mod tests {
     fn new_tuple() {
         let global_arena = mem::Arena::new();
 
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
+        let int = hir::Type::Builtin(hir::BuiltinType::Int);
         let inner_type = [int, int];
-        let type_ = sem::Type::Tuple(sem::Tuple { fields: &inner_type });
+        let type_ = hir::Type::Tuple(hir::Tuple { fields: &inner_type });
 
         assert_eq!(
             eval(
@@ -539,10 +539,10 @@ mod tests {
                     )]
                 }
             ),
-            sem::Value {
+            hir::Value {
                 type_: type_,
                 range: range(0, 0),
-                expr: sem::Expr::Tuple(sem::Tuple {
+                expr: hir::Expr::Tuple(hir::Tuple {
                     fields: &[sem_int(1), sem_int(2)],
                 }),
                 gvn: Default::default(),
@@ -554,11 +554,11 @@ mod tests {
     fn record_field() {
         let global_arena = mem::Arena::new();
 
-        let int = sem::Type::Builtin(sem::BuiltinType::Int);
-        let rec = sem::Type::Rec(sem::RecordProto {
-            name: sem::ItemIdentifier(range(5, 4)),
+        let int = hir::Type::Builtin(hir::BuiltinType::Int);
+        let rec = hir::Type::Rec(hir::RecordProto {
+            name: hir::ItemIdentifier(range(5, 4)),
             range: range(0, 20),
-            enum_: sem::ItemIdentifier::unresolved(),
+            enum_: hir::ItemIdentifier::unresolved(),
         });
 
         assert_eq!(
@@ -606,10 +606,10 @@ mod tests {
 
     fn eval<'g>(
         global_arena: &'g mem::Arena,
-        arguments: &[sem::Value<'g>],
+        arguments: &[hir::Value<'g>],
         cfg: &sir::ControlFlowGraph<'g>
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let registry = SimpleRegistry::new(global_arena);
         global_arena.intern(
@@ -620,10 +620,10 @@ mod tests {
     fn eval_with_registry<'g>(
         global_arena: &'g mem::Arena,
         registry: &'g Registry<'g>,
-        arguments: &[sem::Value<'g>],
+        arguments: &[hir::Value<'g>],
         cfg: &sir::ControlFlowGraph<'g>,
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         use super::Interpreter;
 
@@ -635,20 +635,20 @@ mod tests {
         result
     }
 
-    fn sem_int(i: i64) -> sem::Value<'static> {
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+    fn sem_int(i: i64) -> hir::Value<'static> {
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::Int),
             range: range(0, 0),
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(i)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)),
             gvn: Default::default(),
         }
     }
 
-    fn sem_string<'a>(s: &'a [u8]) -> sem::Value<'a> {
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::String),
+    fn sem_string<'a>(s: &'a [u8]) -> hir::Value<'a> {
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range(0, 0),
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(s)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(s)),
             gvn: Default::default(),
         }
     }
@@ -661,31 +661,31 @@ mod tests {
         sir::ValueId::new_instruction(index)
     }
 
-    fn instr_builtin<'a>(fun: sem::BuiltinFunction, args: &'a [sir::ValueId])
+    fn instr_builtin<'a>(fun: hir::BuiltinFunction, args: &'a [sir::ValueId])
         -> sir::Instruction<'a>
     {
-        sir::Instruction::Call(sem::Callable::Builtin(fun), args, range(0, 0))
+        sir::Instruction::Call(hir::Callable::Builtin(fun), args, range(0, 0))
     }
 
-    fn instr_field<'a>(type_: sem::Type<'a>, value: sir::ValueId, index: u16)
+    fn instr_field<'a>(type_: hir::Type<'a>, value: sir::ValueId, index: u16)
         -> sir::Instruction<'a>
     {
         sir::Instruction::Field(type_, value, index, range(0, 0))
     }
 
     fn instr_load_bool(value: bool) -> sir::Instruction<'static> {
-        sir::Instruction::Load(sem::BuiltinValue::Bool(value), range(0, 0))
+        sir::Instruction::Load(hir::BuiltinValue::Bool(value), range(0, 0))
     }
 
     fn instr_load_int(i: i64) -> sir::Instruction<'static> {
-        sir::Instruction::Load(sem::BuiltinValue::Int(i), range(0, 0))
+        sir::Instruction::Load(hir::BuiltinValue::Int(i), range(0, 0))
     }
 
     fn instr_load_string<'a>(s: &'a [u8]) -> sir::Instruction<'a> {
-        sir::Instruction::Load(sem::BuiltinValue::String(s), range(0, 0))
+        sir::Instruction::Load(hir::BuiltinValue::String(s), range(0, 0))
     }
 
-    fn instr_new<'a>(type_: sem::Type<'a>, values: &'a [sir::ValueId])
+    fn instr_new<'a>(type_: hir::Type<'a>, values: &'a [sir::ValueId])
         -> sir::Instruction<'a>
     {
         sir::Instruction::New(type_, values, range(0, 0))
@@ -699,7 +699,7 @@ mod tests {
     }
 
     fn block_return<'a>(
-        args: &'a [sem::Type],
+        args: &'a [hir::Type],
         code: &'a [sir::Instruction<'a>]
     )
         -> sir::BasicBlock<'a>

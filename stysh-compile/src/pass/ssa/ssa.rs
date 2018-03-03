@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::{sem, sir};
+use model::{hir, sir};
 
 use super::proto::*;
 
@@ -20,7 +20,7 @@ pub struct GraphBuilder<'a, 'g, 'local>
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
 }
 
 impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
@@ -33,7 +33,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
-        registry: &'a sem::Registry<'g>,
+        registry: &'a hir::Registry<'g>,
     )
         -> GraphBuilder<'a, 'g, 'local>
     {
@@ -41,7 +41,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Translates a semantic expression into its control-flow graph.
-    pub fn from_value(&self, expr: &sem::Value<'g>)
+    pub fn from_value(&self, expr: &hir::Value<'g>)
         -> sir::ControlFlowGraph<'g>
     {
         let mut imp = GraphBuilderImpl::new(
@@ -59,7 +59,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Translates a semantic function into its control-flow graph.
-    pub fn from_function(&self, fun: &sem::Function<'g>)
+    pub fn from_function(&self, fun: &hir::Function<'g>)
         -> sir::ControlFlowGraph<'g>
     {
         let mut arguments = mem::Array::with_capacity(
@@ -68,7 +68,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         for &a in fun.prototype.arguments {
-            if let sem::Binding::Argument(_, gvn, type_, _) = a {
+            if let hir::Binding::Argument(_, gvn, type_, _) = a {
                 arguments.push((gvn.into(), type_));
                 continue;
             }
@@ -101,7 +101,7 @@ struct GraphBuilderImpl<'a, 'g, 'local>
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     blocks: mem::Array<'local, RefCell<ProtoBlock<'g, 'local>>>,
 }
 
@@ -114,7 +114,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
-        registry: &'a sem::Registry<'g>,
+        registry: &'a hir::Registry<'g>,
     )
         -> GraphBuilderImpl<'a, 'g, 'local>
     {
@@ -129,7 +129,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn from_value(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        value: &sem::Value<'g>
+        value: &hir::Value<'g>
     )
     {
         if let Some(mut current) = self.convert_value(current, value) {
@@ -159,7 +159,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_value(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        value: &sem::Value<'g>
+        value: &hir::Value<'g>
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
@@ -168,15 +168,15 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let gvn = value.gvn;
 
         match value.expr {
-            sem::Expr::ArgumentRef(_, gvn)
+            hir::Expr::ArgumentRef(_, gvn)
                 => Some(self.convert_identifier(current, t, gvn)),
-            sem::Expr::Block(stmts, v)
+            hir::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
-            sem::Expr::BuiltinVal(val)
+            hir::Expr::BuiltinVal(val)
                 => Some(self.convert_literal(current, val, gvn, r)),
-            sem::Expr::Call(callable, args)
+            hir::Expr::Call(callable, args)
                 => Some(self.convert_call(current, callable, args, gvn, r)),
-            sem::Expr::Constructor(c)
+            hir::Expr::Constructor(c)
                 => Some(self.convert_constructor(
                     current,
                     c.type_,
@@ -184,15 +184,15 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                     gvn,
                     r
                 )),
-            sem::Expr::FieldAccess(v, i)
+            hir::Expr::FieldAccess(v, i)
                 => Some(self.convert_field_access(current, value.type_, v, i, r)),
-            sem::Expr::If(cond, true_, false_)
+            hir::Expr::If(cond, true_, false_)
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
-            sem::Expr::Loop(stmts)
+            hir::Expr::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
-            sem::Expr::Tuple(tuple)
+            hir::Expr::Tuple(tuple)
                 => Some(self.convert_tuple(current, value.type_, tuple, gvn, r)),
-            sem::Expr::VariableRef(_, gvn)
+            hir::Expr::VariableRef(_, gvn)
                 => Some(self.convert_identifier(current, t, gvn)),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
@@ -201,7 +201,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_value_opt(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        value: Option<&sem::Value<'g>>
+        value: Option<&hir::Value<'g>>
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
@@ -215,8 +215,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_block(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        stmts: &[sem::Stmt<'g>],
-        value: Option<&sem::Value<'g>>,
+        stmts: &[hir::Stmt<'g>],
+        value: Option<&hir::Value<'g>>,
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
@@ -227,16 +227,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_call(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        callable: sem::Callable<'g>,
-        args: &[sem::Value<'g>],
-        gvn: sem::Gvn,
+        callable: hir::Callable<'g>,
+        args: &[hir::Value<'g>],
+        gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
     {
         //  :and and :or have short-circuiting semantics.
-        if let sem::Callable::Builtin(b) = callable {
-            use model::sem::BuiltinFunction::{And, Or};
+        if let hir::Callable::Builtin(b) = callable {
+            use model::hir::BuiltinFunction::{And, Or};
 
             match b {
                 And | Or => return self.convert_call_shortcircuit(
@@ -264,16 +264,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_call_shortcircuit(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        fun: sem::BuiltinFunction,
-        args: &[sem::Value<'g>],
-        gvn: sem::Gvn,
+        fun: hir::BuiltinFunction,
+        args: &[hir::Value<'g>],
+        gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
     {
         //  Short circuiting expressions are close to sugar for if/else
         //  expressions.
-        use model::sem::BuiltinFunction::{And, Or};
+        use model::hir::BuiltinFunction::{And, Or};
 
         debug_assert!(args.len() == 2, "Too many arguments: {:?}", args);
 
@@ -284,16 +284,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 current,
                 &args[0],
                 &args[1],
-                &sem::Value::bool_(false).with_range(r.offset(), r.length()),
-                sem::Type::bool_(),
+                &hir::Value::bool_(false).with_range(r.offset(), r.length()),
+                hir::Type::bool_(),
                 gvn
             ),
             Or => self.convert_if_impl(
                 current,
                 &args[0],
-                &sem::Value::bool_(true).with_range(r.offset(), r.length()),
+                &hir::Value::bool_(true).with_range(r.offset(), r.length()),
                 &args[1],
-                sem::Type::bool_(),
+                hir::Type::bool_(),
                 gvn
             ),
             _ => unreachable!("{:?} at {:?}", fun, range),
@@ -303,9 +303,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_constructor(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        rec: sem::RecordProto,
-        args: &[sem::Value<'g>],
-        gvn: sem::Gvn,
+        rec: hir::RecordProto,
+        args: &[hir::Value<'g>],
+        gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -315,7 +315,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::New(sem::Type::Rec(rec), arguments, range)
+            sir::Instruction::New(hir::Type::Rec(rec), arguments, range)
         );
 
         current
@@ -324,8 +324,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_field_access(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        type_: sem::Type<'g>,
-        value: &'g sem::Value<'g>,
+        type_: hir::Type<'g>,
+        value: &'g hir::Value<'g>,
         field: u16,
         range: com::Range,
     )
@@ -345,8 +345,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_identifier(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        type_: sem::Type<'g>,
-        gvn: sem::Gvn,
+        type_: hir::Type<'g>,
+        gvn: hir::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -357,11 +357,11 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_if(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        condition: &sem::Value<'g>,
-        true_: &sem::Value<'g>,
-        false_: &sem::Value<'g>,
-        type_: sem::Type<'g>,
-        gvn: sem::Gvn,
+        condition: &hir::Value<'g>,
+        true_: &hir::Value<'g>,
+        false_: &hir::Value<'g>,
+        type_: hir::Type<'g>,
+        gvn: hir::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -378,11 +378,11 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_if_impl(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        condition: &sem::Value<'g>,
-        true_: &sem::Value<'g>,
-        false_: &sem::Value<'g>,
-        type_: sem::Type<'g>,
-        gvn: sem::Gvn,
+        condition: &hir::Value<'g>,
+        true_: &hir::Value<'g>,
+        false_: &hir::Value<'g>,
+        type_: hir::Type<'g>,
+        gvn: hir::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -391,7 +391,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
-            value: &sem::Value<'g>
+            value: &hir::Value<'g>
         )
             -> Option<BlockId>
         {
@@ -449,8 +449,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_literal(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        val: sem::BuiltinValue<'g>,
-        gvn: sem::Gvn,
+        val: hir::BuiltinValue<'g>,
+        gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -462,8 +462,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_loop(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        stmts: &[sem::Stmt<'g>],
-        gvn: sem::Gvn,
+        stmts: &[hir::Stmt<'g>],
+        gvn: hir::Gvn,
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
@@ -495,12 +495,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
         matched: sir::ValueId,
-        pattern: sem::Pattern<'g>,
-        type_: sem::Type<'g>,
+        pattern: hir::Pattern<'g>,
+        type_: hir::Type<'g>,
     )
         -> ProtoBlock<'g, 'local>
     {
-        use self::sem::Pattern::*;
+        use self::hir::Pattern::*;
 
         let (patterns, types) = match pattern {
             Ignored(_) => { return current; },
@@ -534,7 +534,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_rebind(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        re: sem::ReBinding<'g>,
+        re: hir::ReBinding<'g>,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -546,7 +546,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_rebind_recurse(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        left: &sem::Value<'g>,
+        left: &hir::Value<'g>,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -577,15 +577,15 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         //
         //  The following bit of code captures this reversal.
         match left.expr {
-            sem::Expr::ArgumentRef(_, gvn) |
-                sem::Expr::VariableRef(_, gvn) => {
+            hir::Expr::ArgumentRef(_, gvn) |
+                hir::Expr::VariableRef(_, gvn) => {
                 let id = current.last_value();
                 current.push_rebinding(gvn.into(), id, left.type_);
                 return current;
             },
-            sem::Expr::FieldAccess(v, i)
+            hir::Expr::FieldAccess(v, i)
                 => self.convert_rebind_recurse_field(current, v, i, left.gvn),
-            sem::Expr::Tuple(t)
+            hir::Expr::Tuple(t)
                 => self.convert_rebind_recurse_tuple(current, &t),
             _ => unimplemented!("{:?}", left),
         }
@@ -594,17 +594,17 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_rebind_recurse_field(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        value: &sem::Value<'g>,
+        value: &hir::Value<'g>,
         index: u16,
-        gvn: sem::Gvn,
+        gvn: hir::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn extract_fields<'a, 'g>(v: &'a sem::Value<'g>)
-            -> &'a [sem::Type<'g>]
+        fn extract_fields<'a, 'g>(v: &'a hir::Value<'g>)
+            -> &'a [hir::Type<'g>]
         {
             //  TODO(matthieum): support Rec, which requires a Registry.
-            if let sem::Type::Tuple(t) = v.type_ {
+            if let hir::Type::Tuple(t) = v.type_ {
                 return &t.fields;
             }
 
@@ -653,7 +653,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_rebind_recurse_tuple(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        tuple: &sem::Tuple<'g, sem::Value<'g>>,
+        tuple: &hir::Tuple<'g, hir::Value<'g>>,
     )
         -> ProtoBlock<'g, 'local>
     {
@@ -679,9 +679,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_tuple(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        type_: sem::Type<'g>,
-        tuple: sem::Tuple<'g, sem::Value<'g>>,
-        gvn: sem::Gvn,
+        type_: hir::Type<'g>,
+        tuple: hir::Tuple<'g, hir::Value<'g>>,
+        gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -700,7 +700,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_array_of_values(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        values: &[sem::Value<'g>],
+        values: &[hir::Value<'g>],
     )
         -> (ProtoBlock<'g, 'local>, &'g [sir::ValueId])
     {
@@ -720,13 +720,13 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_statements(
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
-        stmts: &[sem::Stmt<'g>],
+        stmts: &[hir::Stmt<'g>],
     )
         -> Option<ProtoBlock<'g, 'local>>
     {
         for &s in stmts {
             match s {
-                sem::Stmt::Return(r) => {
+                hir::Stmt::Return(r) => {
                     current =
                         self.convert_value(current, &r.value).expect("!Void");
                     current.exit =
@@ -734,41 +734,41 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                     self.blocks.push(RefCell::new(current));
                     return None;
                 },
-                sem::Stmt::Set(re) => {
+                hir::Stmt::Set(re) => {
                     current = self.convert_rebind(current, re);
                 },
-                sem::Stmt::Var(sem::Binding::Variable(pat, value, _)) => {
+                hir::Stmt::Var(hir::Binding::Variable(pat, value, _)) => {
                     current =
                         self.convert_value(current, &value).expect("!Void");
                     let id = current.last_value();
                     current =
                         self.convert_pattern(current, id, pat, value.type_);
                 },
-                sem::Stmt::Var(sem::Binding::Argument(..)) => unimplemented!(),
+                hir::Stmt::Var(hir::Binding::Argument(..)) => unimplemented!(),
             }
         }
 
         Some(current)
     }
 
-    fn binding_of(value: &sem::Value) -> BindingId {
+    fn binding_of(value: &hir::Value) -> BindingId {
         match value.expr {
-            sem::Expr::ArgumentRef(_, gvn) => gvn.into(),
-            sem::Expr::VariableRef(_, gvn) => gvn.into(),
+            hir::Expr::ArgumentRef(_, gvn) => gvn.into(),
+            hir::Expr::VariableRef(_, gvn) => gvn.into(),
             _ => value.gvn.into()
         }
     }
 
-    fn extract_fields_types(&self, type_: sem::Type<'g>) -> &'g [sem::Type<'g>]
+    fn extract_fields_types(&self, type_: hir::Type<'g>) -> &'g [hir::Type<'g>]
     {
         match type_ {
-            sem::Type::Rec(proto) => {
+            hir::Type::Rec(proto) => {
                 if let Some(r) = self.registry.lookup_record(proto.name) {
                     return r.fields;
                 }
                 unimplemented!("Unknown record {:?}", proto.name);
             },
-            sem::Type::Tuple(t) => &t.fields,
+            hir::Type::Tuple(t) => &t.fields,
             _ => unimplemented!("Expected record or tuple, got {:?}", type_),
         }
     }
@@ -850,8 +850,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem::builder::*;
-    use model::sem::*;
+    use model::hir::builder::*;
+    use model::hir::*;
     use model::sir::*;
 
     #[test]
@@ -859,7 +859,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
 
-        let v = env.sem().5;
+        let v = env.hir().5;
         let val = v.call().push(v.int(1, 0)).push(v.int(2, 4)).build();
 
         assert_eq!(
@@ -880,7 +880,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
 
-        let v = env.sem().5;
+        let v = env.hir().5;
 
         assert_eq!(
             env.valueit(
@@ -901,7 +901,7 @@ mod tests {
     fn enum_simple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, _, v) = env.sem();
+        let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(15, 4), 15).enum_(i.id(6, 6)).build();
 
@@ -921,7 +921,7 @@ mod tests {
         //  ":rec Args(Int);    Args(42)"
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, _, v) = env.sem();
+        let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
 
@@ -944,7 +944,7 @@ mod tests {
         //  ":rec Args(Int, Int);   Args(4, 42).1"
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, _, v) = env.sem();
+        let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
         let c =
@@ -971,7 +971,7 @@ mod tests {
     fn block_simple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := 1; :var b := 2; a + b }
         let (a, b) = (v.id(7, 1), v.id(20, 1));
@@ -1000,7 +1000,7 @@ mod tests {
     fn block_rebinding() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := 1; :set a := 2; a }
         let a = v.id(7, 1);
@@ -1026,7 +1026,7 @@ mod tests {
     fn block_rebinding_nested_field() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := (1, (2, 3)); :set a.1.0 := 4; a }
         let a = v.id(7, 1);
@@ -1074,7 +1074,7 @@ mod tests {
     fn block_rebinding_tuple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, p, _, s, _, v) = env.sem();
+        let (_, p, _, s, _, v) = env.hir();
 
         //  "{ :var (a, b) := (1, 2); :set (a, b) := (b, a); a }"
         let (a, b) = (v.id(8, 1), v.id(11, 1));
@@ -1118,7 +1118,7 @@ mod tests {
     fn block_constructor_binding() {
         let global_arena = mem::Arena::new();
         let mut env = Env::new(&global_arena);
-        let (i, p, po, s, t, v) = env.sem();
+        let (i, p, po, s, t, v) = env.hir();
 
         //  :rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }
         let r = po.rec(i.id(5, 1), 0).build();
@@ -1156,7 +1156,7 @@ mod tests {
     fn block_return_simple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  { :return 1; }
         let block = v.block_div().push(s.ret(v.int(1, 10))).build();
@@ -1176,7 +1176,7 @@ mod tests {
     fn block_tuple_binding() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, p, _, s, _, v) = env.sem();
+        let (_, p, _, s, _, v) = env.hir();
 
         //  { :var (a, b) := (1, 2); a }
         let (a, b) = (v.id(8, 1), v.id(11, 1));
@@ -1206,7 +1206,7 @@ mod tests {
     fn fun_simple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, t, v) = env.sem();
+        let (i, _, p, _, t, v) = env.hir();
 
         let (a, b) = (v.id(9, 1), v.id(17, 1));
 
@@ -1240,7 +1240,7 @@ mod tests {
     fn if_simple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let v = env.sem().5;
+        let v = env.hir().5;
 
         //  ":if true { 1 } :else { 2 }"
         let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
@@ -1273,7 +1273,7 @@ mod tests {
 
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, t, v) = env.sem();
+        let (i, _, p, _, t, v) = env.hir();
 
         let (a, b, c) = (v.id(8, 1), v.id(16, 1), v.id(24, 1));
 
@@ -1353,7 +1353,7 @@ mod tests {
     fn if_return() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  ":if true { :return 1; } :else { 2 }"
         let if_ = v.if_(
@@ -1390,7 +1390,7 @@ mod tests {
 
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (i, _, p, _, t, v) = env.sem();
+        let (i, _, p, _, t, v) = env.hir();
 
         //  ":fun fib(current: Int, next: Int, count: Int) -> Int {"     55
         //  "    :if count == 0 {"                                       76
@@ -1473,7 +1473,7 @@ mod tests {
     fn loop_increment() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  "{ :var i := 0; :loop { :set i := i + 1; } }"
         let i = v.id(7, 1);
@@ -1502,7 +1502,7 @@ mod tests {
     fn loop_argument_forwarding() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.sem();
+        let (_, _, _, s, _, v) = env.hir();
 
         //  "{"                                               2
         //  "    :var n := 8;"                               19
@@ -1597,7 +1597,7 @@ mod tests {
             }
         }
 
-        fn sem(&self) -> (
+        fn hir(&self) -> (
             ItemFactory<'g>,
             PatternFactory<'g>,
             PrototypeFactory<'g>,

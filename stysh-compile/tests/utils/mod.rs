@@ -1,17 +1,17 @@
 /// Utilities for the integration tests
 
 use stysh_compile::basic::{com, mem};
-use stysh_compile::model::{ast, sem, sir};
+use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::scp;
 
-pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> sem::Value<'g> {
+pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> hir::Value<'g> {
     let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new(raw);
-    let fake = sem::mocks::MockRegistry::new(arena);
+    let fake = hir::mocks::MockRegistry::new(arena);
     let mut scope =
         scp::BlockScope::new(raw, &builtin, &fake, arena, &scope_arena);
-    let mut def_registry = sem::mocks::MockRegistry::new(arena);
+    let mut def_registry = hir::mocks::MockRegistry::new(arena);
     let mut cfg_registry = int::SimpleRegistry::new(arena);
 
     interpret_impl(raw, &mut scope, &mut def_registry, &mut cfg_registry, &arena)
@@ -23,11 +23,11 @@ pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> sem::Value<'g> {
 fn interpret_impl<'a, 'g, 's>(
     raw: &'g [u8],
     scope: &mut scp::BlockScope<'a, 'g, 's>,
-    def_registry: &mut sem::mocks::MockRegistry<'g>,
+    def_registry: &mut hir::mocks::MockRegistry<'g>,
     cfg_registry: &mut int::SimpleRegistry<'g>,
     arena: &'g mem::Arena
 )
-    -> sem::Value<'g>
+    -> hir::Value<'g>
 where
     'g: 'a + 's
 {
@@ -44,7 +44,7 @@ where
     for &node in nodes {
         match node {
             ast::Node::Item(i) => {
-                use self::sem::Prototype::*;
+                use self::hir::Prototype::*;
 
                 let code = code.clone();
                 let prototype =
@@ -70,7 +70,7 @@ where
 
     //  Pull definitions together
     for (i, p) in prototypes {
-        use self::sem::Item::*;
+        use self::hir::Item::*;
 
         let code = code.clone();
         let item = create_item(&i, p, code, scope, def_registry, arena, &mut local_arena);
@@ -124,11 +124,11 @@ fn create_prototype<'a, 'g>(
     item: &ast::Item,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
-    -> sem::Prototype<'g>
+    -> hir::Prototype<'g>
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
@@ -141,14 +141,14 @@ fn create_prototype<'a, 'g>(
 
 fn create_item<'a, 'g>(
     item: &ast::Item,
-    proto: &'g sem::Prototype<'g>,
+    proto: &'g hir::Prototype<'g>,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
-    -> sem::Item<'g>
+    -> hir::Item<'g>
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
@@ -163,11 +163,11 @@ fn create_value<'a, 'g>(
     expr: &ast::Expression,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
-    -> sem::Value<'g>
+    -> hir::Value<'g>
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
@@ -179,10 +179,10 @@ fn create_value<'a, 'g>(
 }
 
 fn create_cfg_from_value<'g>(
-    value: &sem::Value<'g>,
+    value: &hir::Value<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena,
-    registry: &sem::Registry<'g>,
+    registry: &hir::Registry<'g>,
 )
     -> sir::ControlFlowGraph<'g>
 {
@@ -202,10 +202,10 @@ fn create_cfg_from_value<'g>(
 }
 
 fn create_cfg_from_function<'g>(
-    fun: &sem::Function<'g>,
+    fun: &hir::Function<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena,
-    registry: &sem::Registry<'g>,
+    registry: &hir::Registry<'g>,
 )
     -> sir::ControlFlowGraph<'g>
 {
@@ -230,7 +230,7 @@ fn evaluate<'a, 'g>(
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena,
 )
-    -> sem::Value<'g>
+    -> hir::Value<'g>
 {
     use stysh_compile::pass::int::Interpreter;
 

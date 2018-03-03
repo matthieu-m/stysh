@@ -33,7 +33,7 @@
 use std;
 
 use basic::{com, mem};
-use model::sem;
+use model::hir;
 
 /// A Control Flow Graph.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -48,7 +48,7 @@ pub struct ControlFlowGraph<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BasicBlock<'a> {
     /// The list of arguments of this basic block.
-    pub arguments: &'a [sem::Type<'a>],
+    pub arguments: &'a [hir::Type<'a>],
     /// The list of instructions of this basic block.
     pub instructions: &'a [Instruction<'a>],
     /// The last instruction of this basic block.
@@ -67,13 +67,13 @@ pub struct ValueId(u16);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Instruction<'a> {
     /// A function call.
-    Call(sem::Callable<'a>, &'a [ValueId], com::Range),
+    Call(hir::Callable<'a>, &'a [ValueId], com::Range),
     /// A field load.
-    Field(sem::Type<'a>, ValueId, u16, com::Range),
+    Field(hir::Type<'a>, ValueId, u16, com::Range),
     /// A value load.
-    Load(sem::BuiltinValue<'a>, com::Range),
+    Load(hir::BuiltinValue<'a>, com::Range),
     /// A composite creation.
-    New(sem::Type<'a>, &'a [ValueId], com::Range),
+    New(hir::Type<'a>, &'a [ValueId], com::Range),
 }
 
 /// An instruction.
@@ -138,7 +138,7 @@ impl<'a> Instruction<'a> {
     }
 
     /// Returns the resulting type of the instruction.
-    pub fn result_type(&self) -> sem::Type<'a> {
+    pub fn result_type(&self) -> hir::Type<'a> {
         use self::Instruction::*;
 
         match *self {

@@ -2,5 +2,5 @@
 
 pub mod tt;
 pub mod ast;
-pub mod sem;
+pub mod hir;
 pub mod sir;

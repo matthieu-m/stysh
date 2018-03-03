@@ -5,7 +5,7 @@
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::{ast, sem};
+use model::{ast, hir};
 
 use super::scp::{BlockScope, Scope};
 
@@ -17,7 +17,7 @@ pub struct NameResolver<'a, 'g, 'local>
 {
     code_fragment: &'a [u8],
     scope: &'a Scope<'g>,
-    registry: &'a sem::Registry<'g>,
+    registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -32,7 +32,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     pub fn new(
         source: &'a [u8],
         scope: &'a Scope<'g>,
-        registry: &'a sem::Registry<'g>,
+        registry: &'a hir::Registry<'g>,
         global: &'g mem::Arena,
         local: &'local mem::Arena
     )
@@ -48,7 +48,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&mut self, p: &ast::Pattern) -> sem::Pattern<'g> {
+    pub fn pattern_of(&mut self, p: &ast::Pattern) -> hir::Pattern<'g> {
         use model::ast::Pattern;
 
         match *p {
@@ -60,7 +60,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&mut self, t: &ast::Type) -> sem::Type<'g> {
+    pub fn type_of(&mut self, t: &ast::Type) -> hir::Type<'g> {
         use model::ast::Type;
 
         match *t {
@@ -72,7 +72,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&mut self, e: &ast::Expression) -> sem::Value<'g> {
+    pub fn value_of(&mut self, e: &ast::Expression) -> hir::Value<'g> {
         self.value_of_expr(e)
     }
 }
@@ -87,9 +87,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         &mut self,
         c: ast::Constructor<ast::Pattern>,
     )
-        -> sem::Pattern<'g>
+        -> hir::Pattern<'g>
     {
-        let rec = if let sem::Type::Rec(p) = self.type_of(&c.type_) {
+        let rec = if let hir::Type::Rec(p) = self.type_of(&c.type_) {
             p
         } else {
             unimplemented!("Unknown type - {:?}", c.type_)
@@ -102,7 +102,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             arguments.push(self.pattern_of(f));
         }
 
-        sem::Pattern::Constructor(sem::Constructor {
+        hir::Pattern::Constructor(hir::Constructor {
             type_: rec,
             arguments: arguments.into_slice(),
             range: c.span(),
@@ -110,13 +110,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn pattern_of_ignored(&mut self, underscore: ast::VariableIdentifier)
-        -> sem::Pattern<'static>
+        -> hir::Pattern<'static>
     {
-        sem::Pattern::Ignored(underscore.span())
+        hir::Pattern::Ignored(underscore.span())
     }
 
     fn pattern_of_tuple(&mut self, t: &ast::Tuple<ast::Pattern>)
-        -> sem::Pattern<'g>
+        -> hir::Pattern<'g>
     {
         let mut fields =
             mem::Array::with_capacity(t.fields.len(), self.global_arena);
@@ -125,35 +125,35 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             fields.push(self.pattern_of(f));
         }
 
-        sem::Pattern::Tuple(
-            sem::Tuple { fields: fields.into_slice() },
+        hir::Pattern::Tuple(
+            hir::Tuple { fields: fields.into_slice() },
             t.span(),
         )
     }
 
     fn pattern_of_var(&self, var: ast::VariableIdentifier)
-        -> sem::Pattern<'static>
+        -> hir::Pattern<'static>
     {
-        sem::Pattern::Var(var.into(), Default::default())
+        hir::Pattern::Var(var.into(), Default::default())
     }
 
     fn stmt_of_return<'b>(&self,
         ret: &ast::Return,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
-        -> sem::Stmt<'g>
+        -> hir::Stmt<'g>
         where
             'g: 'b
     {
         let range = ret.span();
-        let unit = sem::Value::unit().with_range(range.end_offset() - 3, 2);
+        let unit = hir::Value::unit().with_range(range.end_offset() - 3, 2);
 
         let value =
             ret.expr
                 .map(|e| self.rescope(scope).value_of_expr(&e))
                 .unwrap_or(unit);
 
-        sem::Stmt::Return(sem::Return { value, range })
+        hir::Stmt::Return(hir::Return { value, range })
     }
 
     fn stmt_of_set<'b>(
@@ -161,14 +161,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         set: &ast::VariableReBinding,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
-        -> sem::Stmt<'g>
+        -> hir::Stmt<'g>
         where
             'g: 'b
     {
         let range = set.span();
         let left = self.rescope(scope).value_of_expr(&set.left);
         let right = self.rescope(scope).value_of_expr(&set.expr);
-        sem::Stmt::Set(sem::ReBinding { left, right, range })
+        hir::Stmt::Set(hir::ReBinding { left, right, range })
     }
 
     fn stmt_of_var<'b>(
@@ -176,57 +176,57 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         var: &ast::VariableBinding,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
-        -> sem::Stmt<'g>
+        -> hir::Stmt<'g>
         where
             'g: 'b
     {
         let value = self.rescope(scope).value_of_expr(&var.expr);
         let pattern = self.rescope(self.scope).pattern_of(&var.pattern);
         scope.add_pattern(pattern, value.type_);
-        sem::Stmt::Var(sem::Binding::Variable(pattern, value, var.span()))
+        hir::Stmt::Var(hir::Binding::Variable(pattern, value, var.span()))
     }
 
-    fn type_of_field_index(&self, value: &sem::Value<'g>, index: u16)
-        -> sem::Type<'g>
+    fn type_of_field_index(&self, value: &hir::Value<'g>, index: u16)
+        -> hir::Type<'g>
     {
         let index = index as usize;
 
         let type_ = match value.type_ {
-            sem::Type::Rec(rec) =>
+            hir::Type::Rec(rec) =>
                 self.registry
                     .lookup_record(rec.name)
                     .and_then(|r| r.fields.get(index)),
-            sem::Type::Tuple(tup) => tup.fields.get(index),
+            hir::Type::Tuple(tup) => tup.fields.get(index),
             _ => None,
         };
 
-        type_.cloned().unwrap_or(sem::Type::unresolved())
+        type_.cloned().unwrap_or(hir::Type::unresolved())
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
-        -> sem::Type<'g>
+        -> hir::Type<'g>
     {
         //  TODO: need to handle multi-level nesting.
         assert_eq!(p.components.len(), 1);
 
-        if let sem::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
+        if let hir::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
             if let Some(e) = self.registry.lookup_enum(e.name) {
                 for r in e.variants {
                     if self.source(r.prototype.name.0) == self.source(t.0) {
-                        return sem::Type::Rec(*r.prototype);
+                        return hir::Type::Rec(*r.prototype);
                     }
                 }
             }
         }
 
-        sem::Type::unresolved()
+        hir::Type::unresolved()
     }
 
-    fn type_of_simple(&self, t: ast::TypeIdentifier) -> sem::Type<'g> {
+    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type<'g> {
         self.scope.lookup_type(t.into())
     }
 
-    fn type_of_tuple(&mut self, t: &ast::Tuple<ast::Type>) -> sem::Type<'g> {
+    fn type_of_tuple(&mut self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
         let mut fields =
             mem::Array::with_capacity(t.fields.len(), self.global_arena);
 
@@ -234,10 +234,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             fields.push(self.type_of(f));
         }
 
-        sem::Type::Tuple(sem::Tuple { fields: fields.into_slice() })
+        hir::Type::Tuple(hir::Tuple { fields: fields.into_slice() })
     }
 
-    fn value_of_expr(&mut self, expr: &ast::Expression) -> sem::Value<'g> {
+    fn value_of_expr(&mut self, expr: &ast::Expression) -> hir::Value<'g> {
         use model::ast::Expression::*;
 
         match *expr {
@@ -257,7 +257,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_block(&mut self, block: &ast::Block) -> sem::Value<'g> {
+    fn value_of_block(&mut self, block: &ast::Block) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.code_fragment,
@@ -273,13 +273,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let type_ =
             value.map(|v| v.type_)
                 .or_else(|| stmts.last().map(|s| s.result_type()))
-                .unwrap_or(sem::Type::unit());
+                .unwrap_or(hir::Type::unit());
         let expr = value.map(|v| &*self.global_arena.insert(v));
 
-        sem::Value {
+        hir::Value {
             type_: type_,
             range: block.span(),
-            expr: sem::Expr::Block(stmts, expr),
+            expr: hir::Expr::Block(stmts, expr),
             gvn: Default::default(),
         }
     }
@@ -290,10 +290,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         left: &ast::Expression,
         right: &ast::Expression
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         use model::ast::BinaryOperator as O;
-        use model::sem::BuiltinFunction as F;
+        use model::hir::BuiltinFunction as F;
 
         let range = left.span().extend(right.span());
 
@@ -316,11 +316,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             O::Xor => F::Xor,
         };
 
-        sem::Value {
+        hir::Value {
             type_: op.result_type(),
             range: range,
-            expr: sem::Expr::Call(
-                sem::Callable::Builtin(op),
+            expr: hir::Expr::Call(
+                hir::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[left, right])
             ),
             gvn: Default::default(),
@@ -328,9 +328,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_constructor(&mut self, c: ast::Constructor<ast::Expression>)
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
-        if let sem::Type::Rec(record) = self.type_of(&c.type_) {
+        if let hir::Type::Rec(record) = self.type_of(&c.type_) {
             let mut values = mem::Array::with_capacity(
                 c.arguments.len(),
                 self.global_arena
@@ -340,10 +340,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                 values.push(self.value_of(e));
             }
 
-            return sem::Value {
-                type_: sem::Type::Rec(record),
+            return hir::Value {
+                type_: hir::Type::Rec(record),
                 range: c.span(),
-                expr: sem::Expr::Constructor(sem::Constructor {
+                expr: hir::Expr::Constructor(hir::Constructor {
                     type_: record,
                     arguments: values.into_slice(),
                     range: c.span(),
@@ -355,7 +355,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         unimplemented!("Unknown constructor call {:?}", c);
     }
 
-    fn value_of_call(&mut self, fun: ast::FunctionCall) -> sem::Value<'g> {
+    fn value_of_call(&mut self, fun: ast::FunctionCall) -> hir::Value<'g> {
         let callable = if let ast::Expression::Var(id) = *fun.function {
             self.scope.lookup_callable(id.into())
         } else {
@@ -371,39 +371,39 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             values.push(self.value_of(e));
         }
 
-        sem::Value {
+        hir::Value {
             type_: callable.result_type(),
             range: fun.span(),
-            expr: sem::Expr::Call(callable, values.into_slice()),
+            expr: hir::Expr::Call(callable, values.into_slice()),
             gvn: Default::default(),
         }
     }
 
-    fn value_of_field(&mut self, field: ast::FieldAccess) -> sem::Value<'g> {
+    fn value_of_field(&mut self, field: ast::FieldAccess) -> hir::Value<'g> {
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
         if let Some(index) = self.parse_integral(field.field.0, 1, false) {
             let index = index as _;
 
-            sem::Value {
+            hir::Value {
                 type_: self.type_of_field_index(accessed, index),
                 range: field.span(),
-                expr: sem::Expr::FieldAccess(accessed, index),
+                expr: hir::Expr::FieldAccess(accessed, index),
                 gvn: Default::default(),
             }
         } else {
-            let id = sem::ValueIdentifier(field.field.0);
+            let id = hir::ValueIdentifier(field.field.0);
 
-            sem::Value {
-                type_: sem::Type::unresolved(),
+            hir::Value {
+                type_: hir::Type::unresolved(),
                 range: field.span(),
-                expr: sem::Expr::UnresolvedField(accessed, id),
+                expr: hir::Expr::UnresolvedField(accessed, id),
                 gvn: Default::default(),
             }
         }
     }
 
-    fn value_of_if_else(&mut self, if_else: &ast::IfElse) -> sem::Value<'g> {
+    fn value_of_if_else(&mut self, if_else: &ast::IfElse) -> hir::Value<'g> {
         let condition = self.value_of_expr(&if_else.condition);
         let mut true_branch = self.value_of_block(&if_else.true_expr);
         let mut false_branch = self.value_of_block(&if_else.false_expr);
@@ -423,10 +423,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             Some(true_branch.type_)
         };
 
-        sem::Value {
-            type_: result.unwrap_or(sem::Type::unresolved()),
+        hir::Value {
+            type_: result.unwrap_or(hir::Type::unresolved()),
             range: if_else.span(),
-            expr: sem::Expr::If(
+            expr: hir::Expr::If(
                 self.global_arena.insert(condition),
                 self.global_arena.insert(true_branch),
                 self.global_arena.insert(false_branch),
@@ -436,7 +436,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_literal(&mut self, lit: ast::Literal)
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         match lit {
             ast::Literal::Bool(b, r) => self.value_of_literal_bool(b, r),
@@ -451,12 +451,12 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         value: bool,
         range: com::Range
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Bool),
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::Bool),
             range: range,
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Bool(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(value)),
             gvn: Default::default(),
         }
     }
@@ -466,28 +466,28 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         bytes: &[ast::StringFragment],
         range: com::Range
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let value = self.catenate_fragments(bytes);
 
         //  TODO(matthieum): Fix type, should be Array[[Byte]].
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::String),
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
             gvn: Default::default(),
         }
     }
 
     fn value_of_literal_integral(&mut self, range: com::Range)
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let value = self.parse_integral(range, 0, true).expect("TODO: handle");
 
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Int),
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::Int),
             range: range,
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::Int(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(value)),
             gvn: Default::default(),
         }
     }
@@ -497,19 +497,19 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         string: &[ast::StringFragment],
         range: com::Range
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let value = self.catenate_fragments(string);
 
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::String),
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
-            expr: sem::Expr::BuiltinVal(sem::BuiltinValue::String(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
             gvn: Default::default(),
         }
     }
 
-    fn value_of_loop(&mut self, loop_: &ast::Loop) -> sem::Value<'g> {
+    fn value_of_loop(&mut self, loop_: &ast::Loop) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.code_fragment,
@@ -520,10 +520,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             );
         let stmts = self.statements(&loop_.statements, &mut scope);
 
-        sem::Value {
-            type_: sem::Type::Builtin(sem::BuiltinType::Void),
+        hir::Value {
+            type_: hir::Type::Builtin(hir::BuiltinType::Void),
             range: loop_.span(),
-            expr: sem::Expr::Loop(stmts),
+            expr: hir::Expr::Loop(stmts),
             gvn: Default::default(),
         }
     }
@@ -533,10 +533,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         expr: &ast::Expression,
         range: com::Range,
     )
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         use model::ast::PrefixOperator as O;
-        use model::sem::BuiltinFunction as F;
+        use model::hir::BuiltinFunction as F;
 
         let expr = self.value_of_expr(expr);
 
@@ -544,11 +544,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             O::Not => F::Not,
         };
 
-        sem::Value {
+        hir::Value {
             type_: op.result_type(),
             range: range,
-            expr: sem::Expr::Call(
-                sem::Callable::Builtin(op),
+            expr: hir::Expr::Call(
+                hir::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[expr])
             ),
             gvn: Default::default(),
@@ -556,7 +556,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_tuple(&mut self, tup: &ast::Tuple<ast::Expression>)
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         let mut types =
             mem::Array::with_capacity(tup.fields.len(), self.global_arena);
@@ -569,16 +569,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             values.push(v);
         }
 
-        sem::Value {
-            type_: sem::Type::Tuple(sem::Tuple { fields: types.into_slice() }),
+        hir::Value {
+            type_: hir::Type::Tuple(hir::Tuple { fields: types.into_slice() }),
             range: tup.span(),
-            expr: sem::Expr::Tuple(sem::Tuple { fields: values.into_slice() }),
+            expr: hir::Expr::Tuple(hir::Tuple { fields: values.into_slice() }),
             gvn: Default::default(),
         }
     }
 
     fn value_of_variable(&mut self, var: ast::VariableIdentifier)
-        -> sem::Value<'g>
+        -> hir::Value<'g>
     {
         self.scope.lookup_binding(var.into())
     }
@@ -601,16 +601,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         self.global_arena.insert_slice(buffer.into_slice())
     }
 
-    fn common_type(&self, types: &[sem::Type<'g>]) -> Option<sem::Type<'g>> {
-        types.iter().fold(Some(sem::Type::void()), |acc, current| {
+    fn common_type(&self, types: &[hir::Type<'g>]) -> Option<hir::Type<'g>> {
+        types.iter().fold(Some(hir::Type::void()), |acc, current| {
             self.common_type_impl(acc?, *current)
         })
     }
 
-    fn common_type_impl(&self, left: sem::Type<'g>, right: sem::Type<'g>)
-        -> Option<sem::Type<'g>>
+    fn common_type_impl(&self, left: hir::Type<'g>, right: hir::Type<'g>)
+        -> Option<hir::Type<'g>>
     {
-        use model::sem::*;
+        use model::hir::*;
 
         fn extract_enum_record<'a>(left: Type<'a>, right: Type<'a>)
             -> Option<(EnumProto, RecordProto)>
@@ -630,10 +630,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             None
         }
 
-        if left == right || left == sem::Type::void() {
+        if left == right || left == hir::Type::void() {
             return Some(right);
         }
-        if right == sem::Type::void() {
+        if right == hir::Type::void() {
             return Some(left);
         }
 
@@ -654,12 +654,12 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn implicit_cast(&self, original: sem::Value<'g>, target: sem::Type<'g>)
-        -> sem::Value<'g>
+    fn implicit_cast(&self, original: hir::Value<'g>, target: hir::Type<'g>)
+        -> hir::Value<'g>
     {
-        use model::sem::Type::*;
+        use model::hir::Type::*;
 
-        if original.type_ == target || original.type_ == sem::Type::void() {
+        if original.type_ == target || original.type_ == hir::Type::void() {
             return original;
         }
 
@@ -669,10 +669,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn implicit_to_enum(&self, original: sem::Value<'g>, e: sem::EnumProto)
-        -> sem::Value<'g>
+    fn implicit_to_enum(&self, original: hir::Value<'g>, e: hir::EnumProto)
+        -> hir::Value<'g>
     {
-        use model::sem::*;
+        use model::hir::*;
 
         if let Type::Enum(o) = original.type_ {
             debug_assert!(o == e);
@@ -696,11 +696,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         unreachable!("Should not cast anything but Enum or Rec: {:?}", original);
     }
 
-    fn implicit_cast_impl<F>(&self, original: sem::Value<'g>, f: F)
-        -> sem::Value<'g>
-        where F: FnOnce(sem::Value<'g>) -> sem::Value<'g>
+    fn implicit_cast_impl<F>(&self, original: hir::Value<'g>, f: F)
+        -> hir::Value<'g>
+        where F: FnOnce(hir::Value<'g>) -> hir::Value<'g>
     {
-        use model::sem::*;
+        use model::hir::*;
 
         match original.expr {
             Expr::Block(stmts, v) => {
@@ -721,7 +721,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         stmts: &[ast::Statement],
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
-        -> &'g [sem::Stmt<'g>]
+        -> &'g [hir::Stmt<'g>]
         where
             'g: 'b
     {
@@ -785,16 +785,16 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::{ast, sem};
-    use model::ast::builder::Factory as SynFactory;
-    use model::sem::builder::Factory as SemFactory;
+    use model::{ast, hir};
+    use model::ast::builder::Factory as AstFactory;
+    use model::hir::builder::Factory as HirFactory;
     use super::super::scp::mocks::MockScope;
 
     #[test]
     fn value_basic_add() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
-        let v = SemFactory::new(&global_arena).value();
+        let e = AstFactory::new(&global_arena).expr();
+        let v = HirFactory::new(&global_arena).value();
         let env = Env::new(b"1 + 2", &global_arena);
 
         assert_eq!(
@@ -806,8 +806,8 @@ mod tests {
     #[test]
     fn value_basic_boolean() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
-        let v = SemFactory::new(&global_arena).value();
+        let e = AstFactory::new(&global_arena).expr();
+        let v = HirFactory::new(&global_arena).value();
         let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
@@ -819,14 +819,14 @@ mod tests {
     #[test]
     fn value_basic_constructor() {
         let global_arena = mem::Arena::new();
-        let ast = SynFactory::new(&global_arena);
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+        let ast = AstFactory::new(&global_arena);
+        let hir = HirFactory::new(&global_arena);
+        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
 
         let mut env = Env::new(b"Rec", &global_arena);
 
         let rec = p.rec(i.id(45, 3), 0).build();
-        env.scope.types.insert(i.id(0, 3), sem::Type::Rec(rec));
+        env.scope.types.insert(i.id(0, 3), hir::Type::Rec(rec));
 
         assert_eq!(
             env.value_of(
@@ -839,16 +839,16 @@ mod tests {
     #[test]
     fn value_basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
-        let ast = SynFactory::new(&global_arena);
+        let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+        let hir = HirFactory::new(&global_arena);
+        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
 
         let mut env = Env::new(b"Rec(1)", &global_arena);
 
         let rec = p.rec(i.id(45, 3), 0).build();
-        env.scope.types.insert(i.id(0, 3), sem::Type::Rec(rec));
+        env.scope.types.insert(i.id(0, 3), hir::Type::Rec(rec));
 
         assert_eq!(
             env.value_of(
@@ -864,11 +864,11 @@ mod tests {
     #[test]
     fn value_basic_record_field_access() {
         let global_arena = mem::Arena::new();
-        let ast = SynFactory::new(&global_arena);
+        let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+        let hir = HirFactory::new(&global_arena);
+        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
 
@@ -900,9 +900,9 @@ mod tests {
     #[test]
     fn value_basic_tuple_field_access() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
+        let e = AstFactory::new(&global_arena).expr();
 
-        let v = SemFactory::new(&global_arena).value();
+        let v = HirFactory::new(&global_arena).value();
 
         let env = Env::new(b"(42, 43).1", &global_arena);
 
@@ -922,11 +922,11 @@ mod tests {
     #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
-        let ast = SynFactory::new(&global_arena);
+        let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, v) = (sem.item(), sem.proto(), sem.value());
+        let hir = HirFactory::new(&global_arena);
+        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
 
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
@@ -954,10 +954,10 @@ mod tests {
     #[test]
     fn value_basic_call() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
+        let e = AstFactory::new(&global_arena).expr();
 
-        let sem = SemFactory::new(&global_arena);
-        let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
+        let hir = HirFactory::new(&global_arena);
+        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let mut env = Env::new(b"basic(1, 2)", &global_arena);
 
@@ -982,9 +982,9 @@ mod tests {
     #[test]
     fn value_basic_if_else() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
+        let e = AstFactory::new(&global_arena).expr();
 
-        let v = SemFactory::new(&global_arena).value();
+        let v = HirFactory::new(&global_arena).value();
 
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
@@ -1007,9 +1007,9 @@ mod tests {
     #[test]
     fn value_basic_helloworld() {
         let global_arena = mem::Arena::new();
-        let e = SynFactory::new(&global_arena).expr();
+        let e = AstFactory::new(&global_arena).expr();
 
-        let v = SemFactory::new(&global_arena).value();
+        let v = HirFactory::new(&global_arena).value();
 
         let env = Env::new(b"'Hello, World!'", &global_arena);
 
@@ -1025,16 +1025,16 @@ mod tests {
         let env = Env::new(b"{}", &global_arena);
 
         let ast = {
-            let e = SynFactory::new(&global_arena).expr();
+            let e = AstFactory::new(&global_arena).expr();
             e.block_div().range(0, 2).build()
         };
 
-        let sem = {
-            let v = SemFactory::new(&global_arena).value();
+        let hir = {
+            let v = HirFactory::new(&global_arena).value();
             v.block_div().range(0, 2).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1043,16 +1043,16 @@ mod tests {
         let env = Env::new(b":loop { }", &global_arena);
 
         let ast = {
-            let e = SynFactory::new(&global_arena).expr();
+            let e = AstFactory::new(&global_arena).expr();
             e.loop_(0).build()
         };
 
-        let sem = {
-            let v = SemFactory::new(&global_arena).value();
+        let hir = {
+            let v = HirFactory::new(&global_arena).value();
             v.loop_().range(0, 9).build()
         };
 
-        assert_eq!(env.value_of(&ast), sem);
+        assert_eq!(env.value_of(&ast), hir);
     }
 
     #[test]
@@ -1061,7 +1061,7 @@ mod tests {
         let env = Env::new(b"{ :return 1; }", &global_arena);
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
             e.block_div()
@@ -1069,14 +1069,14 @@ mod tests {
                 .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (s, v) = (f.stmt(), f.value());
 
             v.block_div().push(s.ret(v.int(1, 10))).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1088,7 +1088,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
@@ -1102,8 +1102,8 @@ mod tests {
             ).build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (s, v) = (f.stmt(), f.value());
 
             v.if_(
@@ -1113,7 +1113,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
     }
 
     #[test]
@@ -1125,7 +1125,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
@@ -1137,8 +1137,8 @@ mod tests {
             ).build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (s, v) = (f.stmt(), f.value());
 
             v.if_(
@@ -1148,7 +1148,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
     }
 
     #[test]
@@ -1160,7 +1160,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
@@ -1172,8 +1172,8 @@ mod tests {
             ).build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (s, v) = (f.stmt(), f.value());
 
             v.if_(
@@ -1183,7 +1183,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
     }
 
     #[test]
@@ -1192,7 +1192,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
@@ -1201,8 +1201,8 @@ mod tests {
                     .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -1213,7 +1213,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1225,7 +1225,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(33, 1))
@@ -1240,8 +1240,8 @@ mod tests {
                 .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -1256,7 +1256,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1265,7 +1265,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
@@ -1274,8 +1274,8 @@ mod tests {
                 .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let (a, b) = (v.id(7, 1), v.id(20, 1));
@@ -1288,7 +1288,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1297,7 +1297,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :var _ := 2; a }", &global_arena);
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
@@ -1306,8 +1306,8 @@ mod tests {
                 .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -1318,7 +1318,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
 
     }
 
@@ -1331,7 +1331,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
             e.block(e.var(43, 1))
@@ -1342,8 +1342,8 @@ mod tests {
                 .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (i, p, s, t, v) =
                 (f.item(), f.pat(), f.stmt(), f.type_(), f.value());
 
@@ -1367,7 +1367,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1376,7 +1376,7 @@ mod tests {
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
@@ -1387,8 +1387,8 @@ mod tests {
                     .build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let (a, b) = (v.id(8, 1), v.id(11, 1));
@@ -1401,7 +1401,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1413,7 +1413,7 @@ mod tests {
         );
 
         let ast = {
-            let f = SynFactory::new(&global_arena);
+            let f = AstFactory::new(&global_arena);
             let (e, t) = (f.expr(), f.type_());
 
             e.if_else(
@@ -1427,8 +1427,8 @@ mod tests {
             ).build()
         };
 
-        let sem = {
-            let f = SemFactory::new(&global_arena);
+        let hir = {
+            let f = HirFactory::new(&global_arena);
             let (i, p, v) = (f.item(), f.proto(), f.value());
 
             let enum_ =
@@ -1454,12 +1454,12 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
     }
 
     struct Env<'g> {
         scope: MockScope<'g>,
-        registry: sem::mocks::MockRegistry<'g>,
+        registry: hir::mocks::MockRegistry<'g>,
         fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
@@ -1468,7 +1468,7 @@ mod tests {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
             Env {
                 scope: MockScope::new(fragment, arena),
-                registry: sem::mocks::MockRegistry::new(arena),
+                registry: hir::mocks::MockRegistry::new(arena),
                 fragment: fragment,
                 arena: arena,
             }
@@ -1476,35 +1476,35 @@ mod tests {
 
         fn insert_enum(
             &mut self,
-            enum_: sem::Enum<'g>,
+            enum_: hir::Enum<'g>,
             positions: &[usize],
         )
         {
             let len = enum_.prototype.name.0.length();
             for p in positions {
-                let id = sem::ItemIdentifier(range(*p, len));
-                self.scope.types.insert(id, sem::Type::Enum(*enum_.prototype));
+                let id = hir::ItemIdentifier(range(*p, len));
+                self.scope.types.insert(id, hir::Type::Enum(*enum_.prototype));
             }
             self.registry.enums.insert(enum_.prototype.name, enum_);
         }
 
         fn insert_record(
             &mut self,
-            record: sem::Record<'g>,
+            record: hir::Record<'g>,
             positions: &[usize],
         )
         {
             let len = record.prototype.name.0.length();
             for p in positions {
-                let id = sem::ItemIdentifier(range(*p, len));
-                self.scope.types.insert(id, sem::Type::Rec(*record.prototype));
+                let id = hir::ItemIdentifier(range(*p, len));
+                self.scope.types.insert(id, hir::Type::Rec(*record.prototype));
             }
             self.registry.records.insert(record.prototype.name, record);
         }
 
         fn insert_function_prototype(
             &mut self,
-            proto: sem::FunctionProto<'g>,
+            proto: hir::FunctionProto<'g>,
             positions: &[usize],
 
         )
@@ -1512,8 +1512,8 @@ mod tests {
             let len = proto.name.0.length();
 
             for p in positions {
-                let id = sem::ValueIdentifier(range(*p, len));
-                self.scope.callables.insert(id, sem::Callable::Function(proto));
+                let id = hir::ValueIdentifier(range(*p, len));
+                self.scope.callables.insert(id, hir::Callable::Function(proto));
             }
         }
 
@@ -1529,7 +1529,7 @@ mod tests {
             )
         }
 
-        fn value_of(&self, expr: &ast::Expression) -> sem::Value<'g> {
+        fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {
             let mut local_arena = mem::Arena::new();
             let result = self.resolver(&local_arena).value_of(expr);
             local_arena.recycle();

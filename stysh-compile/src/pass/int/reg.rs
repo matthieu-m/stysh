@@ -7,7 +7,7 @@
 //! implementation of the `Registry` trait.
 
 use basic::mem;
-use model::{sem, sir};
+use model::{hir, sir};
 
 /// Registry
 ///
@@ -15,7 +15,7 @@ use model::{sem, sir};
 /// corresponding to a function.
 pub trait Registry<'a> {
     /// Look-up a ControlFlowGraph.
-    fn lookup_cfg(&self, key: sem::ItemIdentifier)
+    fn lookup_cfg(&self, key: hir::ItemIdentifier)
         -> Option<sir::ControlFlowGraph<'a>>;
 }
 
@@ -23,7 +23,7 @@ pub trait Registry<'a> {
 ///
 /// A simple implementation of a `Registry`.
 pub struct SimpleRegistry<'a> {
-    cfgs: mem::ArrayMap<'a, sem::ItemIdentifier, sir::ControlFlowGraph<'a>>,
+    cfgs: mem::ArrayMap<'a, hir::ItemIdentifier, sir::ControlFlowGraph<'a>>,
 }
 
 impl<'a> SimpleRegistry<'a> {
@@ -35,7 +35,7 @@ impl<'a> SimpleRegistry<'a> {
     /// Adds a cfg to the registry.
     pub fn insert(
         &mut self,
-        id: sem::ItemIdentifier,
+        id: hir::ItemIdentifier,
         cfg: sir::ControlFlowGraph<'a>
     )
     {
@@ -47,7 +47,7 @@ impl<'a> SimpleRegistry<'a> {
 }
 
 impl<'a> Registry<'a> for SimpleRegistry<'a> {
-    fn lookup_cfg(&self, key: sem::ItemIdentifier)
+    fn lookup_cfg(&self, key: hir::ItemIdentifier)
         -> Option<sir::ControlFlowGraph<'a>>
     {
         self.cfgs.get(&key).cloned()

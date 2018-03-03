@@ -7,7 +7,7 @@ use basic::com::Span;
 use basic::mem::CloneInto;
 
 use model::ast;
-use model::sem::*;
+use model::hir::*;
 
 /// A Value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]

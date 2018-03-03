@@ -8,7 +8,7 @@
 
 use basic::mem;
 
-use model::sem::*;
+use model::hir::*;
 
 /// Global Value Numberer
 ///
@@ -286,8 +286,8 @@ impl<'g, 'local> Impl<'g, 'local> {
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::sem::*;
-    use model::sem::builder::*;
+    use model::hir::*;
+    use model::hir::builder::*;
 
     #[test]
     fn brush() {

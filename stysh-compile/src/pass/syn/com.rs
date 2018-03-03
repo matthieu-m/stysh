@@ -4,8 +4,9 @@
 
 use std;
 
-use basic::mem;
-use model::tt;
+use basic::{com, mem};
+use basic::com::Span;
+use model::{tt, ast};
 use pass::lex;
 
 #[derive(Clone, Copy)]
@@ -15,6 +16,84 @@ pub struct RawParser<'a, 'g, 'local> {
     local_arena: &'local mem::Arena,
 }
 
+//
+//  High-level parsing functions.
+//
+impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
+    pub fn parse_tuple<T: 'g + Copy + Span>(
+        &mut self,
+        inner_parser: fn(&mut Self) -> T,
+        separator: tt::Kind,
+        ns: &'a [tt::Node<'a>],
+        o: tt::Token,
+        c: tt::Token,
+    )
+        -> ast::Tuple<'g, T>
+    {
+        let mut inner = self.spawn(ns);
+
+        let mut fields = self.local_array();
+        let mut commas = self.local_array();
+        let mut names = self.local_array();
+        let mut separators = self.local_array();
+
+        let mut named = false;
+
+        loop {
+            if let Some(n) = inner.pop_kind(tt::Kind::NameField) {
+                names.push(n.span());
+                named = true;
+            }
+
+            if let Some(c) = inner.pop_kind(separator) {
+                separators.push(c.span().offset() as u32);
+            }
+
+            if let Some(t) = inner.peek() {
+                fields.push(inner_parser(&mut inner));
+
+                if names.len() < fields.len() {
+                    names.push(com::Range::new(t.span().offset(), 0));
+                }
+
+                if separators.len() < names.len() {
+                    separators.push(t.span().offset() as u32);
+                }
+
+                if let Some(c) = inner.pop_kind(tt::Kind::SignComma) {
+                    commas.push(c.span().offset() as u32)
+                } else {
+                    commas.push(t.span().end_offset() as u32 - 1)
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        assert!(inner.peek().is_none());
+
+        let mut result = ast::Tuple {
+            fields: self.intern_slice(fields.into_slice()),
+            commas: self.intern_slice(commas.into_slice()),
+            names: &[],
+            separators: &[],
+            open: o.offset() as u32,
+            close: c.offset() as u32,
+        };
+
+        if named {
+            result.names = self.intern_slice(names.into_slice());
+            result.separators = self.intern_slice(separators.into_slice());
+        }
+
+        result
+    }
+}
+//
+//  Low-level parsing functions.
+//
 impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
     pub fn new(
         nodes: &'a [tt::Node<'a>],

@@ -200,6 +200,8 @@ pub struct ConstructorBuilder<'a, T:'a> {
 pub struct TupleBuilder<'a, T: 'a> {
     fields: mem::Array<'a, T>,
     commas: mem::Array<'a, u32>,
+    names: mem::Array<'a, com::Range>,
+    separators: mem::Array<'a, u32>,
     open: u32,
     close: u32,
 }
@@ -1435,6 +1437,18 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
         self.arguments.comma(pos);
         self
     }
+
+    /// Appends a name.
+    pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
+        self.arguments.name(pos, length);
+        self
+    }
+
+    /// Overrides the position of the last inserted separator.
+    pub fn separator(&mut self, pos: u32) -> &mut Self {
+        self.arguments.separator(pos);
+        self
+    }
 }
 
 impl<'a, T: 'a + Clone + Span> ConstructorBuilder<'a, T> {
@@ -1453,6 +1467,8 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
         TupleBuilder {
             fields: mem::Array::new(arena),
             commas: mem::Array::new(arena),
+            names: mem::Array::new(arena),
+            separators: mem::Array::new(arena),
             open: U32_NONE,
             close: U32_NONE,
         }
@@ -1471,11 +1487,26 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
         self.commas.push(U32_NONE);
         self
     }
-    
+
     /// Overrides the position of the last inserted comma.
     pub fn comma(&mut self, pos: u32) -> &mut Self {
         if let Some(c) = self.commas.as_slice_mut().last_mut() {
             *c = pos;
+        }
+        self
+    }
+
+    /// Appends a name.
+    pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
+        self.names.push(range((pos, length)));
+        self.separators.push(U32_NONE);
+        self
+    }
+
+    /// Overrides the position of the last inserted separator.
+    pub fn separator(&mut self, pos: u32) -> &mut Self {
+        if let Some(s) = self.separators.as_slice_mut().last_mut() {
+            *s = pos;
         }
         self
     }
@@ -1492,8 +1523,19 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
             } else {
                 (self.open, self.close)
             };
-            return
-                Tuple { fields: &[], commas: &[], open: o, close: c }.into();
+            let mut result = Tuple::default();
+            result.open = o;
+            result.close = c;
+            return result.into();
+        }
+
+        let names = self.names.clone().into_slice();
+        let separators = self.separators.clone().into_slice();
+
+        for (s, n) in separators.iter_mut().zip(names.iter()) {
+            if *s != U32_NONE { continue; }
+
+            *s = n.end_offset() as u32;
         }
 
         let fields = self.fields.clone().into_slice();
@@ -1509,8 +1551,10 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
         }
 
         let open = if self.open == U32_NONE {
-            fields.first()
-                .map(|f| f.span().offset() as u32 - 1)
+            names.first()
+                .map(|r| r.offset())
+                .or_else(|| fields.first().map(|f| f.span().offset()))
+                .map(|o| o as u32 - 1)
                 .unwrap_or(0)
         } else {
             self.open
@@ -1522,12 +1566,7 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
             self.close
         };
 
-        Tuple {
-            fields: fields,
-            commas: commas,
-            open: open,
-            close: close,
-        }.into()
+        Tuple { fields, commas, names, separators, open, close }.into()
     }
 }
 

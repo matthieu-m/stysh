@@ -193,30 +193,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
     fn parse_tuple(&mut self) -> Tuple<'g, Type<'g>> {
         if let Some(Node::Braced(o, ns, c)) = self.raw.peek() {
             self.raw.pop_node();
-
-            assert_eq!(o.kind(), Kind::ParenthesisOpen);
-            let mut inner = TypeParser { raw: self.raw.spawn(ns) };
-
-            let mut fields = self.raw.local_array();
-            let mut commas = self.raw.local_array();
-
-            while let Some(t) = inner.try_parse() {
-                fields.push(t);
-                if let Some(c) = inner.raw.pop_kind(Kind::SignComma) {
-                    commas.push(c.span().offset() as u32)
-                } else {
-                    commas.push(t.span().end_offset() as u32 - 1)
-                };
-            }
-
-            assert!(inner.into_raw().peek().is_none());
-
-            return Tuple {
-                fields: self.raw.intern_slice(fields.into_slice()),
-                commas: self.raw.intern_slice(commas.into_slice()),
-                open: o.offset() as u32,
-                close: c.offset() as u32,
-            };
+            return self.raw.parse_tuple(parse_type, Kind::SignColon, ns, o, c);
         }
 
         panic!("Unreachable: should only be called on Node::Braced");
@@ -332,6 +309,23 @@ mod tests {
     }
 
     #[test]
+    fn rec_tuple_keyed() {
+        let global_arena = mem::Arena::new();
+        let f = Factory::new(&global_arena);
+        let (i, t) = (f.item(), f.type_());
+
+        assert_eq!(
+            recit(&global_arena, b":rec Person(.name: String, .age: Int);"),
+            i.record(5, 6).tuple(
+                f.type_tuple()
+                    .name(12, 5).push(t.simple(19, 6))
+                    .name(27, 4).push(t.simple(33, 3))
+                    .build()
+            ).build()
+        );
+    }
+
+    #[test]
     fn rec_unit() {
         let global_arena = mem::Arena::new();
         let i = Factory::new(&global_arena).item();
@@ -425,6 +419,20 @@ mod tests {
                 .push(t.simple(9, 3))
                 .push(t.simple(14, 3))
                 .comma(18)
+                .build()
+        );
+    }
+
+    #[test]
+    fn tuple_keyed() {
+        let global_arena = mem::Arena::new();
+        let t = Factory::new(&global_arena).type_();
+
+        assert_eq!(
+            typeit(&global_arena, b"(.name: String, .age: Int)"),
+            t.tuple()
+                .name(1, 5).push(t.simple(8, 6))
+                .name(16, 4).push(t.simple(22, 3))
                 .build()
         );
     }

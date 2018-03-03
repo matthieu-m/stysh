@@ -229,7 +229,9 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     }
 
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
-        let c = parse_constructor_impl(&mut self.raw, parse_expression, ty);
+        let sep = tt::Kind::SignBind;
+        let c =
+            parse_constructor_impl(&mut self.raw, parse_expression, sep, ty);
         Expression::Constructor(c)
     }
 
@@ -298,7 +300,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     )
         -> Tuple<'g, Expression<'g>>
     {
-        parse_tuple_impl(&mut self.raw, parse_expression, ns, o, c)
+        self.raw.parse_tuple(parse_expression, tt::Kind::SignBind, ns, o, c)
     }
 }
 
@@ -487,7 +489,9 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
 
     fn parse_type_name(&mut self) -> Pattern<'g> {
         if let Some(ty) = typ::try_parse_type(&mut self.raw) {
-            let c = parse_constructor_impl(&mut self.raw, parse_pattern, ty);
+            let sep = tt::Kind::SignColon;
+            let c =
+                parse_constructor_impl(&mut self.raw, parse_pattern, sep, ty);
             Pattern::Constructor(c)
         } else {
             unimplemented!("parse_type_name - {:?}", self)
@@ -514,7 +518,7 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         -> Pattern<'g>
     {
         Pattern::Tuple(
-            parse_tuple_impl(&mut self.raw, parse_pattern, ns, o, c)
+            self.raw.parse_tuple(parse_pattern, tt::Kind::SignColon, ns, o, c)
         )
     }
 }
@@ -623,7 +627,8 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
     raw: &mut RawParser<'a, 'g, 'local>,
     inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
-    ty: Type<'g>
+    separator: tt::Kind,
+    ty: Type<'g>,
 )
     -> Constructor<'g, T>
 {
@@ -631,7 +636,7 @@ fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
         assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
 
         raw.pop_node();
-        parse_tuple_impl(raw, inner_parser, ns, o, c)
+        raw.parse_tuple(inner_parser, separator, ns, o, c)
     } else {
         Default::default()
     };
@@ -653,41 +658,6 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     }
 
     raw.intern_slice(&stmts)
-}
-
-fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
-    raw: &mut RawParser<'a, 'g, 'local>,
-    inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
-    ns: &'a [tt::Node<'a>],
-    o: tt::Token,
-    c: tt::Token,
-)
-    -> Tuple<'g, T>
-{
-    let mut fields = raw.local_array();
-    let mut commas = raw.local_array();
-
-    let mut inner = raw.spawn(ns);
-
-    while let Some(_) = inner.peek() {
-        let f = inner_parser(&mut inner);
-        fields.push(f);
-
-        if let Some(c) = inner.pop_kind(tt::Kind::SignComma) {
-            commas.push(c.span().offset() as u32)
-        } else {
-            commas.push(f.span().end_offset() as u32 - 1)
-        };
-    }
-
-    assert!(inner.peek().is_none());
-
-    Tuple {
-        fields: raw.intern_slice(fields.into_slice()),
-        commas: raw.intern_slice(commas.into_slice()),
-        open: o.offset() as u32,
-        close: c.offset() as u32,
-    }
 }
 
 //
@@ -885,6 +855,26 @@ mod tests {
     }
 
     #[test]
+    fn constructor_keyed() {
+        let global_arena = mem::Arena::new();
+        let f = Factory::new(&global_arena);
+        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+
+        let code = b":var p := Person(.name := jack_jack, .age := 1);";
+
+        assert_eq!(
+            stmtit(&global_arena, code),
+            s.var(
+                p.var(5, 1),
+                e.constructor(t.simple(10, 6))
+                    .name(17, 5).separator(23).push(e.var(26, 9))
+                    .name(37, 4).separator(42).push(e.int(45, 1))
+                    .build(),
+            ).build()
+        );
+    }
+
+    #[test]
     fn field_access_basic() {
         let global_arena = mem::Arena::new();
         let e = Factory::new(&global_arena).expr();
@@ -892,6 +882,17 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"tup.42"),
             e.field_access(e.var(0, 3)).length(3).build()
+        );
+    }
+
+    #[test]
+    fn field_access_keyed() {
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        assert_eq!(
+            exprit(&global_arena, b"tup.x"),
+            e.field_access(e.var(0, 3)).length(2).build()
         );
     }
 
@@ -962,6 +963,26 @@ mod tests {
     }
 
     #[test]
+    fn var_constructor_keyed() {
+        let global_arena = mem::Arena::new();
+        let f = Factory::new(&global_arena);
+        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+
+        let code = b":var Person(.name: n, .age: a) := p;";
+
+        assert_eq!(
+            stmtit(&global_arena, code),
+            s.var(
+                p.constructor(t.simple(5, 6))
+                    .name(12, 5).push(p.var(19, 1))
+                    .name(22, 4).push(p.var(28, 1))
+                    .build(),
+                e.var(34, 1),
+            ).build()
+        );
+    }
+
+    #[test]
     fn var_ignored() {
         let global_arena = mem::Arena::new();
         let f = Factory::new(&global_arena);
@@ -999,6 +1020,24 @@ mod tests {
             s.var(
                 p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
                 e.tuple().push(e.int(16, 1)).push(e.int(19, 1)).build(),
+            ).build()
+        );
+    }
+
+    #[test]
+    fn var_tuple_keyed() {
+        let global_arena = mem::Arena::new();
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+
+        assert_eq!(
+            stmtit(&global_arena, b":var (.x: a, .y: b) := foo();"),
+            s.var(
+                p.tuple()
+                    .name(6, 2).push(p.var(10, 1))
+                    .name(13, 2).push(p.var(17, 1))
+                    .build(),
+                e.function_call(e.var(23, 3), 26, 27).build(),
             ).build()
         );
     }
@@ -1044,6 +1083,20 @@ mod tests {
         assert_eq!(
             exprit(&global_arena, b"(1)"),
             e.tuple().push(e.int(1, 1)).build()
+        );
+    }
+
+    #[test]
+    fn tuple_keyed() {
+        let global_arena = mem::Arena::new();
+        let e = Factory::new(&global_arena).expr();
+
+        assert_eq!(
+            exprit(&global_arena, b"(.x := 1, .y := 2)"),
+            e.tuple()
+                .name(1, 2).separator(4).push(e.int(7, 1))
+                .name(10, 2).separator(13).push(e.int(16, 1))
+                .build()
         );
     }
 

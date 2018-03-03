@@ -4,7 +4,7 @@
 
 use basic::com::Span;
 
-use model::syn::*;
+use model::ast::*;
 use model::tt;
 
 use super::com::RawParser;
@@ -137,21 +137,21 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::syn::*;
-    use model::syn::builder::Factory;
+    use model::ast::*;
+    use model::ast::builder::Factory;
 
     #[test]
     fn basic_argument_less() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let f = Factory::new(&global_arena);
+        let (e, i, t) = (f.expr(), f.item(), f.type_());
 
         assert_eq!(
             funit(&global_arena, b":fun add() -> Int { 1 + 2 }"),
-            syn.item().function(
+            i.function(
                 5,
                 3,
-                syn.type_().simple(14, 3),
+                t.simple(14, 3),
                 e.block(e.bin_op(e.int(20, 1), e.int(24, 1)).build()).build(),
             ).build()
         );
@@ -160,16 +160,15 @@ mod tests {
     #[test]
     fn basic_add() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let e = syn.expr();
-        let t = syn.type_();
+        let f = Factory::new(&global_arena);
+        let (e, i, t) = (f.expr(), f.item(), f.type_());
 
         assert_eq!(
             funit(&global_arena, b":fun add(a: Int, b: Int) -> Int { a + b }"),
-            syn.item().function(
+            i.function(
                 5,
                 3,
-                syn.type_().simple(28, 3),
+                t.simple(28, 3),
                 e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
             )
             .push(9, 1, t.simple(12, 3))

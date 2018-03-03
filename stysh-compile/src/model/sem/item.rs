@@ -6,7 +6,7 @@ use basic::{com, mem};
 use basic::com::Span;
 use basic::mem::CloneInto;
 
-use model::syn;
+use model::ast;
 use model::sem::*;
 
 /// A registry of the definitions
@@ -323,8 +323,8 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
     fn from(r: Record<'a>) -> Self { Item::Rec(r) }
 }
 
-impl convert::From<syn::TypeIdentifier> for ItemIdentifier {
-    fn from(value: syn::TypeIdentifier) -> Self {
+impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
+    fn from(value: ast::TypeIdentifier) -> Self {
         ItemIdentifier(value.span())
     }
 }

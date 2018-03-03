@@ -5,7 +5,7 @@
 use basic::com::{self, Span};
 
 use model::tt::{Kind, Node};
-use model::syn::*;
+use model::ast::*;
 
 use super::com::RawParser;
 
@@ -269,8 +269,8 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::syn::*;
-    use model::syn::builder::Factory;
+    use model::ast::*;
+    use model::ast::builder::Factory;
 
     #[test]
     fn enum_empty() {
@@ -317,14 +317,13 @@ mod tests {
     #[test]
     fn rec_tuple() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let i = syn.item();
-        let t = syn.type_();
+        let f = Factory::new(&global_arena);
+        let (i, t) = (f.item(), f.type_());
 
         assert_eq!(
             recit(&global_arena, b":rec Tup(Int, String);"),
             i.record(5, 3).tuple(
-                syn.type_tuple()
+                f.type_tuple()
                     .push(t.simple(9, 3))
                     .push(t.simple(14, 6))
                     .build()

@@ -5,7 +5,7 @@
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::{syn, sem};
+use model::{ast, sem};
 
 use super::nmr::{self, scp};
 
@@ -48,24 +48,24 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Extracts the prototypes of an item.
-    pub fn prototype(&mut self, item: &syn::Item) -> sem::Prototype<'g> {
+    pub fn prototype(&mut self, item: &ast::Item) -> sem::Prototype<'g> {
         match *item {
-            syn::Item::Enum(e) => self.enum_prototype(e),
-            syn::Item::Fun(fun) => self.fun_prototype(fun),
-            syn::Item::Rec(r) => self.rec_prototype(r),
+            ast::Item::Enum(e) => self.enum_prototype(e),
+            ast::Item::Fun(fun) => self.fun_prototype(fun),
+            ast::Item::Rec(r) => self.rec_prototype(r),
         }
     }
 
     /// Translates a stand-alone expression.
-    pub fn expression(&mut self, e: &syn::Expression) -> sem::Value<'g> {
+    pub fn expression(&mut self, e: &ast::Expression) -> sem::Value<'g> {
         self.resolver(self.scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
-    pub fn item(&mut self, proto: &'g sem::Prototype<'g>, item: &syn::Item)
+    pub fn item(&mut self, proto: &'g sem::Prototype<'g>, item: &ast::Item)
         -> sem::Item<'g>
     {
-        use model::syn::Item;
+        use model::ast::Item;
         use model::sem::Prototype::*;
 
         debug_assert!(
@@ -92,7 +92,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     where 'g: 'a
 {
-    fn enum_prototype(&mut self, e: syn::Enum) -> sem::Prototype<'g> {
+    fn enum_prototype(&mut self, e: ast::Enum) -> sem::Prototype<'g> {
         sem::Prototype::Enum(
             sem::EnumProto {
                 name: e.name.into(),
@@ -101,7 +101,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
-    fn fun_prototype(&mut self, fun: syn::Function) -> sem::Prototype<'g> {
+    fn fun_prototype(&mut self, fun: ast::Function) -> sem::Prototype<'g> {
         let mut arguments =
             mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
 
@@ -127,7 +127,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
-    fn rec_prototype(&mut self, r: syn::Record) -> sem::Prototype<'g> {
+    fn rec_prototype(&mut self, r: ast::Record) -> sem::Prototype<'g> {
         sem::Prototype::Rec(sem::RecordProto {
             name: r.name().into(),
             range: r.span(),
@@ -135,14 +135,14 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         })
     }
 
-    fn enum_item(&mut self, e: syn::Enum, p: &'g sem::EnumProto)
+    fn enum_item(&mut self, e: ast::Enum, p: &'g sem::EnumProto)
         -> sem::Item<'g>
     {
         let mut variants =
             mem::Array::with_capacity(e.variants.len(), self.global_arena);
 
         for ev in e.variants {
-            use self::syn::InnerRecord::*;
+            use self::ast::InnerRecord::*;
 
             match *ev {
                 Tuple(..) => unimplemented!("InnerRecord::Tuple"),
@@ -164,7 +164,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         })
     }
 
-    fn fun_item(&mut self, fun: syn::Function, p: &'g sem::FunctionProto<'g>)
+    fn fun_item(&mut self, fun: ast::Function, p: &'g sem::FunctionProto<'g>)
         -> sem::Item<'g>
     {
         let scope = self.function_scope(self.scope, p);
@@ -173,14 +173,14 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             prototype: p,
             body:
                 self.resolver(&scope)
-                    .value_of(&syn::Expression::Block(&fun.body))
+                    .value_of(&ast::Expression::Block(&fun.body))
         })
     }
 
-    fn rec_item(&mut self, r: syn::Record, p: &'g sem::RecordProto)
+    fn rec_item(&mut self, r: ast::Record, p: &'g sem::RecordProto)
         -> sem::Item<'g>
     {
-        use self::syn::InnerRecord::*;
+        use self::ast::InnerRecord::*;
 
         let fields: &'g [sem::Type<'g>] = match r.inner {
             Missing(_) | Unexpected(_) | Unit(_) => &[],
@@ -234,8 +234,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::syn;
-    use model::syn::builder::Factory as SynFactory;
+    use model::ast;
+    use model::ast::builder::Factory as SynFactory;
     use model::sem::builder::Factory as SemFactory;
     use model::sem::*;
     use model::sem::mocks::MockRegistry;
@@ -246,13 +246,13 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p) = (sem.item(), sem.proto());
 
         assert_eq!(
             env.proto_of(
-                &syn.item()
+                &ast.item()
                     .enum_(6, 6)
                     .push_unit(15, 3)
                     .push_unit(20, 3)
@@ -267,7 +267,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p) = (sem.item(), sem.proto());
 
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Enum(e),
-                &syn.item()
+                &ast.item()
                     .enum_(6, 6)
                     .push_unit(15, 3)
                     .push_unit(20, 3)
@@ -291,11 +291,11 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Simple;", &global_arena);
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
 
         assert_eq!(
-            env.proto_of(&syn.item().record(5, 6).build()),
+            env.proto_of(&ast.item().record(5, 6).build()),
             sem.proto().rec(sem.item().id(5, 6), 0).range(0, 12).build()
         );
     }
@@ -305,7 +305,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Simple;", &global_arena);
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p) = (sem.item(), sem.proto());
 
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Rec(r),
-                &syn.item().record(5, 6).build(),
+                &ast.item().record(5, 6).build(),
             ),
             i.rec(r).build().into()
         );
@@ -325,7 +325,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p, t) = (sem.item(), sem.proto(), sem.type_());
 
@@ -334,12 +334,12 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Rec(r),
-                &syn.item()
+                &ast.item()
                     .record(5, 3)
                     .tuple(
-                        syn.type_tuple()
-                            .push(syn.type_().simple(9, 3))
-                            .push(syn.type_().simple(14, 6))
+                        ast.type_tuple()
+                            .push(ast.type_().simple(9, 3))
+                            .push(ast.type_().simple(14, 6))
                             .build()
                     ).build(),
             ),
@@ -355,20 +355,20 @@ mod tests {
             &global_arena
         );
 
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
         assert_eq!(
             env.proto_of(
-                &syn.item().function(
+                &ast.item().function(
                     5,
                     3,
-                    syn.type_().simple(28, 3),
-                    syn.expr().block(syn.expr().var(34, 5)).build(),
+                    ast.type_().simple(28, 3),
+                    ast.expr().block(ast.expr().var(34, 5)).build(),
                 )
-                .push(9, 1, syn.type_().simple(12, 3))
-                .push(17, 1, syn.type_().simple(20, 3))
+                .push(9, 1, ast.type_().simple(12, 3))
+                .push(17, 1, ast.type_().simple(20, 3))
                 .build()
             ),
             p.fun(i.id(5, 3), t.int())
@@ -388,8 +388,8 @@ mod tests {
             &global_arena,
         );
 
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
+        let ast = SynFactory::new(&global_arena);
+        let e = ast.expr();
         let sem = SemFactory::new(&global_arena);
         let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
@@ -409,15 +409,15 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Fun(f),
-                &syn.item().function(
+                &ast.item().function(
                     5,
                     3,
-                    syn.type_().simple(28, 3),
+                    ast.type_().simple(28, 3),
                     e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
                         .build(),
                 )
-                .push(9, 1, syn.type_().simple(12, 3))
-                .push(17, 1, syn.type_().simple(17, 1))
+                .push(9, 1, ast.type_().simple(12, 3))
+                .push(17, 1, ast.type_().simple(17, 1))
                 .build()
             ),
             i.fun(f, v.block(body).build()).into()
@@ -432,8 +432,8 @@ mod tests {
             &global_arena,
         );
 
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
+        let ast = SynFactory::new(&global_arena);
+        let e = ast.expr();
         let sem = SemFactory::new(&global_arena);
         let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
 
@@ -447,12 +447,12 @@ mod tests {
         assert_eq!(
             env.item_of(
                 &Prototype::Fun(f),
-                &syn.item().function(
+                &ast.item().function(
                     5,
                     3,
-                    syn.type_().tuple()
-                        .push(syn.type_().simple(15, 3))
-                        .push(syn.type_().simple(20, 3))
+                    ast.type_().tuple()
+                        .push(ast.type_().simple(15, 3))
+                        .push(ast.type_().simple(20, 3))
                         .build(),
                     e.block(
                         e.tuple().push(e.int(28, 1)).push(e.int(31, 1)).build()
@@ -493,14 +493,14 @@ mod tests {
             )
         }
 
-        fn proto_of(&self, item: &syn::Item) -> Prototype<'g> {
+        fn proto_of(&self, item: &ast::Item) -> Prototype<'g> {
             let mut local_arena = mem::Arena::new();
             let result = self.builder(&local_arena).prototype(item);
             local_arena.recycle();
             result
         }
 
-        fn item_of(&self, proto: &Prototype, item: &syn::Item) -> Item<'g> {
+        fn item_of(&self, proto: &Prototype, item: &ast::Item) -> Item<'g> {
             let mut local_arena = mem::Arena::new();
             let proto = self.arena.intern_ref(proto);
             let result = self.builder(&local_arena).item(proto, item);

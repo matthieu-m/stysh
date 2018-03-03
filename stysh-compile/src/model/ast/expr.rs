@@ -4,7 +4,7 @@ use std::convert;
 
 use basic::com::{self, Span};
 
-use model::syn::*;
+use model::ast::*;
 use model::tt;
 
 /// An Expression.
@@ -318,7 +318,7 @@ impl convert::From<VariableIdentifier> for Expression<'static> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::syn::builder::Factory;
+    use model::ast::builder::Factory;
 
     #[test]
     fn range_expression_literal() {

@@ -4,7 +4,7 @@ use std::convert;
 
 use basic::com::{self, Span};
 
-use model::syn::*;
+use model::ast::*;
 use model::tt;
 
 /// An Item.
@@ -252,7 +252,7 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::syn::builder::Factory;
+    use model::ast::builder::Factory;
 
     #[test]
     fn range_enum_empty() {
@@ -291,16 +291,16 @@ mod tests {
     #[test]
     fn range_fun() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let f = Factory::new(&global_arena);
+        let e = f.expr();
 
         //  "   :fun add() -> Int { 1 + 1 }"
         let item: Item =
-            syn.item()
+            f.item()
                 .function(
                     8,
                     3,
-                    syn.type_().simple(16, 3),
+                    f.type_().simple(16, 3),
                     e.block(e.bin_op(e.int(23, 1), e.int(27, 1)).build())
                         .build(),
                 ).build();

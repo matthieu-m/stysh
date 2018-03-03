@@ -6,7 +6,7 @@ use basic::{com, mem};
 use basic::com::Span;
 
 use model::tt;
-use model::syn::*;
+use model::ast::*;
 
 //
 //  High-Level Builders

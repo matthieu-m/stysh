@@ -4,7 +4,7 @@ use std::convert;
 
 use basic::com::{self, Span};
 
-use model::syn::*;
+use model::ast::*;
 
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -124,13 +124,13 @@ impl<'a> convert::From<VariableReBinding<'a>> for Statement<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::syn::builder::Factory;
+    use model::ast::builder::Factory;
 
     #[test]
     fn range_stmt_variable_binding() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         //  "     :var fool := 1234;"
         let mut var = s.var(p.var(10, 4), e.int(18, 4));

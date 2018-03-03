@@ -63,7 +63,7 @@ impl<'a> Span for Node<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::syn::builder::Factory;
+    use model::ast::builder::Factory;
 
     #[test]
     fn range_node_binary_operator() {

@@ -5,7 +5,7 @@
 use basic::{com, mem};
 use basic::com::Span;
 
-use model::{syn, sem};
+use model::{ast, sem};
 
 use super::scp::{BlockScope, Scope};
 
@@ -48,8 +48,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&mut self, p: &syn::Pattern) -> sem::Pattern<'g> {
-        use model::syn::Pattern;
+    pub fn pattern_of(&mut self, p: &ast::Pattern) -> sem::Pattern<'g> {
+        use model::ast::Pattern;
 
         match *p {
             Pattern::Constructor(c) => self.pattern_of_constructor(c),
@@ -60,8 +60,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&mut self, t: &syn::Type) -> sem::Type<'g> {
-        use model::syn::Type;
+    pub fn type_of(&mut self, t: &ast::Type) -> sem::Type<'g> {
+        use model::ast::Type;
 
         match *t {
             Type::Missing(_) => unimplemented!(),
@@ -72,7 +72,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&mut self, e: &syn::Expression) -> sem::Value<'g> {
+    pub fn value_of(&mut self, e: &ast::Expression) -> sem::Value<'g> {
         self.value_of_expr(e)
     }
 }
@@ -85,7 +85,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 {
     fn pattern_of_constructor(
         &mut self,
-        c: syn::Constructor<syn::Pattern>,
+        c: ast::Constructor<ast::Pattern>,
     )
         -> sem::Pattern<'g>
     {
@@ -109,13 +109,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         })
     }
 
-    fn pattern_of_ignored(&mut self, underscore: syn::VariableIdentifier)
+    fn pattern_of_ignored(&mut self, underscore: ast::VariableIdentifier)
         -> sem::Pattern<'static>
     {
         sem::Pattern::Ignored(underscore.span())
     }
 
-    fn pattern_of_tuple(&mut self, t: &syn::Tuple<syn::Pattern>)
+    fn pattern_of_tuple(&mut self, t: &ast::Tuple<ast::Pattern>)
         -> sem::Pattern<'g>
     {
         let mut fields =
@@ -131,14 +131,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         )
     }
 
-    fn pattern_of_var(&self, var: syn::VariableIdentifier)
+    fn pattern_of_var(&self, var: ast::VariableIdentifier)
         -> sem::Pattern<'static>
     {
         sem::Pattern::Var(var.into(), Default::default())
     }
 
     fn stmt_of_return<'b>(&self,
-        ret: &syn::Return,
+        ret: &ast::Return,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
         -> sem::Stmt<'g>
@@ -158,7 +158,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn stmt_of_set<'b>(
         &self,
-        set: &syn::VariableReBinding,
+        set: &ast::VariableReBinding,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
         -> sem::Stmt<'g>
@@ -173,7 +173,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn stmt_of_var<'b>(
         &self,
-        var: &syn::VariableBinding,
+        var: &ast::VariableBinding,
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
         -> sem::Stmt<'g>
@@ -203,7 +203,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         type_.cloned().unwrap_or(sem::Type::unresolved())
     }
 
-    fn type_of_nested(&self, t: syn::TypeIdentifier, p: syn::Path)
+    fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> sem::Type<'g>
     {
         //  TODO: need to handle multi-level nesting.
@@ -222,11 +222,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         sem::Type::unresolved()
     }
 
-    fn type_of_simple(&self, t: syn::TypeIdentifier) -> sem::Type<'g> {
+    fn type_of_simple(&self, t: ast::TypeIdentifier) -> sem::Type<'g> {
         self.scope.lookup_type(t.into())
     }
 
-    fn type_of_tuple(&mut self, t: &syn::Tuple<syn::Type>) -> sem::Type<'g> {
+    fn type_of_tuple(&mut self, t: &ast::Tuple<ast::Type>) -> sem::Type<'g> {
         let mut fields =
             mem::Array::with_capacity(t.fields.len(), self.global_arena);
 
@@ -237,8 +237,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         sem::Type::Tuple(sem::Tuple { fields: fields.into_slice() })
     }
 
-    fn value_of_expr(&mut self, expr: &syn::Expression) -> sem::Value<'g> {
-        use model::syn::Expression::*;
+    fn value_of_expr(&mut self, expr: &ast::Expression) -> sem::Value<'g> {
+        use model::ast::Expression::*;
 
         match *expr {
             BinOp(op, _, left, right)
@@ -257,7 +257,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_block(&mut self, block: &syn::Block) -> sem::Value<'g> {
+    fn value_of_block(&mut self, block: &ast::Block) -> sem::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.code_fragment,
@@ -286,13 +286,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn value_of_binary_operator(
         &mut self,
-        op: syn::BinaryOperator,
-        left: &syn::Expression,
-        right: &syn::Expression
+        op: ast::BinaryOperator,
+        left: &ast::Expression,
+        right: &ast::Expression
     )
         -> sem::Value<'g>
     {
-        use model::syn::BinaryOperator as O;
+        use model::ast::BinaryOperator as O;
         use model::sem::BuiltinFunction as F;
 
         let range = left.span().extend(right.span());
@@ -327,7 +327,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_constructor(&mut self, c: syn::Constructor<syn::Expression>)
+    fn value_of_constructor(&mut self, c: ast::Constructor<ast::Expression>)
         -> sem::Value<'g>
     {
         if let sem::Type::Rec(record) = self.type_of(&c.type_) {
@@ -355,8 +355,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         unimplemented!("Unknown constructor call {:?}", c);
     }
 
-    fn value_of_call(&mut self, fun: syn::FunctionCall) -> sem::Value<'g> {
-        let callable = if let syn::Expression::Var(id) = *fun.function {
+    fn value_of_call(&mut self, fun: ast::FunctionCall) -> sem::Value<'g> {
+        let callable = if let ast::Expression::Var(id) = *fun.function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!()
@@ -379,7 +379,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_field(&mut self, field: syn::FieldAccess) -> sem::Value<'g> {
+    fn value_of_field(&mut self, field: ast::FieldAccess) -> sem::Value<'g> {
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
         if let Some(index) = self.parse_integral(field.field.0, 1, false) {
@@ -403,7 +403,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_if_else(&mut self, if_else: &syn::IfElse) -> sem::Value<'g> {
+    fn value_of_if_else(&mut self, if_else: &ast::IfElse) -> sem::Value<'g> {
         let condition = self.value_of_expr(&if_else.condition);
         let mut true_branch = self.value_of_block(&if_else.true_expr);
         let mut false_branch = self.value_of_block(&if_else.false_expr);
@@ -435,14 +435,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal(&mut self, lit: syn::Literal)
+    fn value_of_literal(&mut self, lit: ast::Literal)
         -> sem::Value<'g>
     {
         match lit {
-            syn::Literal::Bool(b, r) => self.value_of_literal_bool(b, r),
-            syn::Literal::Bytes(b, r) => self.value_of_literal_bytes(b, r),
-            syn::Literal::Integral(r) => self.value_of_literal_integral(r),
-            syn::Literal::String(s, r) => self.value_of_literal_string(s, r),
+            ast::Literal::Bool(b, r) => self.value_of_literal_bool(b, r),
+            ast::Literal::Bytes(b, r) => self.value_of_literal_bytes(b, r),
+            ast::Literal::Integral(r) => self.value_of_literal_integral(r),
+            ast::Literal::String(s, r) => self.value_of_literal_string(s, r),
         }
     }
 
@@ -463,7 +463,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn value_of_literal_bytes(
         &mut self,
-        bytes: &[syn::StringFragment],
+        bytes: &[ast::StringFragment],
         range: com::Range
     )
         -> sem::Value<'g>
@@ -494,7 +494,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn value_of_literal_string(
         &mut self,
-        string: &[syn::StringFragment],
+        string: &[ast::StringFragment],
         range: com::Range
     )
         -> sem::Value<'g>
@@ -509,7 +509,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_loop(&mut self, loop_: &syn::Loop) -> sem::Value<'g> {
+    fn value_of_loop(&mut self, loop_: &ast::Loop) -> sem::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.code_fragment,
@@ -529,13 +529,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_prefix_operator(&mut self, 
-        op: syn::PrefixOperator,
-        expr: &syn::Expression,
+        op: ast::PrefixOperator,
+        expr: &ast::Expression,
         range: com::Range,
     )
         -> sem::Value<'g>
     {
-        use model::syn::PrefixOperator as O;
+        use model::ast::PrefixOperator as O;
         use model::sem::BuiltinFunction as F;
 
         let expr = self.value_of_expr(expr);
@@ -555,7 +555,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_tuple(&mut self, tup: &syn::Tuple<syn::Expression>)
+    fn value_of_tuple(&mut self, tup: &ast::Tuple<ast::Expression>)
         -> sem::Value<'g>
     {
         let mut types =
@@ -577,14 +577,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_variable(&mut self, var: syn::VariableIdentifier)
+    fn value_of_variable(&mut self, var: ast::VariableIdentifier)
         -> sem::Value<'g>
     {
         self.scope.lookup_binding(var.into())
     }
 
-    fn catenate_fragments(&self, f: &[syn::StringFragment]) -> &'g [u8] {
-        use model::syn::StringFragment::*;
+    fn catenate_fragments(&self, f: &[ast::StringFragment]) -> &'g [u8] {
+        use model::ast::StringFragment::*;
 
         let mut buffer = mem::Array::new(self.local_arena);
         for &fragment in f {
@@ -718,7 +718,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
     fn statements<'b>(
         &self,
-        stmts: &[syn::Statement],
+        stmts: &[ast::Statement],
         scope: &mut BlockScope<'b, 'g, 'local>,
     )
         -> &'g [sem::Stmt<'g>]
@@ -729,9 +729,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         for &s in stmts {
             let stmt = match s {
-                syn::Statement::Return(r) => self.stmt_of_return(&r, scope),
-                syn::Statement::Set(set) => self.stmt_of_set(&set, scope),
-                syn::Statement::Var(var) => self.stmt_of_var(&var, scope),
+                ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
+                ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
+                ast::Statement::Var(var) => self.stmt_of_var(&var, scope),
             };
             statements.push(stmt);
         }
@@ -785,8 +785,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use basic::{com, mem};
-    use model::{syn, sem};
-    use model::syn::builder::Factory as SynFactory;
+    use model::{ast, sem};
+    use model::ast::builder::Factory as SynFactory;
     use model::sem::builder::Factory as SemFactory;
     use super::super::scp::mocks::MockScope;
 
@@ -819,7 +819,7 @@ mod tests {
     #[test]
     fn value_basic_constructor() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
+        let ast = SynFactory::new(&global_arena);
         let sem = SemFactory::new(&global_arena);
         let (i, p, v) = (sem.item(), sem.proto(), sem.value());
 
@@ -830,7 +830,7 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &syn.expr().constructor(syn.type_().simple(0, 3)).build()
+                &ast.expr().constructor(ast.type_().simple(0, 3)).build()
             ),
             v.constructor(rec, 0, 3).build_value()
         );
@@ -839,8 +839,8 @@ mod tests {
     #[test]
     fn value_basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
+        let ast = SynFactory::new(&global_arena);
+        let e = ast.expr();
 
         let sem = SemFactory::new(&global_arena);
         let (i, p, v) = (sem.item(), sem.proto(), sem.value());
@@ -852,7 +852,7 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &e.constructor(syn.type_().simple(0, 3))
+                &e.constructor(ast.type_().simple(0, 3))
                     .parens(3, 5)
                     .push(e.int(4, 1))
                     .build()
@@ -864,8 +864,8 @@ mod tests {
     #[test]
     fn value_basic_record_field_access() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
+        let ast = SynFactory::new(&global_arena);
+        let e = ast.expr();
 
         let sem = SemFactory::new(&global_arena);
         let (i, p, t, v) = (sem.item(), sem.proto(), sem.type_(), sem.value());
@@ -882,7 +882,7 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.field_access(
-                    e.constructor(syn.type_().simple(15, 3))
+                    e.constructor(ast.type_().simple(15, 3))
                         .parens(18, 21)
                         .push(e.int(19, 2))
                         .build(),
@@ -922,8 +922,8 @@ mod tests {
     #[test]
     fn value_basic_nested_constructor() {
         let global_arena = mem::Arena::new();
-        let syn = SynFactory::new(&global_arena);
-        let e = syn.expr();
+        let ast = SynFactory::new(&global_arena);
+        let e = ast.expr();
 
         let sem = SemFactory::new(&global_arena);
         let (i, p, v) = (sem.item(), sem.proto(), sem.value());
@@ -944,7 +944,7 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.constructor(
-                    syn.type_().nested(38, 4).push(30, 6).build()
+                    ast.type_().nested(38, 4).push(30, 6).build()
                 ).build()
             ),
             v.constructor(*rec.prototype, 30, 12).build_value()
@@ -989,7 +989,7 @@ mod tests {
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
         assert_eq!(
-            env.value_of(&syn::Expression::If(
+            env.value_of(&ast::Expression::If(
                 &e.if_else(
                     e.bool_(4, 4),
                     e.block(e.int(11, 1)).build(),
@@ -1024,7 +1024,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{}", &global_arena);
 
-        let syn = {
+        let ast = {
             let e = SynFactory::new(&global_arena).expr();
             e.block_div().range(0, 2).build()
         };
@@ -1034,7 +1034,7 @@ mod tests {
             v.block_div().range(0, 2).build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1042,7 +1042,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":loop { }", &global_arena);
 
-        let syn = {
+        let ast = {
             let e = SynFactory::new(&global_arena).expr();
             e.loop_(0).build()
         };
@@ -1052,7 +1052,7 @@ mod tests {
             v.loop_().range(0, 9).build()
         };
 
-        assert_eq!(env.value_of(&syn), sem);
+        assert_eq!(env.value_of(&ast), sem);
     }
 
     #[test]
@@ -1060,7 +1060,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :return 1; }", &global_arena);
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
@@ -1076,7 +1076,7 @@ mod tests {
             v.block_div().push(s.ret(v.int(1, 10))).build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1087,7 +1087,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
@@ -1113,7 +1113,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
     }
 
     #[test]
@@ -1124,7 +1124,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
@@ -1148,7 +1148,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
     }
 
     #[test]
@@ -1159,7 +1159,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, s) = (f.expr(), f.stmt());
 
@@ -1183,7 +1183,7 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
     }
 
     #[test]
@@ -1191,7 +1191,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
@@ -1213,7 +1213,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1224,7 +1224,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
@@ -1256,7 +1256,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1264,7 +1264,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
@@ -1288,7 +1288,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1296,7 +1296,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var a := 1; :var _ := 2; a }", &global_arena);
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
@@ -1318,7 +1318,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
 
     }
 
@@ -1330,7 +1330,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
@@ -1367,7 +1367,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1375,7 +1375,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
@@ -1401,7 +1401,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::Block(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), sem);
     }
 
     #[test]
@@ -1412,7 +1412,7 @@ mod tests {
             &global_arena
         );
 
-        let syn = {
+        let ast = {
             let f = SynFactory::new(&global_arena);
             let (e, t) = (f.expr(), f.type_());
 
@@ -1454,7 +1454,7 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&syn::Expression::If(&syn)), sem);
+        assert_eq!(env.value_of(&ast::Expression::If(&ast)), sem);
     }
 
     struct Env<'g> {
@@ -1529,7 +1529,7 @@ mod tests {
             )
         }
 
-        fn value_of(&self, expr: &syn::Expression) -> sem::Value<'g> {
+        fn value_of(&self, expr: &ast::Expression) -> sem::Value<'g> {
             let mut local_arena = mem::Arena::new();
             let result = self.resolver(&local_arena).value_of(expr);
             local_arena.recycle();

@@ -7,7 +7,7 @@ use std;
 use basic::mem;
 use basic::com::Span;
 use model::tt;
-use model::syn::*;
+use model::ast::*;
 use pass::syn::typ;
 
 use super::com::RawParser;
@@ -74,7 +74,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         use model::tt::Kind as K;
 
         fn binop(kind: tt::Kind) -> Option<(Operator, Precedence)> {
-            use model::syn::BinaryOperator as B;
+            use model::ast::BinaryOperator as B;
 
             //  Ordered from higher precedence to lower; higher binding tigther.
             match kind {
@@ -696,8 +696,8 @@ fn parse_tuple_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
 #[cfg(test)]
 mod tests {
     use basic::mem;
-    use model::syn::*;
-    use model::syn::builder::Factory;
+    use model::ast::*;
+    use model::ast::builder::Factory;
 
     #[test]
     fn basic_add() {
@@ -713,23 +713,23 @@ mod tests {
     #[test]
     fn basic_var() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
+        let f = Factory::new(&global_arena);
 
         assert_eq!(
             stmtit(&global_arena, b" :var fool := 1234;"),
-            syn.stmt().var(syn.pat().var(6, 4), syn.expr().int(14, 4)).build()
+            f.stmt().var(f.pat().var(6, 4), f.expr().int(14, 4)).build()
         );
     }
 
     #[test]
     fn basic_var_automatic_insertion() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
+        let f = Factory::new(&global_arena);
 
         assert_eq!(
             stmtit(&global_arena, b" :var fool 1234"),
-            syn.stmt()
-                .var(syn.pat().var(6, 4), syn.expr().int(11, 4))
+            f.stmt()
+                .var(f.pat().var(6, 4), f.expr().int(11, 4))
                 .bind(0)
                 .semi_colon(14)
                 .build()
@@ -750,19 +750,19 @@ mod tests {
     #[test]
     fn basic_constructor() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
+        let f = Factory::new(&global_arena);
 
         assert_eq!(
             exprit(&global_arena, b"True"),
-            syn.expr().constructor(syn.type_().simple(0, 4)).build()
+            f.expr().constructor(f.type_().simple(0, 4)).build()
         );
     }
 
     #[test]
     fn basic_constructor_arguments() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, t) = (syn.expr(), syn.type_());
+        let f = Factory::new(&global_arena);
+        let (e, t) = (f.expr(), f.type_());
 
         assert_eq!(
             exprit(&global_arena, b"Some(1)"),
@@ -774,12 +774,12 @@ mod tests {
     #[test]
     fn basic_nested_constructor() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
+        let f = Factory::new(&global_arena);
 
         assert_eq!(
             exprit(&global_arena, b"Bool::True"),
-            syn.expr().constructor(
-                syn.type_().nested(6, 4).push(0, 4).build()
+            f.expr().constructor(
+                f.type_().nested(6, 4).push(0, 4).build()
             ).build()
         );
     }
@@ -787,8 +787,8 @@ mod tests {
     #[test]
     fn basic_function_call() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             exprit(&global_arena, b"basic(1, 2)"),
@@ -842,8 +842,8 @@ mod tests {
     #[test]
     fn block_basic() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
@@ -859,8 +859,8 @@ mod tests {
     #[test]
     fn block_return() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, s) = (syn.expr(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, s) = (f.expr(), f.stmt());
 
         assert_eq!(
             exprit(&global_arena, b"{ :return 1; }"),
@@ -875,8 +875,8 @@ mod tests {
     #[test]
     fn boolean_basic() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             stmtit(&global_arena, b":var x := true;"),
@@ -922,24 +922,24 @@ mod tests {
     #[test]
     fn set_basic() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let f = Factory::new(&global_arena);
+        let e = f.expr();
 
         assert_eq!(
             stmtit(&global_arena, b" :set fool := 1234;"),
-            syn.stmt().set(e.var(6, 4), e.int(14, 4)).build()
+            f.stmt().set(e.var(6, 4), e.int(14, 4)).build()
         );
     }
 
     #[test]
     fn set_field() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let e = syn.expr();
+        let f = Factory::new(&global_arena);
+        let e = f.expr();
 
         assert_eq!(
             stmtit(&global_arena, b" :set foo.0 := 1234;"),
-            syn.stmt().set(
+            f.stmt().set(
                 e.field_access(e.var(6, 3)).build(),
                 e.int(15, 4)
             ).build()
@@ -949,8 +949,8 @@ mod tests {
     #[test]
     fn var_constructor() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s, t) = (syn.expr(), syn.pat(), syn.stmt(), syn.type_());
+        let f = Factory::new(&global_arena);
+        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
         assert_eq!(
             stmtit(&global_arena, b":var Some(x) := Some(1);"),
@@ -964,8 +964,8 @@ mod tests {
     #[test]
     fn var_ignored() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             stmtit(&global_arena, b":var _ := 1;"),
@@ -976,8 +976,8 @@ mod tests {
     #[test]
     fn var_ignored_nested() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             stmtit(&global_arena, b":var (_, b) := (1, 2);"),
@@ -991,8 +991,8 @@ mod tests {
     #[test]
     fn var_tuple() {
         let global_arena = mem::Arena::new();
-        let syn = Factory::new(&global_arena);
-        let (e, p, s) = (syn.expr(), syn.pat(), syn.stmt());
+        let f = Factory::new(&global_arena);
+        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
             stmtit(&global_arena, b":var (a, b) := (1, 2);"),

@@ -1,7 +1,7 @@
 /// Utilities for the integration tests
 
 use stysh_compile::basic::{com, mem};
-use stysh_compile::model::{syn, sem, sir};
+use stysh_compile::model::{ast, sem, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::scp;
 
@@ -43,7 +43,7 @@ where
 
     for &node in nodes {
         match node {
-            syn::Node::Item(i) => {
+            ast::Node::Item(i) => {
                 use self::sem::Prototype::*;
 
                 let code = code.clone();
@@ -57,14 +57,14 @@ where
                     Rec(_) => unimplemented!(),
                 };
             },
-            syn::Node::Expr(expr) => {
+            ast::Node::Expr(expr) => {
                 assert!(
                     expression.is_none(),
                     "Cannot replace {:?} by {:?}", expression, expr
                 );
                 expression = Some(expr);
             },
-            syn::Node::Stmt(_) => panic!("No statement allowed at top-level"),
+            ast::Node::Stmt(_) => panic!("No statement allowed at top-level"),
         }
     }
 
@@ -110,7 +110,7 @@ fn create_ast<'g>(
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
-    -> syn::List<'g>
+    -> ast::List<'g>
 {
     use stysh_compile::pass::syn::Parser;
 
@@ -121,7 +121,7 @@ fn create_ast<'g>(
 }
 
 fn create_prototype<'a, 'g>(
-    item: &syn::Item,
+    item: &ast::Item,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a sem::Registry<'g>,
@@ -140,7 +140,7 @@ fn create_prototype<'a, 'g>(
 }
 
 fn create_item<'a, 'g>(
-    item: &syn::Item,
+    item: &ast::Item,
     proto: &'g sem::Prototype<'g>,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
@@ -160,7 +160,7 @@ fn create_item<'a, 'g>(
 }
 
 fn create_value<'a, 'g>(
-    expr: &syn::Expression,
+    expr: &ast::Expression,
     code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a sem::Registry<'g>,

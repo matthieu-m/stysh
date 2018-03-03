@@ -6,7 +6,7 @@ use basic::{com, mem};
 use basic::com::Span;
 use basic::mem::CloneInto;
 
-use model::syn;
+use model::ast;
 use model::sem::*;
 
 /// A Value.
@@ -407,8 +407,8 @@ impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
     }
 }
 
-impl convert::From<syn::VariableIdentifier> for ValueIdentifier {
-    fn from(value: syn::VariableIdentifier) -> Self {
+impl convert::From<ast::VariableIdentifier> for ValueIdentifier {
+    fn from(value: ast::VariableIdentifier) -> Self {
         ValueIdentifier(value.span())
     }
 }

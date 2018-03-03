@@ -4,7 +4,7 @@ use std::convert;
 
 use basic::com::{self, Span};
 
-use model::syn::*;
+use model::ast::*;
 
 /// A Pattern.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]

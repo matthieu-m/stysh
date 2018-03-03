@@ -8,7 +8,7 @@ use std::iter;
 use basic::mem;
 
 use model::tt;
-use model::syn::*;
+use model::ast::*;
 
 use pass::syn::com::RawParser;
 use pass::syn::{expr, fun, typ};

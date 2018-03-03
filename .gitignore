@@ -1,3 +1,6 @@
 # Build Artifacts
 */target
 
+# Custom configuration
+*/.cargo
+

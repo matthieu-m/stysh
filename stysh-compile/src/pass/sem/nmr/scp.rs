@@ -175,7 +175,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
             Type::Rec(r)
                 => self.registry
                     .lookup_record(r.name)
-                    .map(|r| r.fields)
+                    .map(|r| r.definition.fields)
                     .unwrap_or(&[]),
             Type::Tuple(t) => t.fields,
             _ => &[],

@@ -66,7 +66,7 @@ pub struct EnumBuilder<'a> {
 #[derive(Clone)]
 pub struct RecordBuilder<'a> {
     prototype: &'a RecordProto,
-    fields: mem::Array<'a, Type<'a>>,
+    definition: TupleBuilder<'a, Type<'a>>,
 }
 
 //
@@ -254,14 +254,14 @@ impl<'a> EnumBuilder<'a> {
     }
 
     /// Pushes a variant.
-    pub fn push(&mut self, v: Record<'a>) -> &mut Self {
+    pub fn push(&mut self, r: Record<'a>) -> &mut Self {
         let proto = self.variants.arena().insert(RecordProto {
             enum_: self.prototype.name,
-            ..*v.prototype
+            ..*r.prototype
         });
         self.variants.push(Record {
             prototype: proto,
-            fields: v.fields,
+            definition: r.definition,
         });
         self
     }
@@ -280,13 +280,13 @@ impl<'a> RecordBuilder<'a> {
     pub fn new(arena: &'a mem::Arena, p: RecordProto) -> Self {
         RecordBuilder {
             prototype: arena.insert(p),
-            fields: mem::Array::new(arena),
+            definition: TupleBuilder::new(arena),
         }
     }
 
     /// Pushes a field.
-    pub fn push(&mut self, v: Type<'a>) -> &mut Self {
-        self.fields.push(v);
+    pub fn push(&mut self, t: Type<'a>) -> &mut Self {
+        self.definition.push(t);
         self
     }
 
@@ -294,7 +294,7 @@ impl<'a> RecordBuilder<'a> {
     pub fn build(&self) -> Record<'a> {
         Record {
             prototype: self.prototype,
-            fields: self.fields.clone().into_slice(),
+            definition: self.definition.build(),
         }
     }
 }

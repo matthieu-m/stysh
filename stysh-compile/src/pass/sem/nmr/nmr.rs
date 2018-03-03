@@ -195,7 +195,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             hir::Type::Rec(rec) =>
                 self.registry
                     .lookup_record(rec.name)
-                    .and_then(|r| r.fields.get(index)),
+                    .and_then(|r| r.definition.fields.get(index)),
             hir::Type::Tuple(tup) => tup.fields.get(index),
             _ => None,
         };

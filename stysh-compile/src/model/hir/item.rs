@@ -98,8 +98,8 @@ pub enum Prototype<'a> {
 pub struct Record<'a> {
     /// The prototype.
     pub prototype: &'a RecordProto,
-    /// The fields.
-    pub fields: &'a [Type<'a>],
+    /// The definition.
+    pub definition: Tuple<'a, Type<'a>>,
 }
 
 /// A record prototype.
@@ -240,7 +240,7 @@ impl<'a, 'target> CloneInto<'target> for Record<'a> {
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         Record {
             prototype: arena.intern_ref(self.prototype),
-            fields: CloneInto::clone_into(self.fields, arena),
+            definition: arena.intern(&self.definition),
         }
     }
 }

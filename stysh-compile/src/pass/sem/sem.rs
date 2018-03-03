@@ -152,7 +152,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                         range: ev.span(),
                         enum_: p.name.into()
                     }),
-                    fields: &[],
+                    definition: hir::Tuple::unit(),
                 }),
                 Missing(_) | Unexpected(_) => (),
             }
@@ -196,7 +196,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             },
         };
 
-        hir::Item::Rec(hir::Record { prototype: p, fields: fields })
+        hir::Item::Rec(hir::Record {
+            prototype: p,
+            definition: hir::Tuple { fields }
+        })
     }
 
     fn function_scope<'b>(

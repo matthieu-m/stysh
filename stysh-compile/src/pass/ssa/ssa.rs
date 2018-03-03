@@ -764,7 +764,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         match type_ {
             hir::Type::Rec(proto) => {
                 if let Some(r) = self.registry.lookup_record(proto.name) {
-                    return r.fields;
+                    return &r.definition.fields;
                 }
                 unimplemented!("Unknown record {:?}", proto.name);
             },

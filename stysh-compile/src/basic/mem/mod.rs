@@ -9,7 +9,9 @@
 mod arena;
 mod array;
 mod arraymap;
+mod jaggedarray;
 
 pub use self::arena::{Arena, CloneInto};
 pub use self::array::Array;
 pub use self::arraymap::ArrayMap;
+pub use self::jaggedarray::{JaggedArray, JaggedSlice};

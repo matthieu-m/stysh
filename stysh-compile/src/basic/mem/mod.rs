@@ -9,6 +9,7 @@
 mod arena;
 mod array;
 mod arraymap;
+mod interner;
 mod jaggedarray;
 mod jaggedhashmap;
 

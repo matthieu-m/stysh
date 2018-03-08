@@ -477,13 +477,15 @@ impl<T> Core<T> {
     /// Returns the longest contiguous slice starting at index `i`.
     pub fn get_slice(&self, i: usize, length: usize) -> &[T] {
         let (outer, inner) = self.split(i);
-        unsafe { self.slab(outer, length) }.slice().split_at(inner).1
+        let slab = unsafe { self.slab(outer, length) };
+        slab.slice().split_at(inner).1
     }
 
     /// Returns the longest contiguous slice starting at index `i`.
     pub fn get_slice_mut(&mut self, i: usize, length: usize) -> &mut [T] {
         let (outer, inner) = self.split(i);
-        unsafe { self.slab_mut(outer, length) }.slice().split_at_mut(inner).1
+        let slab = unsafe { self.slab_mut(outer, length) };
+        slab.slice().split_at_mut(inner).1
     }
 
     /// Returns the element at index `i` if `i < self.len()`, otherwise the
@@ -560,9 +562,11 @@ impl<T> Core<T> {
     /// Returns the length of the slab at index i.
     #[inline(always)]
     fn slab_length(&self, i: usize, length: usize) -> usize {
-        let capacity = self.slab_capacity(i);
-        if length < capacity { 0 }
-        else { cmp::min(length - capacity, capacity) }
+        let before = self.slab_capacity_before(i);
+        if length <= before { return 0; }
+
+        let current = self.slab_capacity(i);
+        cmp::min(length - before, current)
     }
 
     /// Returns the index of the slab containing the element.

@@ -6,13 +6,13 @@
 //! elements without displacing the existing ones, so that it is possible
 //! to retain a reference to them externally across pushes.
 //!
-//! Additionally, if one extracts a *view* of the current elements, this view
-//! can be accessed from other threads concurrently with modifications of the
-//! underlying array from a single thread.
+//! Additionally, if one extracts a *snapshot* of the current elements, this
+//! snapshot can be accessed from other threads concurrently with modifications
+//! of the underlying array from a single thread.
 //!
-//! Thread Safety:  JaggedArray is not Sync, yet JaggedSlice is Send.
+//! Thread Safety:  JaggedArray is not Sync, yet JaggedArraySnapshot is Send.
 
-use std::{cell, cmp, fmt, marker, mem, ops, ptr, slice};
+use std::{cell, cmp, fmt, iter, marker, mem, ops, ptr, slice};
 
 const NB_SLABS: usize = 21;
 
@@ -26,11 +26,16 @@ pub struct JaggedArray<T> {
     core: cell::UnsafeCell<Core<T>>,
 }
 
-/// JaggedSlice
-#[derive(Clone, Copy)]
-pub struct JaggedSlice<'a, T: 'a> {
+/// JaggedArraySnapshot
+pub struct JaggedArraySnapshot<'a, T: 'a> {
     length: usize,
     core: &'a Core<T>,
+}
+
+/// JaggedArrayIterator
+pub struct JaggedArrayIterator<'a, T: 'a> {
+    current: usize,
+    snapshot: JaggedArraySnapshot<'a, T>,
 }
 
 //
@@ -64,6 +69,11 @@ impl<T> JaggedArray<T> {
     /// Returns the maximum capacity of the array.
     pub fn max_capacity(&self) -> usize { self.inner().max_capacity() }
 
+    /// Returns a snapshot.
+    pub fn snapshot<'a>(&'a self) -> JaggedArraySnapshot<'a, T> {
+        JaggedArraySnapshot::new(self)
+    }
+
     /// Returns the element at index `i` if `i < self.len()` or None.
     pub fn get(&self, i: usize) -> Option<&T> {
         self.inner().get(i, self.len())
@@ -89,14 +99,14 @@ impl<T> JaggedArray<T> {
     /// Returns the element at index `i` if `i < self.len()`, otherwise the
     /// behavior is undefined.
     pub unsafe fn get_unchecked(&self, i: usize) -> &T {
-        debug_assert!(i < self.len());
+        debug_assert!(i < self.len(), "{} < {}", i, self.len());
         self.inner().get_unchecked(i)
     }
 
     /// Returns the element at index `i` if `i < self.len()`, otherwise the
     /// behavior is undefined.
     pub unsafe fn get_unchecked_mut(&mut self, i: usize) -> &mut T {
-        debug_assert!(i < self.len());
+        debug_assert!(i < self.len(), "{} < {}", i, self.len());
         self.inner_mut().get_unchecked_mut(i)
     }
 
@@ -198,12 +208,12 @@ impl<T: Copy + Default> JaggedArray<T> {
 }
 
 //
-//  Public interface of JaggedSlice
+//  Public interface of JaggedArraySnapshot
 //
-impl<'a, T: 'a> JaggedSlice<'a, T> {
+impl<'a, T: 'a> JaggedArraySnapshot<'a, T> {
     /// Creates a new instance.
-    pub fn new(array: &'a JaggedArray<T>) -> JaggedSlice<'a, T> {
-        JaggedSlice {
+    pub fn new(array: &'a JaggedArray<T>) -> JaggedArraySnapshot<'a, T> {
+        JaggedArraySnapshot {
             length: array.len(),
             core: array.inner(),
         }
@@ -234,8 +244,23 @@ impl<'a, T: 'a> JaggedSlice<'a, T> {
 }
 
 //
+//  Public interface of JaggedArrayIterator
+//
+
+impl<'a, T: 'a> JaggedArrayIterator<'a, T> {
+    /// Creates an instance.
+    pub fn new(snapshot: JaggedArraySnapshot<'a, T>) -> Self {
+        JaggedArrayIterator {
+            current: 0,
+            snapshot: snapshot,
+        }
+    }
+}
+
+//
 //  Implementation Details
 //
+
 struct Slab<'a, T: 'a> {
     ptr: *const T,
     length: usize,
@@ -616,6 +641,7 @@ impl<T: Clone> Core<T> {
 //
 //  Implementation of traits for JaggedArray
 //
+
 impl<T: Clone> Clone for JaggedArray<T> {
     fn clone(&self) -> Self {
         let result = JaggedArray {
@@ -633,9 +659,22 @@ impl<T: Clone> Clone for JaggedArray<T> {
     }
 }
 
+impl<T> Default for JaggedArray<T> {
+    fn default() -> Self { JaggedArray::new(0) }
+}
+
 impl<T: fmt::Debug> fmt::Debug for JaggedArray<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{:?}", JaggedSlice::new(self))
+        write!(f, "{:?}", JaggedArraySnapshot::new(self))
+    }
+}
+
+impl<'a, T: 'a> iter::IntoIterator for &'a JaggedArray<T> {
+    type Item = &'a [T];
+    type IntoIter = JaggedArrayIterator<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        JaggedArraySnapshot::new(self).into_iter()
     }
 }
 
@@ -646,32 +685,87 @@ impl<T> ops::Drop for JaggedArray<T> {
     }
 }
 
-unsafe impl<T> marker::Send for JaggedArray<T> {}
+unsafe impl<T: marker::Send> marker::Send for JaggedArray<T> {}
 
 //
-//  Implementation of traits for JaggedSlice
+//  Implementation of traits for JaggedArraySnapshot
 //
-impl<'a, T: fmt::Debug + 'a> fmt::Debug for JaggedSlice<'a, T> {
+
+impl<'a, T: 'a> Clone for JaggedArraySnapshot<'a, T> {
+    fn clone(&self) -> Self { *self }
+}
+
+impl<'a, T: 'a> Copy for JaggedArraySnapshot<'a, T> {}
+
+impl<'a, T: fmt::Debug + 'a> fmt::Debug for JaggedArraySnapshot<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.is_empty() {
             return write!(f, "[]");
         }
 
-        unsafe { write!(f, "[ {:?}", self.get_unchecked(0))?; }
+        write!(f, "[ ")?;
 
-        for i in 1..self.length {
-            unsafe { write!(f, ", {:?}", self.get_unchecked(i))?; }
+        let mut separator = "";
+        for slice in self {
+            debug_assert!(slice.len() > 0);
+            write!(f, "{}{:?}", separator, slice)?;
+            separator = ", ";
         }
 
         write!(f, " ]")
     }
 }
 
-unsafe impl<'a, T: 'a> marker::Send for JaggedSlice<'a, T> {}
+impl<'a, T: 'a> iter::IntoIterator for JaggedArraySnapshot<'a, T> {
+    type Item = &'a [T];
+    type IntoIter = JaggedArrayIterator<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter { JaggedArrayIterator::new(self) }
+}
+
+impl<'a, 'b, T: 'a> iter::IntoIterator for &'b JaggedArraySnapshot<'a, T> {
+    type Item = &'a [T];
+    type IntoIter = JaggedArrayIterator<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        JaggedArrayIterator::new(*self)
+    }
+}
+
+unsafe impl<'a, T> marker::Send for JaggedArraySnapshot<'a, T>
+    where
+        T: marker::Sync + 'a
+{}
+
+//
+//  Implementation of traits for JaggedArrayIterator
+//
+
+impl<'a, T: 'a> Clone for JaggedArrayIterator<'a, T> {
+    fn clone(&self) -> Self { *self }
+}
+
+impl<'a, T: 'a> Copy for JaggedArrayIterator<'a, T> {}
+
+impl<'a, T: 'a> iter::Iterator for JaggedArrayIterator<'a, T> {
+    type Item = &'a [T];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let slice = self.snapshot.get_slice(self.current);
+
+        if slice.is_empty() {
+            None
+        } else {
+            self.current += slice.len();
+            Some(slice)
+        }
+    }
+}
 
 //
 //  Implementation of traits for internal structures
 //
+
 impl<'a, T: 'a> Default for Slab<'a, T> {
     fn default() -> Self { Slab::new(ptr::null(), 0) }
 }
@@ -682,14 +776,14 @@ impl<'a, T: 'a> Default for SlabMut<'a, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{JaggedArray, JaggedSlice};
+    use super::{JaggedArray, JaggedArraySnapshot};
 
     #[test]
     fn ensure_send() {
         fn check_send<T: Send>() {}
 
         check_send::<JaggedArray<i32>>();
-        check_send::<JaggedSlice<'static, i32>>();
+        check_send::<JaggedArraySnapshot<'static, i32>>();
     }
 
     #[test]
@@ -699,7 +793,7 @@ mod tests {
         const POINTER_SIZE: usize = size_of::<usize>();
 
         assert_eq!(size_of::<JaggedArray<i32>>(), 24 * POINTER_SIZE);
-        assert_eq!(size_of::<JaggedSlice<'static, i32>>(), 2 * POINTER_SIZE);
+        assert_eq!(size_of::<JaggedArraySnapshot<'static, i32>>(), 2 * POINTER_SIZE);
     }
 
     #[test]
@@ -748,7 +842,27 @@ mod tests {
     }
 
     #[test]
-    fn slice() {
+    fn iterator() {
+        let array = JaggedArray::new(0);
+        array.extend_copy(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let mut iterator = array.into_iter();
+        assert_eq!(iterator.next(), Some(&[0][..]));
+        assert_eq!(iterator.next(), Some(&[1][..]));
+        assert_eq!(iterator.next(), Some(&[2, 3][..]));
+        assert_eq!(iterator.next(), Some(&[4, 5, 6, 7][..]));
+        assert_eq!(iterator.next(), Some(&[8, 9][..]));
+
+        assert_eq!(iterator.next(), None);
+
+        array.push(10);
+
+        assert_eq!(iterator.next(), None);
+        assert_eq!(iterator.next(), None);
+    }
+
+    #[test]
+    fn snapshot() {
         let array = JaggedArray::new(0);
         array.extend_copy(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
@@ -764,16 +878,25 @@ mod tests {
         assert_eq!(array.get_slice(9), &[9]);
         assert_eq!(array.get_slice(10), &[]);
 
-        let slice = JaggedSlice::new(&array);
+        let snapshot = array.snapshot();
         array.push(10);
 
-        assert_eq!(slice.get_slice(8), &[8, 9]);
+        assert_eq!(snapshot.get_slice(8), &[8, 9]);
         assert_eq!(array.get_slice(8), &[8, 9, 10]);
 
-        assert_eq!(slice.get_slice(9), &[9]);
+        assert_eq!(snapshot.get_slice(9), &[9]);
         assert_eq!(array.get_slice(9), &[9, 10]);
 
-        assert_eq!(slice.get_slice(10), &[]);
+        assert_eq!(snapshot.get_slice(10), &[]);
         assert_eq!(array.get_slice(10), &[10]);
+    }
+
+    #[test]
+    fn snapshot_debug() {
+        let array = JaggedArray::new(0);
+        array.extend_copy(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        let snapshot = JaggedArraySnapshot::new(&array);
+        assert_eq!(format!("{:?}", snapshot), "[ [0], [1], [2, 3], [4, 5, 6, 7], [8, 9] ]");
     }
 }

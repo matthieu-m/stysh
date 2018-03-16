@@ -14,4 +14,5 @@ mod jaggedarray;
 pub use self::arena::{Arena, CloneInto};
 pub use self::array::Array;
 pub use self::arraymap::ArrayMap;
-pub use self::jaggedarray::{JaggedArray, JaggedSlice};
+pub use self::interner::{Interner, InternerSnapshot, InternId};
+pub use self::jaggedarray::{JaggedArray, JaggedArrayIterator, JaggedArraySnapshot};

@@ -20,6 +20,7 @@ use super::raw::{AsciiSet, RawStream, RawToken};
 ///
 /// No client should have to parse the raw slice by themselves.
 pub struct Lexer<'g, 'local> {
+    interner: &'g mem::Interner,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -29,18 +30,23 @@ impl<'g, 'local> Lexer<'g, 'local> {
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(global: &'g mem::Arena, local: &'local mem::Arena)
+    pub fn new(
+        interner: &'g mem::Interner,
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena,
+    )
         -> Lexer<'g, 'local>
     {
-        Lexer { global_arena: global, local_arena: local }
+        Lexer { interner, global_arena, local_arena }
     }
 
     /// Parses a raw slice of bytes into a Token Tree.
-    pub fn parse(&mut self, raw: &[u8]) -> List<'g> {
+    pub fn parse(&self, raw: &[u8]) -> List<'g> {
         let mut raw = RawStream::new(raw).peekable();
 
         LexerImpl::new(
             RawPeekableStream::new(&mut raw, 0, 0),
+            self.interner,
             self.global_arena,
             self.local_arena
         ).parse_all()
@@ -54,6 +60,7 @@ type UnderlyingStream<'a> = iter::Peekable<RawStream<'a>>;
 
 struct LexerImpl<'a, 'b, 'g, 'local>  where 'a: 'b {
     stream: RawPeekableStream<'a, 'b>,
+    interner: &'g mem::Interner,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -99,16 +106,13 @@ impl<'a, 'b, 'g, 'local> iter::Iterator for LexerImpl<'a, 'b, 'g, 'local> {
 impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
     fn new(
         stream: RawPeekableStream<'a, 'b>,
+        interner: &'g mem::Interner,
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena
     )
         -> LexerImpl<'a, 'b, 'g, 'local>
     {
-        LexerImpl {
-            stream: stream,
-            global_arena: global_arena,
-            local_arena: local_arena
-        }
+        LexerImpl { stream, interner, global_arena, local_arena }
     }
 
     fn parse_all(&mut self) -> List<'g> {
@@ -146,8 +150,12 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
                 raw_open.line_indent + 1
             );
 
-            LexerImpl::new(inner_stream, self.global_arena, self.local_arena)
-                .parse_all()
+            LexerImpl::new(
+                inner_stream,
+                self.interner,
+                self.global_arena,
+                self.local_arena,
+            ).parse_all()
         };
 
         let pop = underlying.peek().map_or(false, |tok| tok.raw == raw_close);
@@ -281,6 +289,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         // TODO(matthieum): validate identifiers.
         debug_assert!(tok.raw.len() > 1);
 
+        self.interner.insert(tok.raw);
         Some(Token::new(Kind::NameField, tok.offset, tok.raw.len()))
     }
 
@@ -300,17 +309,20 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             Kind::NameValue
         };
 
+        self.interner.insert(tok.raw);
         Some(Token::new(kind, tok.offset, tok.raw.len()))
     }
 
     fn parse_name_type(&self, tok: RawToken) -> Option<Token> {
         // TODO(matthieum): validate identifiers.
+        self.interner.insert(tok.raw);
         Some(Token::new(Kind::NameType, tok.offset, tok.raw.len()))
     }
 
     fn parse_number(&self, tok: RawToken) -> Option<Token> {
         assert!(tok.raw.iter().all(|&c| c >= b'0' && c <= b'9'));
 
+        self.interner.insert(tok.raw);
         Some(Token::new(Kind::LitIntegral, tok.offset, tok.raw.len()))
     }
 
@@ -392,10 +404,10 @@ mod tests {
 
     #[test]
     fn lex_braces_empty() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"{}"),
+            env.lexit(b"{}"),
             &[
                 Node::Braced(
                     Token::new(Kind::BraceOpen, 0, 1),
@@ -406,7 +418,7 @@ mod tests {
         );
 
         assert_eq!(
-            lexit(&global_arena, b"[]"),
+            env.lexit(b"[]"),
             &[
                 Node::Braced(
                     Token::new(Kind::BracketOpen, 0, 1),
@@ -417,7 +429,7 @@ mod tests {
         );
 
         assert_eq!(
-            lexit(&global_arena, b"()"),
+            env.lexit(b"()"),
             &[
                 Node::Braced(
                     Token::new(Kind::ParenthesisOpen, 0, 1),
@@ -430,10 +442,10 @@ mod tests {
 
     #[test]
     fn lex_braces_nested() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"{[[ ]]}"),
+            env.lexit(b"{[[ ]]}"),
             &[
                 Node::Braced(
                     Token::new(Kind::BraceOpen, 0, 1),
@@ -458,10 +470,10 @@ mod tests {
 
     #[test]
     fn lex_braces_expression() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"(1 + 2)"),
+            env.lexit(b"(1 + 2)"),
             &[
                 Node::Braced(
                     Token::new(Kind::ParenthesisOpen, 0, 1),
@@ -480,10 +492,10 @@ mod tests {
 
     #[test]
     fn lex_braces_missing_close() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"(1 + 2"),
+            env.lexit(b"(1 + 2"),
             &[
                 Node::Braced(
                     Token::new(Kind::ParenthesisOpen, 0, 1),
@@ -500,7 +512,7 @@ mod tests {
         );
 
         assert_eq!(
-            lexit(&global_arena, b"{\n    1 + 2\n3 + 4"),
+            env.lexit(b"{\n    1 + 2\n3 + 4"),
             &[
                 Node::Braced(
                     Token::new(Kind::BraceOpen, 0, 1),
@@ -524,14 +536,14 @@ mod tests {
 
     #[test]
     fn lex_braces_tuples() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         fn int(offset: usize) -> Token {
             Token::new(Kind::NameType, offset, 3)
         }
 
         assert_eq!(
-            lexit(&global_arena, b"((Int, Int), Int, )"),
+            env.lexit(b"((Int, Int), Int, )"),
             &[
                 Node::Braced(
                     paren_open(0),
@@ -553,10 +565,10 @@ mod tests {
 
     #[test]
     fn lex_function_simple() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b":fun add(x: Int, y: Int) -> Int { x + y }"),
+            env.lexit(b":fun add(x: Int, y: Int) -> Int { x + y }"),
             &[
                 Node::Run(&[
                     Token::new(Kind::KeywordFun, 0, 4),
@@ -598,10 +610,10 @@ mod tests {
 
     #[test]
     fn lex_boolean() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"false true"),
+            env.lexit(b"false true"),
             &[
                 Node::Run(&[
                     Token::new(Kind::LitBoolFalse, 0, 5),
@@ -613,10 +625,10 @@ mod tests {
 
     #[test]
     fn lex_boolean_negative() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"False fals alse True tru rue"),
+            env.lexit(b"False fals alse True tru rue"),
             &[
                 Node::Run(&[
                     Token::new(Kind::NameType, 0, 5),
@@ -632,10 +644,10 @@ mod tests {
 
     #[test]
     fn lex_integral_single_digit() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"1"),
+            env.lexit(b"1"),
             &[
                 Node::Run(&[
                     Token::new(Kind::LitIntegral, 0, 1),
@@ -646,10 +658,10 @@ mod tests {
 
     #[test]
     fn lex_integral_multiple_digits() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"0123"),
+            env.lexit(b"0123"),
             &[
                 Node::Run(&[
                     Token::new(Kind::LitIntegral, 0, 4),
@@ -660,10 +672,10 @@ mod tests {
 
     #[test]
     fn lex_expression_integral_addition() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b" 12 + 34 "),
+            env.lexit(b" 12 + 34 "),
             &[
                 Node::Run(&[
                     Token::new(Kind::LitIntegral, 1, 2),
@@ -676,12 +688,12 @@ mod tests {
 
     #[test]
     fn lex_keywords_farandole() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         let keywords =
             b":and :else :enum :fun :if :loop :not :or :rec :return :set :var :xor";
         assert_eq!(
-            lexit(&global_arena, keywords),
+            env.lexit(keywords),
             &[
                 Node::Run(&[
                     Token::new(Kind::KeywordAnd, 0, 4),
@@ -704,10 +716,10 @@ mod tests {
 
     #[test]
     fn lex_path() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"mod::mod::Type::method"),
+            env.lexit(b"mod::mod::Type::method"),
             &[
                 Node::Run(&[
                     Token::new(Kind::NameModule, 0, 3),
@@ -724,10 +736,10 @@ mod tests {
 
     #[test]
     fn lex_signs_farandole() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"-> != := : , - :: == // < <= + > >= ; * _"),
+            env.lexit(b"-> != := : , - :: == // < <= + > >= ; * _"),
             &[
                 Node::Run(&[
                     Token::new(Kind::SignArrowSingle, 0, 2),
@@ -754,10 +766,10 @@ mod tests {
 
     #[test]
     fn lex_tuple_index() {
-        let global_arena = mem::Arena::new();
+        let env = Env::new();
 
         assert_eq!(
-            lexit(&global_arena, b"tup.42"),
+            env.lexit(b"tup.42"),
             &[
                 Node::Run(&[
                     Token::new(Kind::NameValue, 0, 3),
@@ -767,13 +779,29 @@ mod tests {
         );
     }
 
-    fn lexit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> List<'g> {
-        let mut local_arena = mem::Arena::new();
+    struct Env {
+        interner: mem::Interner,
+        global_arena: mem::Arena,
+    }
 
-        let result = Lexer::new(&global_arena, &local_arena).parse(raw);
-        local_arena.recycle();
+    impl Env {
+        fn new() -> Self {
+            Env {
+                interner: Default::default(),
+                global_arena: mem::Arena::new(),
+            }
+        }
 
-        result
+        fn lexit<'g>(&'g self, raw: &[u8]) -> List<'g> {
+            let mut local_arena = mem::Arena::new();
+
+            let result =
+                Lexer::new(&self.interner, &self.global_arena, &local_arena)
+                    .parse(raw);
+            local_arena.recycle();
+
+            result
+        }
     }
 
     fn comma(offset: usize) -> Token {

@@ -3,6 +3,7 @@
 use std::convert;
 
 use basic::com::{self, Span};
+use basic::mem::{self, InternId};
 
 use model::ast::*;
 use model::tt;
@@ -87,6 +88,15 @@ pub struct FieldAccess<'a> {
     pub field: FieldIdentifier,
 }
 
+/// A Field Identifier.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum FieldIdentifier {
+    /// Index of the field.
+    Index(u16, com::Range),
+    /// Interned ID of the name of the field.
+    Name(InternId, com::Range),
+}
+
 /// A function call expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionCall<'a> {
@@ -119,7 +129,7 @@ pub enum Literal<'a> {
     /// A bytes value.
     Bytes(&'a [StringFragment], com::Range),
     /// An integral value.
-    Integral(com::Range),
+    Integral(i64, com::Range),
     /// A string value.
     String(&'a [StringFragment], com::Range),
 }
@@ -144,13 +154,9 @@ pub enum PrefixOperator {
     Not,
 }
 
-/// A Field Identifier.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct FieldIdentifier(pub com::Range);
-
 /// A Value Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct VariableIdentifier(pub com::Range);
+pub struct VariableIdentifier(pub InternId, pub com::Range);
 
 //
 //  Implementations
@@ -170,6 +176,38 @@ impl<'a> FunctionCall<'a> {
     /// Returns the token of the closing parenthesis.
     pub fn parenthesis_close(&self) -> tt::Token {
         self.arguments.parenthesis_close()
+    }
+}
+
+impl FieldIdentifier {
+    /// Sets the InternId of the FieldIdentifier.
+    pub fn with_id(self, id: InternId) -> Self {
+        use self::FieldIdentifier::*;
+
+        match self {
+            Index(i, r) => Index(i, r),
+            Name(_, r) => Name(id, r),
+        }
+    }
+
+    /// Sets the range spanned by the FieldIdentifier.
+    pub fn with_range(self, range: com::Range) -> Self {
+        use self::FieldIdentifier::*;
+
+        match self {
+            Index(i, _) => Index(i, range),
+            Name(n, _) => Name(n, range),
+        }
+    }
+}
+
+impl VariableIdentifier {
+    /// Returns the InternId.
+    pub fn id(&self) -> InternId { self.0 }
+
+    /// Sets the InternId of the VariableIdentifier.
+    pub fn with_id(self, id: InternId) -> Self {
+        VariableIdentifier(id, self.1)
     }
 }
 
@@ -193,7 +231,7 @@ impl<'a> Span for Expression<'a> {
             PreOp(_, pos, expr)
                 => com::Range::new(pos as usize, 0).extend(expr.span()),
             Tuple(t) => t.span(),
-            Var(VariableIdentifier(range)) => range,
+            Var(v) => v.span(),
         }
     }
 }
@@ -209,7 +247,7 @@ impl<'a> Span for Block<'a> {
 impl<'a> Span for FieldAccess<'a> {
     /// Returns the range spanned by the constructor.
     fn span(&self) -> com::Range {
-        self.accessed.span().extend(self.field.0)
+        self.accessed.span().extend(self.field.span())
     }
 }
 
@@ -259,16 +297,44 @@ impl<'a> Span for Literal<'a> {
         match *self {
             Bool(_, r) => r,
             Bytes(_, r) => r,
-            Integral(r) => r,
+            Integral(_, r) => r,
             String(_, r) => r,
+        }
+    }
+}
+
+impl Span for FieldIdentifier {
+    /// Returns the range spanned by the field identifier.
+    fn span(&self) -> com::Range {
+        use self::FieldIdentifier::*;
+
+        match *self {
+            Index(_, r) => r,
+            Name(_, r) => r,
         }
     }
 }
 
 impl Span for VariableIdentifier {
     /// Returns the range spanned by the variable identifier.
-    fn span(&self) -> com::Range {
-        self.0
+    fn span(&self) -> com::Range { self.1 }
+}
+
+//
+//  Implementations of CloneInto
+//
+impl<'a, 'target> mem::CloneInto<'target> for Literal<'a> {
+    type Output = Literal<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        use self::Literal::*;
+
+        match *self {
+            Bool(b, r) => Bool(b, r),
+            Bytes(b, r) => Bytes(mem::CloneInto::clone_into(b, arena), r),
+            Integral(i, r) => Integral(i, r),
+            String(s, r) => String(mem::CloneInto::clone_into(s, arena), r),
+        }
     }
 }
 
@@ -326,7 +392,7 @@ mod tests {
         let e = Factory::new(&global_arena).expr();
 
         //  "   1"
-        assert_eq!(e.int(3, 4).span(), range(3, 4));
+        assert_eq!(e.int(1, 3).span(), range(3, 1));
     }
 
     #[test]
@@ -336,7 +402,7 @@ mod tests {
 
         //  "   1 + 1"
         assert_eq!(
-            e.bin_op(e.int(3, 1), e.int(7, 1)).build().span(),
+            e.bin_op(e.int(1, 3), e.int(1, 7)).build().span(),
             range(3, 5)
         );
     }

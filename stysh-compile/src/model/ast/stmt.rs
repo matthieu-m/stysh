@@ -133,7 +133,7 @@ mod tests {
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         //  "     :var fool := 1234;"
-        let mut var = s.var(p.var(10, 4), e.int(18, 4));
+        let mut var = s.var(p.var(10, 4), e.int(1234, 18));
 
         let with_semi: Statement = var.build();
         assert_eq!(with_semi.span(), range(5, 18));

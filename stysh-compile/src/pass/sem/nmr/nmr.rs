@@ -109,10 +109,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         })
     }
 
-    fn pattern_of_ignored(&mut self, underscore: ast::VariableIdentifier)
+    fn pattern_of_ignored(&mut self, underscore: com::Range)
         -> hir::Pattern<'static>
     {
-        hir::Pattern::Ignored(underscore.span())
+        hir::Pattern::Ignored(underscore)
     }
 
     fn pattern_of_tuple(&mut self, t: &ast::Tuple<ast::Pattern>)
@@ -212,7 +212,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         if let hir::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
             if let Some(e) = self.registry.lookup_enum(e.name) {
                 for r in e.variants {
-                    if self.source(r.prototype.name.0) == self.source(t.0) {
+                    if self.source(r.prototype.name.0) == self.source(t.span()) {
                         return hir::Type::Rec(*r.prototype);
                     }
                 }
@@ -382,24 +382,25 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_field(&mut self, field: ast::FieldAccess) -> hir::Value<'g> {
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
-        if let Some(index) = self.parse_integral(field.field.0, 1, false) {
-            let index = index as _;
+        match field.field {
+            ast::FieldIdentifier::Index(index, _) => {
+                hir::Value {
+                    type_: self.type_of_field_index(accessed, index),
+                    range: field.span(),
+                    expr: hir::Expr::FieldAccess(accessed, index),
+                    gvn: Default::default(),
+                }
+            },
+            ast::FieldIdentifier::Name(_, r) => {
+                let id = hir::ValueIdentifier(r);
 
-            hir::Value {
-                type_: self.type_of_field_index(accessed, index),
-                range: field.span(),
-                expr: hir::Expr::FieldAccess(accessed, index),
-                gvn: Default::default(),
-            }
-        } else {
-            let id = hir::ValueIdentifier(field.field.0);
-
-            hir::Value {
-                type_: hir::Type::unresolved(),
-                range: field.span(),
-                expr: hir::Expr::UnresolvedField(accessed, id),
-                gvn: Default::default(),
-            }
+                hir::Value {
+                    type_: hir::Type::unresolved(),
+                    range: field.span(),
+                    expr: hir::Expr::UnresolvedField(accessed, id),
+                    gvn: Default::default(),
+                }
+            },
         }
     }
 
@@ -438,11 +439,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_literal(&mut self, lit: ast::Literal)
         -> hir::Value<'g>
     {
+        use model::ast::Literal::*;
+
         match lit {
-            ast::Literal::Bool(b, r) => self.value_of_literal_bool(b, r),
-            ast::Literal::Bytes(b, r) => self.value_of_literal_bytes(b, r),
-            ast::Literal::Integral(r) => self.value_of_literal_integral(r),
-            ast::Literal::String(s, r) => self.value_of_literal_string(s, r),
+            Bool(b, r) => self.value_of_literal_bool(b, r),
+            Bytes(b, r) => self.value_of_literal_bytes(b, r),
+            Integral(i, r) => self.value_of_literal_integral(i, r),
+            String(s, r) => self.value_of_literal_string(s, r),
         }
     }
 
@@ -479,15 +482,13 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_integral(&mut self, range: com::Range)
+    fn value_of_literal_integral(&mut self, i: i64, range: com::Range)
         -> hir::Value<'g>
     {
-        let value = self.parse_integral(range, 0, true).expect("TODO: handle");
-
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::Int),
             range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)),
             gvn: Default::default(),
         }
     }
@@ -739,29 +740,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         self.global_arena.insert_slice(statements.into_slice())
     }
 
-    fn parse_integral(
-        &self,
-        range: com::Range,
-        offset: usize,
-        underscores: bool
-    )
-        -> Option<i64> 
-    {
-        let mut value = 0;
-        for byte in &self.source(range)[offset..] {
-            match *byte {
-                b'0'...b'9' => {
-                    value *= 10;
-                    value += (byte - b'0') as i64;
-                },
-                b'_' if underscores => (),
-                _ => return None,
-            }
-        }
-
-        Some(value)
-    }
-
     fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
         where 'a: 'b
     {
@@ -798,7 +776,7 @@ mod tests {
         let env = Env::new(b"1 + 2", &global_arena);
 
         assert_eq!(
-            env.value_of(&e.bin_op(e.int(0, 1), e.int(4, 1)).build()),
+            env.value_of(&e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
             v.call().push(v.int(1, 0)).push(v.int(2, 4)).build()
         );
     }
@@ -811,7 +789,7 @@ mod tests {
         let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
-            env.value_of(&e.bool_(0, 4)),
+            env.value_of(&e.bool_(true, 0)),
             v.bool_(true, 0)
         );
     }
@@ -854,7 +832,7 @@ mod tests {
             env.value_of(
                 &e.constructor(ast.type_().simple(0, 3))
                     .parens(3, 5)
-                    .push(e.int(4, 1))
+                    .push(e.int(1, 4))
                     .build()
             ),
             v.constructor(rec, 0, 6).push(v.int(1, 4)).build_value()
@@ -884,9 +862,11 @@ mod tests {
                 &e.field_access(
                     e.constructor(ast.type_().simple(15, 3))
                         .parens(18, 21)
-                        .push(e.int(19, 2))
+                        .push(e.int(42, 19))
                         .build(),
-                ).build()
+                )
+                    .index(0)
+                    .build()
             ),
             v.field_access(
                 0,
@@ -909,8 +889,10 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.field_access(
-                    e.tuple().push(e.int(1, 2)).push(e.int(5, 2)).build(),
-                ).build()
+                    e.tuple().push(e.int(42, 1)).push(e.int(43, 5)).build(),
+                )
+                    .index(1)
+                    .build()
             ),
             v.field_access(
                 1,
@@ -967,8 +949,8 @@ mod tests {
         assert_eq!(
             env.value_of(
                 &e.function_call(e.var(0, 5), 5, 10)
-                    .push(e.int(6, 1))
-                    .push(e.int(9, 1))
+                    .push(e.int(1, 6))
+                    .push(e.int(2, 9))
                     .build()
             ),
             v.call()
@@ -991,9 +973,9 @@ mod tests {
         assert_eq!(
             env.value_of(&ast::Expression::If(
                 &e.if_else(
-                    e.bool_(4, 4),
-                    e.block(e.int(11, 1)).build(),
-                    e.block(e.int(23, 1)).build(),
+                    e.bool_(true, 4),
+                    e.block(e.int(1, 11)).build(),
+                    e.block(e.int(0, 23)).build(),
                 ).build()
             )),
             v.if_(
@@ -1065,7 +1047,7 @@ mod tests {
             let (e, s) = (f.expr(), f.stmt());
 
             e.block_div()
-                .push_stmt(s.ret().expr(e.int(10, 1)).build())
+                .push_stmt(s.ret().expr(e.int(1, 10)).build())
                 .build()
         };
 
@@ -1092,12 +1074,12 @@ mod tests {
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
-                e.bool_(4, 4),
+                e.bool_(true, 4),
                 e.block_div()
-                    .push_stmt(s.ret().expr(e.int(19, 1)).build())
+                    .push_stmt(s.ret().expr(e.int(1, 19)).build())
                     .build(),
                 e.block_div()
-                    .push_stmt(s.ret().expr(e.int(40, 1)).build())
+                    .push_stmt(s.ret().expr(e.int(2, 40)).build())
                     .build(),
             ).build()
         };
@@ -1129,10 +1111,10 @@ mod tests {
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
-                e.bool_(4, 4),
-                e.block(e.int(11, 1)).build(),
+                e.bool_(true, 4),
+                e.block(e.int(1, 11)).build(),
                 e.block_div()
-                    .push_stmt(s.ret().expr(e.int(31, 1)).build())
+                    .push_stmt(s.ret().expr(e.int(2, 31)).build())
                     .build(),
             ).build()
         };
@@ -1164,11 +1146,11 @@ mod tests {
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
-                e.bool_(4, 4),
+                e.bool_(true, 4),
                 e.block_div()
-                    .push_stmt(s.ret().expr(e.int(19, 1)).build())
+                    .push_stmt(s.ret().expr(e.int(1, 19)).build())
                     .build(),
-                e.block(e.int(32, 1)).build(),
+                e.block(e.int(2, 32)).build(),
             ).build()
         };
 
@@ -1196,8 +1178,8 @@ mod tests {
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
-                    .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
-                    .push_stmt(s.set(e.var(20, 1), e.int(25, 1)).build())
+                    .push_stmt(s.var(p.var(7, 1), e.int(1, 12)).build())
+                    .push_stmt(s.set(e.var(20, 1), e.int(2, 25)).build())
                     .build()
         };
 
@@ -1231,11 +1213,11 @@ mod tests {
             e.block(e.var(33, 1))
                 .push_stmt(s.var(
                     p.var(7, 1),
-                    e.tuple().push(e.int(13, 1)).comma(14).build()
+                    e.tuple().push(e.int(1, 13)).comma(14).build()
                 ).build())
                 .push_stmt(s.set(
-                    e.field_access(e.var(23, 1)).build(),
-                    e.int(30, 1)
+                    e.field_access(e.var(23, 1)).index(0).build(),
+                    e.int(2, 30)
                 ).build())
                 .build()
         };
@@ -1269,8 +1251,8 @@ mod tests {
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
-                .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
-                .push_stmt(s.var(p.var(20, 1), e.int(25, 1)).build())
+                .push_stmt(s.var(p.var(7, 1), e.int(1, 12)).build())
+                .push_stmt(s.var(p.var(20, 1), e.int(2, 25)).build())
                 .build()
         };
 
@@ -1301,8 +1283,8 @@ mod tests {
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
-                .push_stmt(s.var(p.var(7, 1), e.int(12, 1)).build())
-                .push_stmt(s.var(p.ignored(20), e.int(25, 1)).build())
+                .push_stmt(s.var(p.var(7, 1), e.int(1, 12)).build())
+                .push_stmt(s.var(p.ignored(20), e.int(2, 25)).build())
                 .build()
         };
 
@@ -1337,7 +1319,7 @@ mod tests {
             e.block(e.var(43, 1))
                 .push_stmt(s.var(
                     p.constructor(t.simple(23, 4)).push(p.var(28, 1)).build(),
-                    e.constructor(t.simple(34, 4)).push(e.int(39, 1)).build(),
+                    e.constructor(t.simple(34, 4)).push(e.int(1, 39)).build(),
                 ).build())
                 .build()
         };
@@ -1380,7 +1362,7 @@ mod tests {
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
-            let expr = e.tuple().push(e.int(18, 1)).push(e.int(21, 1)).build();
+            let expr = e.tuple().push(e.int(1, 18)).push(e.int(2, 21)).build();
 
             e.block(e.var(25, 1))
                     .push_stmt(s.var(pat, expr).build())
@@ -1417,7 +1399,7 @@ mod tests {
             let (e, t) = (f.expr(), f.type_());
 
             e.if_else(
-                e.bool_(21, 4),
+                e.bool_(true, 21),
                 e.block(
                     e.constructor(t.nested(31, 1).push(28, 1).build()).build(),
                 ).build(),

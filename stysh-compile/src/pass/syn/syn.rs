@@ -27,24 +27,25 @@ impl<'g, 'local> Parser<'g, 'local> {
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(global: &'g mem::Arena, local: &'local mem::Arena)
+    pub fn new(
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena,
+    )
         -> Parser<'g, 'local>
     {
-        Parser { global_arena: global, local_arena: local }
+        Parser { global_arena, local_arena }
     }
 
     /// Parses a raw slite of bytes into an Abstract Syntax Tree.
-    pub fn parse(&mut self, raw: &[u8]) -> List<'g> {
-        ParserImpl::new(
-            RawParser::from_raw(raw, self.global_arena, self.local_arena)
-        ).parse_all()
-    }
-
-    /// Transforms a slice of raw Token Trees into an Abstract Syntax Tree.
-    pub fn transform(&mut self, nodes: &[tt::Node]) -> List<'g> {
-        ParserImpl::new(
-            RawParser::new(nodes, self.global_arena, self.local_arena)
-        ).parse_all()
+    pub fn parse(&mut self, raw: &[u8], interner: &'g mem::Interner)
+        -> List<'g>
+    {
+        ParserImpl::new(RawParser::from_raw(
+            raw,
+            interner,
+            self.global_arena,
+            self.local_arena,
+        )).parse_all()
     }
 }
 

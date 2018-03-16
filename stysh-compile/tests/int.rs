@@ -49,8 +49,9 @@ fn fibonnacci_iterative() {
 }
 
 fn interpret(raw: &[u8]) -> String {
+    let interner = mem::Interner::new();
     let arena = mem::Arena::new();
-    let value = utils::interpret(raw, &arena);
+    let value = utils::interpret(raw, &interner, &arena);
 
     format!("{:?}", value.expr)
 }

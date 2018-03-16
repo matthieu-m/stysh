@@ -37,7 +37,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             let keyword = self.pop_token(KeywordFun).unwrap();
             let name = self.pop_token(NameValue).expect("Function Name");
 
-            (keyword.offset() as u32, VariableIdentifier(name.span()))
+            (keyword.offset() as u32, self.raw.resolve_variable(name))
         };
 
         let (open, arguments, close) = {
@@ -116,7 +116,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
                 .unwrap_or(type_.span().end_offset() as u32 - 1);
 
             buffer.push(Argument {
-                name: VariableIdentifier(name.span()),
+                name: self.raw.resolve_variable(name),
                 type_: type_,
                 colon: colon,
                 comma: comma,
@@ -136,35 +136,32 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
+    use super::super::com::tests::Env;
     use model::ast::*;
-    use model::ast::builder::Factory;
 
     #[test]
     fn basic_argument_less() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, i, t) = (f.expr(), f.item(), f.type_());
+        let env = Env::new();
+        let (e, i, _, _, t) = env.factories();
 
         assert_eq!(
-            funit(&global_arena, b":fun add() -> Int { 1 + 2 }"),
+            funit(&env, b":fun add() -> Int { 1 + 2 }"),
             i.function(
                 5,
                 3,
                 t.simple(14, 3),
-                e.block(e.bin_op(e.int(20, 1), e.int(24, 1)).build()).build(),
+                e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
             ).build()
         );
     }
 
     #[test]
     fn basic_add() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, i, t) = (f.expr(), f.item(), f.type_());
+        let env = Env::new();
+        let (e, i, _, _, t) = env.factories();
 
         assert_eq!(
-            funit(&global_arena, b":fun add(a: Int, b: Int) -> Int { a + b }"),
+            funit(&env, b":fun add(a: Int, b: Int) -> Int { a + b }"),
             i.function(
                 5,
                 3,
@@ -177,18 +174,11 @@ mod tests {
         );
     }
 
-    fn funit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Function<'g> {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let f = {
-            let raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::FunParser::new(raw).parse()
-        };
-        local_arena.recycle();
-
-        f
+    fn funit<'g>(env: &'g Env, raw: &[u8]) -> Function<'g> {
+        let local = env.local();
+        env.scrubber().scrub_function(
+            super::FunParser::new(local.raw(raw)).parse()
+        )
     }
 }
 

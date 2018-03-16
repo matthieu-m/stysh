@@ -66,8 +66,7 @@ pub struct BlockBuilder<'a> {
 #[derive(Clone, Copy)]
 pub struct FieldAccessBuilder<'a> {
     accessed: &'a Expression<'a>,
-    pos: usize,
-    len: usize,
+    field: FieldIdentifier,
 }
 
 /// FunctionCallBuilder
@@ -323,14 +322,23 @@ impl<'a> ExprFactory<'a> {
     }
 
     /// Shortcut: creates a Bool Lit Expression.
-    pub fn bool_(&self, pos: usize, len: usize) -> Expression<'a> {
-        assert!(len == 4 || len == 5, "Should be either 'true' or 'false'");
-        self.literal(pos, len).bool_(len == 4).build()
+    pub fn bool_(&self, value: bool, pos: usize) -> Expression<'a> {
+        self.literal(pos, if value { 4 } else { 5 }).bool_(value).build()
     }
 
     /// Shortcut: creates an Integral Lit Expression.
-    pub fn int(&self, pos: usize, len: usize) -> Expression<'a> {
-        self.literal(pos, len).build()
+    pub fn int(&self, value: i64, pos: usize) -> Expression<'a> {
+        let mut len = 1;
+        let mut n = value;
+        if n < 0 {
+            len += 1;
+            n *= -1;
+        }
+        while n > 10 {
+            len += 1;
+            n /= 10;
+        }
+        self.literal(pos, len).integral(value).build()
     }
 
     /// Creates a Loop.
@@ -350,7 +358,7 @@ impl<'a> ExprFactory<'a> {
 
     /// Creates a Var Expression.
     pub fn var(&self, pos: usize, len: usize) -> Expression<'a> {
-        Expression::Var(VariableIdentifier(range((pos, len))))
+        Expression::Var(VariableIdentifier(Default::default(), range((pos, len))))
     }
 }
 
@@ -499,40 +507,46 @@ impl<'a> BlockBuilder<'a> {
 }
 
 impl<'a> FieldAccessBuilder<'a> {
-    /// Creates a new instance.
+    /// Creates a new instance, default to Named.
     pub fn new(arena: &'a mem::Arena, accessed: Expression<'a>) -> Self {
         FieldAccessBuilder {
             accessed: arena.insert(accessed),
-            pos: USIZE_NONE,
-            len: USIZE_NONE,
+            field: FieldIdentifier::Name(Default::default(), Default::default()),
         }
     }
 
-    /// Sets the offset of the field.
-    pub fn offset(&mut self, pos: usize) -> &mut Self {
-        self.pos = pos;
+    /// Sets the index of the field.
+    pub fn index(&mut self, i: u16) -> &mut Self {
+        let range = self.field.span();
+        self.field = FieldIdentifier::Index(i, range);
         self
     }
 
-    /// Sets the length of the field.
-    pub fn length(&mut self, len: usize) -> &mut Self {
-        self.len = len;
+    /// Sets the name of the field.
+    pub fn name(&mut self) -> &mut Self {
+        let range = self.field.span();
+        self.field = FieldIdentifier::Name(Default::default(), range);
+        self
+    }
+
+    /// Sets the offset of the field.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.field = self.field.with_range(range((pos, len)));
         self
     }
 
     /// Creates a FieldAccess.
     pub fn build<T: convert::From<FieldAccess<'a>>>(&self) -> T {
-        let pos = if self.pos == USIZE_NONE {
-            self.accessed.span().end_offset()
+        let field = if self.field.span() == Default::default() {
+            let range = range((self.accessed.span().end_offset(), 2));
+            self.field.with_range(range)
         } else {
-            self.pos
+            self.field
         };
-
-        let len = if self.len == USIZE_NONE { 2 } else { self.len };
 
         FieldAccess {
             accessed: self.accessed,
-            field: FieldIdentifier(range((pos, len)))
+            field: field,
         }.into()
     }
 }
@@ -635,7 +649,7 @@ impl<'a> LiteralBuilder<'a> {
     /// Creates an instance, defaults to an Integral.
     pub fn new(arena: &'a mem::Arena, r: (usize, usize)) -> Self {
         LiteralBuilder {
-            literal: Literal::Integral(range(r)),
+            literal: Literal::Integral(0, range(r)),
             fragments: mem::Array::new(arena),
         }
     }
@@ -655,9 +669,9 @@ impl<'a> LiteralBuilder<'a> {
     }
 
     /// Sets up an integral.
-    pub fn integral(&mut self) -> &mut Self {
+    pub fn integral(&mut self, value: i64) -> &mut Self {
         let range = self.literal.span();
-        self.literal = Literal::Integral(range);
+        self.literal = Literal::Integral(value, range);
         self
     }
 
@@ -920,13 +934,13 @@ impl<'a> EnumBuilder<'a> {
         }
 
         let keyword = if self.keyword == U32_NONE {
-            self.name.0.offset() as u32 - 6
+            self.name.span().offset() as u32 - 6
         } else {
             self.keyword
         };
 
         let open = if self.open == U32_NONE {
-            self.name.0.end_offset() as u32 + 1
+            self.name.span().end_offset() as u32 + 1
         } else {
             self.open
         };
@@ -959,7 +973,7 @@ impl<'a> FunctionBuilder<'a> {
         -> Self
     {
         FunctionBuilder {
-            name: VariableIdentifier(range(name)),
+            name: VariableIdentifier(Default::default(), range(name)),
             result: result,
             body: body,
             keyword: U32_NONE,
@@ -980,7 +994,7 @@ impl<'a> FunctionBuilder<'a> {
         -> &mut Self
     {
         self.arguments.push(Argument {
-            name: VariableIdentifier(range((pos, len))),
+            name: VariableIdentifier(Default::default(), range((pos, len))),
             type_: type_,
             colon: U32_NONE,
             comma: U32_NONE,
@@ -1029,7 +1043,7 @@ impl<'a> FunctionBuilder<'a> {
 
         for (i, a) in arguments.iter_mut().enumerate() {
             if a.colon == U32_NONE {
-                a.colon = a.name.0.end_offset() as u32;
+                a.colon = a.name.span().end_offset() as u32;
             }
 
             if a.comma == U32_NONE {
@@ -1039,13 +1053,13 @@ impl<'a> FunctionBuilder<'a> {
         }
 
         let keyword = if self.keyword == U32_NONE {
-            self.name.0.offset() as u32 - 5
+            self.name.span().offset() as u32 - 5
         } else {
             self.keyword
         };
 
         let open = if self.open == U32_NONE {
-            self.name.0.end_offset() as u32
+            self.name.span().end_offset() as u32
         } else {
             self.open
         };
@@ -1106,8 +1120,8 @@ impl<'a> RecordBuilder<'a> {
 
     /// Sets up a Tuple InnerRecord.
     pub fn tuple(&mut self, fields: Tuple<'a, Type<'a>>) -> &mut Self {
-        let name = self.name();
-        self.inner = InnerRecord::Tuple(TypeIdentifier(name), fields);
+        let name = TypeIdentifier(Default::default(), self.name());
+        self.inner = InnerRecord::Tuple(name, fields);
         self
     }
 
@@ -1120,8 +1134,8 @@ impl<'a> RecordBuilder<'a> {
 
     /// Sets up a Unit InnerRecord.
     pub fn unit(&mut self) -> &mut Self {
-        let name = self.name();
-        self.inner = InnerRecord::Unit(TypeIdentifier(name));
+        let name = TypeIdentifier(Default::default(), self.name());
+        self.inner = InnerRecord::Unit(name);
         self
     }
 
@@ -1152,9 +1166,9 @@ impl<'a> RecordBuilder<'a> {
 
         match self.inner {
             Missing(r) => r,
-            Tuple(id, _) => id.0,
+            Tuple(id, _) => id.span(),
             Unexpected(r) => r,
-            Unit(id) => id.0
+            Unit(id) => id.span(),
         }
     }
 }
@@ -1177,7 +1191,7 @@ impl<'a> PatternFactory<'a> {
 
     /// Creates an Ignored Pattern.
     pub fn ignored(&self, pos: usize) -> Pattern<'static> {
-        Pattern::Ignored(self.id(pos, 1))
+        Pattern::Ignored(range((pos, 1)))
     }
 
     /// Creates a TupleBuilder.
@@ -1191,7 +1205,7 @@ impl<'a> PatternFactory<'a> {
     }
 
     fn id(&self, pos: usize, len: usize) -> VariableIdentifier {
-        VariableIdentifier(range((pos, len)))
+        VariableIdentifier(Default::default(), range((pos, len)))
     }
 }
 
@@ -1636,7 +1650,6 @@ impl<'a> NestedTypeBuilder<'a> {
 //  Implementation Details
 //
 const U32_NONE: u32 = std::u32::MAX;
-const USIZE_NONE: usize = std::usize::MAX;
 
 fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
     if !slice.is_empty() {
@@ -1649,5 +1662,5 @@ fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
 fn range(tup: (usize, usize)) -> com::Range { com::Range::new(tup.0, tup.1) }
 
 fn type_id(pos: usize, len: usize) -> TypeIdentifier {
-    TypeIdentifier(range((pos, len)))
+    TypeIdentifier(Default::default(), range((pos, len)))
 }

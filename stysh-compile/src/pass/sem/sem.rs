@@ -107,7 +107,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         for a in fun.arguments {
             arguments.push(hir::Binding::Argument(
-                hir::ValueIdentifier(a.name.0),
+                hir::ValueIdentifier(a.name.span()),
                 Default::default(),
                 self.resolver(self.scope).type_of(&a.type_),
                 a.span()
@@ -116,7 +116,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         hir::Prototype::Fun(
             hir::FunctionProto {
-                name: hir::ItemIdentifier(fun.name.0),
+                name: hir::ItemIdentifier(fun.name.span()),
                 range: com::Range::new(
                     fun.keyword as usize,
                     fun.result.span().end_offset() - (fun.keyword as usize)
@@ -458,7 +458,7 @@ mod tests {
                         .push(ast.type_().simple(20, 3))
                         .build(),
                     e.block(
-                        e.tuple().push(e.int(28, 1)).push(e.int(31, 1)).build()
+                        e.tuple().push(e.int(1, 28)).push(e.int(2, 31)).build()
                     ).build(),
                 )
                 .build()

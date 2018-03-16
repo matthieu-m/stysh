@@ -12,6 +12,7 @@
 
 use std::{cell, mem, ptr, slice, usize};
 
+use basic::com::Range;
 use basic::mem::Array;
 
 /// The Arena structure
@@ -148,6 +149,18 @@ impl Arena {
 //
 //  Implementations of CloneInto
 //
+impl<'target> CloneInto<'target> for u32 {
+    type Output = u32;
+
+    fn clone_into(&self, _: &'target Arena) -> Self::Output { *self }
+}
+
+impl<'target> CloneInto<'target> for Range {
+    type Output = Range;
+
+    fn clone_into(&self, _: &'target Arena) -> Self::Output { *self }
+}
+
 impl<'target, T> CloneInto<'target> for [T]
     where
         T: CloneInto<'target> + Copy

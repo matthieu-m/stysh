@@ -3,6 +3,7 @@
 use std::convert;
 
 use basic::com::{self, Span};
+use basic::mem::InternId;
 
 use model::ast::*;
 use model::tt;
@@ -32,8 +33,8 @@ pub struct Path<'a> {
 }
 
 /// A Type Identifier.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct TypeIdentifier(pub com::Range);
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TypeIdentifier(pub InternId, pub com::Range);
 
 //
 //  Implementations
@@ -47,6 +48,16 @@ impl<'a> Type<'a> {
             Nested(t, _) | Simple(t) => Some(t),
             Missing(_) | Tuple(_) => None,
         }
+    }
+}
+
+impl TypeIdentifier {
+    /// Returns the InternId.
+    pub fn id(&self) -> InternId { self.0 }
+
+    /// Sets the InternId of the TypeIdentifier.
+    pub fn with_id(self, id: InternId) -> Self {
+        TypeIdentifier(id, self.1)
     }
 }
 
@@ -88,9 +99,7 @@ impl<'a> Span for Path<'a> {
 
 impl Span for TypeIdentifier {
     /// Returns the range spanned by the type identifier.
-    fn span(&self) -> com::Range {
-        self.0
-    }
+    fn span(&self) -> com::Range { self.1 }
 }
 
 //

@@ -5,7 +5,13 @@ use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::scp;
 
-pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> hir::Value<'g> {
+pub fn interpret<'g>(
+    raw: &'g [u8],
+    interner: &'g mem::Interner,
+    arena: &'g mem::Arena
+)
+    -> hir::Value<'g>
+{
     let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new(raw);
     let fake = hir::mocks::MockRegistry::new(arena);
@@ -14,7 +20,14 @@ pub fn interpret<'g>(raw: &'g [u8], arena: &'g mem::Arena) -> hir::Value<'g> {
     let mut def_registry = hir::mocks::MockRegistry::new(arena);
     let mut cfg_registry = int::SimpleRegistry::new(arena);
 
-    interpret_impl(raw, &mut scope, &mut def_registry, &mut cfg_registry, &arena)
+    interpret_impl(
+        raw,
+        &mut scope,
+        &mut def_registry,
+        &mut cfg_registry,
+        interner,
+        arena,
+    )
 }
 
 //
@@ -25,7 +38,8 @@ fn interpret_impl<'a, 'g, 's>(
     scope: &mut scp::BlockScope<'a, 'g, 's>,
     def_registry: &mut hir::mocks::MockRegistry<'g>,
     cfg_registry: &mut int::SimpleRegistry<'g>,
-    arena: &'g mem::Arena
+    interner: &'g mem::Interner,
+    arena: &'g mem::Arena,
 )
     -> hir::Value<'g>
 where
@@ -35,7 +49,7 @@ where
 
     let mut local_arena = mem::Arena::new();
 
-    let nodes = create_ast(raw, arena, &mut local_arena);
+    let nodes = create_ast(raw, interner, arena, &mut local_arena);
 
     //  Gather prototypes
     let mut prototypes = Vec::new();
@@ -107,14 +121,15 @@ where
 
 fn create_ast<'g>(
     raw: &[u8],
+    interner: &'g mem::Interner,
     global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena
+    local_arena: &mut mem::Arena,
 )
     -> ast::List<'g>
 {
     use stysh_compile::pass::syn::Parser;
 
-    let result = Parser::new(global_arena, local_arena).parse(raw);
+    let result = Parser::new(global_arena, local_arena).parse(raw, interner);
     local_arena.recycle();
 
     result

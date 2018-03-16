@@ -8,6 +8,8 @@
 
 #[cfg(test)]
 pub mod builder;
+#[cfg(test)]
+pub mod interning;
 
 mod common;
 mod expr;
@@ -71,7 +73,7 @@ mod tests {
         let e = Factory::new(&global_arena).expr();
 
         //  "   1 + 1"
-        let node = Node::Expr(e.bin_op(e.int(3, 1), e.int(7, 1)).build());
+        let node = Node::Expr(e.bin_op(e.int(1, 3), e.int(1, 7)).build());
 
         assert_eq!(node.span(), range(3, 5));
     }
@@ -82,9 +84,9 @@ mod tests {
         let e = Factory::new(&global_arena).expr();
 
         //  " !     1"
-        let node = Node::Expr(e.pre_op(e.int(7, 2)).offset(1).build());
+        let node = Node::Expr(e.pre_op(e.int(1, 7)).offset(1).build());
 
-        assert_eq!(node.span(), range(1, 8));
+        assert_eq!(node.span(), range(1, 7));
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

@@ -12,7 +12,7 @@ pub enum Pattern<'a> {
     /// A constructor.
     Constructor(Constructor<'a, Pattern<'a>>),
     /// An ignored binding, always '_'.
-    Ignored(VariableIdentifier),
+    Ignored(com::Range),
     /// A tuple.
     Tuple(Tuple<'a, Pattern<'a>>),
     /// A variable identifier.
@@ -29,7 +29,7 @@ impl<'a> Span for Pattern<'a> {
 
         match *self {
             Constructor(c) => c.span(),
-            Ignored(i) => i.span(),
+            Ignored(r) => r,
             Tuple(t) => t.span(),
             Var(v) => v.span(),
         }

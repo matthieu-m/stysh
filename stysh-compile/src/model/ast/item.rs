@@ -106,7 +106,8 @@ impl<'a> Enum<'a> {
     /// Returns the `{` token.
     pub fn brace_open(&self) -> tt::Token {
         if self.open == 0 {
-            tt::Token::new(tt::Kind::BraceOpen, self.name.0.end_offset(), 0)
+            let start = self.name.span().end_offset();
+            tt::Token::new(tt::Kind::BraceOpen, start, 0)
         } else {
             tt::Token::new(tt::Kind::BraceOpen, self.open as usize, 1)
         }
@@ -142,7 +143,8 @@ impl<'a> InnerRecord<'a> {
         use self::InnerRecord::*;
 
         match *self {
-            Missing(r) | Unexpected(r) => TypeIdentifier(r),
+            Missing(r) | Unexpected(r)
+                => TypeIdentifier(Default::default(), r),
             Tuple(t, _) | Unit(t) => t,
         }
     }
@@ -155,9 +157,7 @@ impl<'a> Record<'a> {
     }
 
     /// Returns the name of the record.
-    pub fn name(&self) -> TypeIdentifier {
-        self.inner.name()
-    }
+    pub fn name(&self) -> TypeIdentifier { self.inner.name() }
 
     /// Returns the token of the semi-colon following the record declaration,
     /// if there is no such semi-colon, the position it would have been at is
@@ -191,7 +191,7 @@ impl<'a> Span for Item<'a> {
 impl<'a> Span for Argument<'a> {
     /// Returns the range spanned by the argument.
     fn span(&self) -> com::Range {
-        let offset = self.name.0.offset();
+        let offset = self.name.span().offset();
         let end_offset = self.comma as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
@@ -211,8 +211,8 @@ impl<'a> Span for InnerRecord<'a> {
 
         match *self {
             Missing(r) | Unexpected(r) => r,
-            Tuple(t, tup) => t.0.extend(tup.span()),
-            Unit(t) => t.0,
+            Tuple(t, tup) => t.span().extend(tup.span()),
+            Unit(t) => t.span(),
         }
     }
 }
@@ -301,7 +301,7 @@ mod tests {
                     8,
                     3,
                     f.type_().simple(16, 3),
-                    e.block(e.bin_op(e.int(23, 1), e.int(27, 1)).build())
+                    e.block(e.bin_op(e.int(1, 23), e.int(1, 27)).build())
                         .build(),
                 ).build();
         assert_eq!(item.span(), range(3, 27), "{:?}", item);

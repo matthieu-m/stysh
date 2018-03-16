@@ -72,12 +72,11 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         //  -   }
         let keyword = self.raw.pop_kind(Kind::KeywordEnum).expect(":enum");
 
-        let name = TypeIdentifier(
+        let name =
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|t| t.span())
-                .unwrap_or(com::Range::new(keyword.span().end_offset(), 0))
-        );
+                .map(|t| self.raw.resolve_type(t))
+                .unwrap_or(TypeIdentifier::default());
 
         match self.raw.peek() {
             Some(Node::Braced(o, ns, c)) => {
@@ -155,7 +154,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         let identifier =
             self.raw
                 .pop_kind(Kind::NameType)
-                .map(|n| TypeIdentifier(n.span()));
+                .map(|n| self.raw.resolve_type(n));
 
         if let Some(identifier) = identifier {
             if let Some(Node::Braced(..)) = self.raw.peek() {
@@ -216,21 +215,21 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
                     while let Some(c) =
                         self.raw.pop_kind(Kind::SignDoubleColon)
                     {
-                        components.push(TypeIdentifier(t.span()));
+                        components.push(self.raw.resolve_type(t));
                         colons.push(c.offset() as u32);
 
                         t = self.raw.pop_kind(Kind::NameType).expect("Type");
                     }
 
                     if components.is_empty() {
-                        Some(Type::Simple(TypeIdentifier(t.span())))
+                        Some(Type::Simple(self.raw.resolve_type(t)))
                     } else {
                         let path = Path {
                             components:
                                 self.raw.intern_slice(components.into_slice()),
                             colons: self.raw.intern_slice(colons.into_slice()),
                         };
-                        Some(Type::Nested(TypeIdentifier(t.span()), path))
+                        Some(Type::Nested(self.raw.resolve_type(t), path))
                     }
                 },
                 Node::Braced(..) => Some(Type::Tuple(self.parse_tuple())),
@@ -245,44 +244,43 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
+    use super::super::com::tests::Env;
     use model::ast::*;
-    use model::ast::builder::Factory;
 
     #[test]
     fn enum_empty() {
-        let global_arena = mem::Arena::new();
-        let i = Factory::new(&global_arena).item();
+        let env = Env::new();
+        let i = env.factory().item();
 
         assert_eq!(
-            enumit(&global_arena, b":enum Empty {}"),
+            enumit(&env, b":enum Empty {}"),
             i.enum_(6, 5).braces(12, 13).build()
         );
     }
 
     #[test]
     fn enum_unit_single() {
-        let global_arena = mem::Arena::new();
-        let i = Factory::new(&global_arena).item();
+        let env = Env::new();
+        let i = env.factory().item();
 
         assert_eq!(
-            enumit(&global_arena, b":enum Simple { First }"),
+            enumit(&env, b":enum Simple { First }"),
             i.enum_(6, 6).push_unit(15, 5).build()
         );
 
         assert_eq!(
-            enumit(&global_arena, b":enum Simple { First ,}"),
+            enumit(&env, b":enum Simple { First ,}"),
             i.enum_(6, 6).braces(13, 22).push_unit(15, 5).comma(21).build()
         );
     }
 
     #[test]
     fn enum_unit_multiple() {
-        let global_arena = mem::Arena::new();
-        let i = Factory::new(&global_arena).item();
+        let env = Env::new();
+        let i = env.factory().item();
 
         assert_eq!(
-            enumit(&global_arena, b":enum Simple { First, Second, Third }"),
+            enumit(&env, b":enum Simple { First, Second, Third }"),
             i.enum_(6, 6)
                 .push_unit(15, 5)
                 .push_unit(22, 6)
@@ -293,14 +291,13 @@ mod tests {
 
     #[test]
     fn rec_tuple() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (i, t) = (f.item(), f.type_());
+        let env = Env::new();
+        let (_, i, _, _, t) = env.factories();
 
         assert_eq!(
-            recit(&global_arena, b":rec Tup(Int, String);"),
+            recit(&env, b":rec Tup(Int, String);"),
             i.record(5, 3).tuple(
-                f.type_tuple()
+                t.tuple()
                     .push(t.simple(9, 3))
                     .push(t.simple(14, 6))
                     .build()
@@ -310,14 +307,13 @@ mod tests {
 
     #[test]
     fn rec_tuple_keyed() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (i, t) = (f.item(), f.type_());
+        let env = Env::new();
+        let (_, i, _, _, t) = env.factories();
 
         assert_eq!(
-            recit(&global_arena, b":rec Person(.name: String, .age: Int);"),
+            recit(&env, b":rec Person(.name: String, .age: Int);"),
             i.record(5, 6).tuple(
-                f.type_tuple()
+                t.tuple()
                     .name(12, 5).push(t.simple(19, 6))
                     .name(27, 4).push(t.simple(33, 3))
                     .build()
@@ -327,81 +323,81 @@ mod tests {
 
     #[test]
     fn rec_unit() {
-        let global_arena = mem::Arena::new();
-        let i = Factory::new(&global_arena).item();
+        let env = Env::new();
+        let i = env.factory().item();
 
         assert_eq!(
-            recit(&global_arena, b":rec Simple;"),
+            recit(&env, b":rec Simple;"),
             i.record(5, 6).build()
         );
     }
 
     #[test]
     fn type_simple() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"Int"),
+            typeit(&env, b"Int"),
             t.simple(0, 3)
         );
     }
 
     #[test]
     fn type_nested() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"Enum::Variant"),
+            typeit(&env, b"Enum::Variant"),
             t.nested(6, 7).push(0, 4).build()
         );
 
         assert_eq!(
-            typeit(&global_arena, b"Enum::Other::Variant"),
+            typeit(&env, b"Enum::Other::Variant"),
             t.nested(13, 7).push(0, 4).push(6, 5).build()
         );
     }
 
     #[test]
     fn tuple_unit() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"()"),
+            typeit(&env, b"()"),
             t.tuple().parens(0, 1).build()
         );
 
         assert_eq!(
-            typeit(&global_arena, b"( )"),
+            typeit(&env, b"( )"),
             t.tuple().parens(0, 2).build()
         );
     }
 
     #[test]
     fn tuple_simple() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"(Int)"),
+            typeit(&env, b"(Int)"),
             t.tuple().push(t.simple(1, 3)).build()
         );
 
         assert_eq!(
-            typeit(&global_arena, b"(Int,)"),
+            typeit(&env, b"(Int,)"),
             t.tuple().push(t.simple(1, 3)).comma(4).build()
         );
     }
 
     #[test]
     fn tuple_few() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"(Int,Int ,Int)"),
+            typeit(&env, b"(Int,Int ,Int)"),
             t.tuple()
                 .push(t.simple(1, 3))
                 .push(t.simple(5, 3))
@@ -411,7 +407,7 @@ mod tests {
         );
 
         assert_eq!(
-            typeit(&global_arena, b" ( Int , Int, Int , )"),
+            typeit(&env, b" ( Int , Int, Int , )"),
             t.tuple()
                 .parens(1, 20)
                 .push(t.simple(3, 3))
@@ -425,11 +421,11 @@ mod tests {
 
     #[test]
     fn tuple_keyed() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"(.name: String, .age: Int)"),
+            typeit(&env, b"(.name: String, .age: Int)"),
             t.tuple()
                 .name(1, 5).push(t.simple(8, 6))
                 .name(16, 4).push(t.simple(22, 3))
@@ -439,11 +435,11 @@ mod tests {
 
     #[test]
     fn tuple_nested() {
-        let global_arena = mem::Arena::new();
-        let t = Factory::new(&global_arena).type_();
+        let env = Env::new();
+        let t = env.factory().type_();
 
         assert_eq!(
-            typeit(&global_arena, b"((Int, Int), Int, )"),
+            typeit(&env, b"((Int, Int), Int, )"),
             t.tuple()
                 .parens(0, 18)
                 .push(
@@ -458,45 +454,21 @@ mod tests {
         );
     }
 
-    fn enumit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Enum<'g> {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let e = {
-            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_enum(&mut raw)
-        };
-        local_arena.recycle();
-
-        e
+    fn enumit<'g>(env: &'g Env, raw: &[u8]) -> Enum<'g> {
+        let local = env.local();
+        let mut raw = local.raw(raw);
+        env.scrubber().scrub_enum(super::parse_enum(&mut raw))
     }
 
-    fn recit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Record<'g> {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let r = {
-            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_record(&mut raw)
-        };
-        local_arena.recycle();
-
-        r
+    fn recit<'g>(env: &'g Env, raw: &[u8]) -> Record<'g> {
+        let local = env.local();
+        let mut raw = local.raw(raw);
+        env.scrubber().scrub_record(super::parse_record(&mut raw))
     }
 
-    fn typeit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Type<'g> {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let t = {
-            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_type(&mut raw)
-        };
-        local_arena.recycle();
-
-        t
+    fn typeit<'g>(env: &'g Env, raw: &[u8]) -> Type<'g> {
+        let local = env.local();
+        let mut raw = local.raw(raw);
+        env.scrubber().scrub_type(super::parse_type(&mut raw))
     }
 }

@@ -116,8 +116,8 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             //  An expression.
             let expr = match node {
                 tt::Node::Run(tokens) => {
-                    let kind = tokens[0].kind();
-                    let range = tokens[0].span();
+                    let token = tokens[0];
+                    let kind = token.kind();
 
                     match kind {
                         K::KeywordIf => self.parse_if_else(),
@@ -126,15 +126,22 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                             self.raw.pop_tokens(1);
                             yard.push_operator(
                                 Operator::Pre(PrefixOperator::Not),
-                                tokens[0].offset() as u32,
+                                token.offset() as u32,
                                 Precedence(8)
                             );
                             continue;
                         },
+                        K::LitBoolFalse | K::LitBoolTrue
+                            => self.parse_bool(kind),
+                        K::LitIntegral => self.parse_integral(),
                         K::NameField => {
-                            self.raw.pop_tokens(1);
-                            yard.push_field(FieldIdentifier(range));
+                            let field = self.parse_field_identifier();
+                            yard.push_field(field);
                             continue;
+                        },
+                        K::NameValue => {
+                            self.raw.pop_tokens(1);
+                            Expression::Var(self.raw.resolve_variable(token))
                         },
                         K::SignBind => break,
                         _ => {
@@ -142,10 +149,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                             if let Some(ty) = ty {
                                 self.parse_constructor(ty)
                             } else {
-                                self.raw.pop_tokens(1);
-                                tokens[0]
-                                    .into_expr()
-                                    .expect(&format!("FIXME: {:?}", tokens[0]))
+                                unimplemented!("Expected type, got {:?}", token);
                             }
                         },
                     }
@@ -209,6 +213,19 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         unimplemented!("Expected block, got {:?}", self.raw.peek());
     }
 
+    fn parse_bool(&mut self, kind: tt::Kind) -> Expression<'g> {
+        use self::tt::Kind::*;
+
+        let value = match kind {
+            LitBoolFalse => false,
+            LitBoolTrue => true,
+            _ => panic!("Unexpected kind {:?}", kind),
+        };
+
+        let token = self.raw.pop_kind(kind).expect("true/false");
+        Expression::Lit(Literal::Bool(value, token.span()))
+    }
+
     fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
         -> Block<'g>
     {
@@ -235,6 +252,24 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         Expression::Constructor(c)
     }
 
+    fn parse_field_identifier(&mut self) -> FieldIdentifier {
+        let token = self.raw.pop_kind(tt::Kind::NameField).expect("Token");
+        let id = self.raw.intern_id_of(token);
+        let source = &self.raw.source_of(id)[1..];
+        debug_assert!(!source.is_empty());
+
+        if source[0] < b'0' || source[0] > b'9' {
+            return FieldIdentifier::Name(id, token.span());
+        }
+
+        if let Some(i) = parse_integral_impl(source, false) {
+            assert!(i >= 0);
+            FieldIdentifier::Index(i as _, token.span())
+        } else {
+            unimplemented!("Cannot parse {:?} from {:?}", source, token)
+        }
+    }
+
     fn parse_if_else(&mut self) -> Expression<'g> {
         let if_ = self.raw.pop_kind(tt::Kind::KeywordIf).expect(":if");
 
@@ -258,6 +293,17 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
         //  FIXME(matthieum): ";" is legal.
         unimplemented!()
+    }
+
+    fn parse_integral(&mut self) -> Expression<'g> {
+        let token = self.raw.pop_kind(tt::Kind::LitIntegral).expect("Token");
+        let source = self.raw.source(token);
+
+        if let Some(i) = parse_integral_impl(source, true) {
+            Expression::Lit(Literal::Integral(i, token.span()))
+        } else {
+            unimplemented!("Cannot parse {:?} from {:?}", source, token)
+        }
     }
 
     fn parse_loop(&mut self) -> Expression<'g> {
@@ -418,26 +464,6 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     }
 }
 
-trait IntoExpr<'g> {
-    fn into_expr(self) -> Option<Expression<'g>>;
-}
-
-impl<'g> IntoExpr<'g> for tt::Token {
-    fn into_expr(self) -> Option<Expression<'g>> {
-        use self::tt::Kind::*;
-        use self::Expression::*;
-        use self::Literal::*;
-
-        match self.kind() {
-            LitBoolFalse => Some(Lit(Bool(false, self.span()))),
-            LitBoolTrue => Some(Lit(Bool(true, self.span()))),
-            LitIntegral => Some(Lit(Integral(self.span()))),
-            NameValue => Some(Var(VariableIdentifier(self.span()))),
-            _ => None,
-        }
-    }
-}
-
 impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(
@@ -448,6 +474,23 @@ impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
         )
     }
 }
+
+fn parse_integral_impl(raw: &[u8], allow_underscores: bool) -> Option<i64> {
+    let mut value = 0;
+    for byte in raw {
+        match *byte {
+            b'0'...b'9' => {
+                value *= 10;
+                value += (byte - b'0') as i64;
+            },
+            b'_' if allow_underscores => (),
+            _ => return None,
+        }
+    }
+
+    Some(value)
+}
+
 
 //
 //  Implementation Details (Pattern)
@@ -501,12 +544,12 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
     fn parse_underscore(&mut self) -> Pattern<'static> {
         let u =
             self.raw.pop_kind(tt::Kind::SignUnderscore).expect("underscore");
-        Pattern::Ignored(VariableIdentifier(u.span()))
+        Pattern::Ignored(u.span())
     }
 
     fn parse_value_name(&mut self) -> Pattern<'static> {
         let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
-        Pattern::Var(VariableIdentifier(name.span()))
+        Pattern::Var(self.raw.resolve_variable(name))
     }
 
     fn parse_tuple(
@@ -665,41 +708,39 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
+    use super::super::com::tests::Env;
     use model::ast::*;
-    use model::ast::builder::Factory;
 
     #[test]
     fn basic_add() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"1 + 2"),
-            e.bin_op(e.int(0, 1), e.int(4, 1)).build()
+            exprit(&env, b"1 + 2"),
+            e.bin_op(e.int(1, 0), e.int(2, 4)).build()
         );
     }
 
     #[test]
     fn basic_var() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let (e, _, p, s, _) = env.factories();
 
         assert_eq!(
-            stmtit(&global_arena, b" :var fool := 1234;"),
-            f.stmt().var(f.pat().var(6, 4), f.expr().int(14, 4)).build()
+            stmtit(&env, b" :var fool := 1234;"),
+            s.var(p.var(6, 4), e.int(1234, 14)).build()
         );
     }
 
     #[test]
     fn basic_var_automatic_insertion() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let (e, _, p, s, _) = env.factories();
 
         assert_eq!(
-            stmtit(&global_arena, b" :var fool 1234"),
-            f.stmt()
-                .var(f.pat().var(6, 4), f.expr().int(11, 4))
+            stmtit(&env, b" :var fool 1234"),
+            s.var(p.var(6, 4), e.int(1234, 11))
                 .bind(0)
                 .semi_colon(14)
                 .build()
@@ -708,46 +749,45 @@ mod tests {
 
     #[test]
     fn basic_bytes() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"b'1 + 2'"),
+            exprit(&env, b"b'1 + 2'"),
             e.literal(0, 8).push_text(2, 5).bytes().build()
         );
     }
 
     #[test]
     fn basic_constructor() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
 
         assert_eq!(
-            exprit(&global_arena, b"True"),
+            exprit(&env, b"True"),
             f.expr().constructor(f.type_().simple(0, 4)).build()
         );
     }
 
     #[test]
     fn basic_constructor_arguments() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, t) = (f.expr(), f.type_());
+        let env = Env::new();
+        let (e, _, _, _, t) = env.factories();
 
         assert_eq!(
-            exprit(&global_arena, b"Some(1)"),
-            e.constructor(t.simple(0, 4)).push(e.int(5, 1)).build()
+            exprit(&env, b"Some(1)"),
+            e.constructor(t.simple(0, 4)).push(e.int(1, 5)).build()
         );
 
     }
 
     #[test]
     fn basic_nested_constructor() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
 
         assert_eq!(
-            exprit(&global_arena, b"Bool::True"),
+            exprit(&env, b"Bool::True"),
             f.expr().constructor(
                 f.type_().nested(6, 4).push(0, 4).build()
             ).build()
@@ -756,25 +796,24 @@ mod tests {
 
     #[test]
     fn basic_function_call() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let env = Env::new();
+        let (e, _, p, s, _) = env.factories();
 
         assert_eq!(
-            exprit(&global_arena, b"basic(1, 2)"),
+            exprit(&env, b"basic(1, 2)"),
             e.function_call(e.var(0, 5), 5, 10)
-                .push(e.int(6, 1))
-                .push(e.int(9, 1))
+                .push(e.int(1, 6))
+                .push(e.int(2, 9))
                 .build()
         );
 
         assert_eq!(
-            stmtit(&global_arena, b":var a := basic(1, 2);"),
+            stmtit(&env, b":var a := basic(1, 2);"),
             s.var(
                 p.var(5, 1),
                 e.function_call(e.var(10, 5), 15, 20)
-                    .push(e.int(16, 1))
-                    .push(e.int(19, 1))
+                    .push(e.int(1, 16))
+                    .push(e.int(2, 19))
                     .build(),
             )
             .build()
@@ -783,16 +822,16 @@ mod tests {
 
     #[test]
     fn basic_if_else() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b":if true { 1 } :else { 0 }"),
+            exprit(&env, b":if true { 1 } :else { 0 }"),
             Expression::If(
                 &e.if_else(
-                    e.bool_(4, 4),
-                    e.block(e.int(11, 1)).build(),
-                    e.block(e.int(23, 1)).build(),
+                    e.bool_(true, 4),
+                    e.block(e.int(1, 11)).build(),
+                    e.block(e.int(0, 23)).build(),
                 ).build()
             )
         )
@@ -800,27 +839,26 @@ mod tests {
 
     #[test]
     fn basic_string() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"'1 + 2'"),
+            exprit(&env, b"'1 + 2'"),
             e.literal(0, 7).push_text(1, 5).string().build()
         );
     }
 
     #[test]
     fn block_basic() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let env = Env::new();
+        let (e, _, p, s, _) = env.factories();
 
         assert_eq!(
-            exprit(&global_arena, b"{\n    :var fool := 1234;\n    fool\n}"),
+            exprit(&env, b"{\n    :var fool := 1234;\n    fool\n}"),
             Expression::Block(
                 &e.block(e.var(29, 4))
                     .range(0, 35)
-                    .push_stmt(s.var(p.var(11, 4), e.int(19, 4)).build())
+                    .push_stmt(s.var(p.var(11, 4), e.int(1234, 19)).build())
                     .build()
             )
         );
@@ -828,15 +866,14 @@ mod tests {
 
     #[test]
     fn block_return() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, s) = (f.expr(), f.stmt());
+        let env = Env::new();
+        let (e, _, _, s, _) = env.factories();
 
         assert_eq!(
-            exprit(&global_arena, b"{ :return 1; }"),
+            exprit(&env, b"{ :return 1; }"),
             Expression::Block(
                 &e.block_div()
-                    .push_stmt(s.ret().expr(e.int(10, 1)).build())
+                    .push_stmt(s.ret().expr(e.int(1, 10)).build())
                     .build()
             )
         );
@@ -844,31 +881,29 @@ mod tests {
 
     #[test]
     fn boolean_basic() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let env = Env::new();
+        let (e, _, p, s, _) = env.factories();
 
         assert_eq!(
-            stmtit(&global_arena, b":var x := true;"),
-            s.var(p.var(5, 1), e.bool_(10, 4)).build()
+            stmtit(&env, b":var x := true;"),
+            s.var(p.var(5, 1), e.bool_(true, 10)).build()
         );
     }
 
     #[test]
     fn constructor_keyed() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
-        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+        let env = Env::new();
+        let (e, _, p, s, t) = env.factories();
 
         let code = b":var p := Person(.name := jack_jack, .age := 1);";
 
         assert_eq!(
-            stmtit(&global_arena, code),
+            stmtit(&env, code),
             s.var(
                 p.var(5, 1),
                 e.constructor(t.simple(10, 6))
                     .name(17, 5).separator(23).push(e.var(26, 9))
-                    .name(37, 4).separator(42).push(e.int(45, 1))
+                    .name(37, 4).separator(42).push(e.int(1, 45))
                     .build(),
             ).build()
         );
@@ -876,102 +911,105 @@ mod tests {
 
     #[test]
     fn field_access_basic() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"tup.42"),
-            e.field_access(e.var(0, 3)).length(3).build()
+            exprit(&env, b"tup.42"),
+            e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
         );
     }
 
     #[test]
     fn field_access_keyed() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"tup.x"),
-            e.field_access(e.var(0, 3)).length(2).build()
+            exprit(&env, b"tup.x"),
+            e.field_access(e.var(0, 3)).build()
         );
     }
 
     #[test]
     fn field_access_recursive() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"tup.42.53"),
-            e.field_access(e.field_access(e.var(0, 3)).length(3).build())
-                .length(3)
+            exprit(&env, b"tup.42.53"),
+            e.field_access(
+                e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
+            )
+                .index(53)
+                .range(6, 3)
                 .build()
         );
     }
 
     #[test]
     fn loop_empty() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b":loop { }"),
+            exprit(&env, b":loop { }"),
             e.loop_(0).build()
         );
     }
 
     #[test]
     fn set_basic() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let e = f.expr();
 
         assert_eq!(
-            stmtit(&global_arena, b" :set fool := 1234;"),
-            f.stmt().set(e.var(6, 4), e.int(14, 4)).build()
+            stmtit(&env, b" :set fool := 1234;"),
+            f.stmt().set(e.var(6, 4), e.int(1234, 14)).build()
         );
     }
 
     #[test]
     fn set_field() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let e = f.expr();
 
         assert_eq!(
-            stmtit(&global_arena, b" :set foo.0 := 1234;"),
+            stmtit(&env, b" :set foo.0 := 1234;"),
             f.stmt().set(
-                e.field_access(e.var(6, 3)).build(),
-                e.int(15, 4)
+                e.field_access(e.var(6, 3)).index(0).build(),
+                e.int(1234, 15)
             ).build()
         );
     }
 
     #[test]
     fn var_constructor() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
         assert_eq!(
-            stmtit(&global_arena, b":var Some(x) := Some(1);"),
+            stmtit(&env, b":var Some(x) := Some(1);"),
             s.var(
                 p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
-                e.constructor(t.simple(16, 4)).push(e.int(21, 1)).build(),
+                e.constructor(t.simple(16, 4)).push(e.int(1, 21)).build(),
             ).build()
         );
     }
 
     #[test]
     fn var_constructor_keyed() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
         let code = b":var Person(.name: n, .age: a) := p;";
 
         assert_eq!(
-            stmtit(&global_arena, code),
+            stmtit(&env, code),
             s.var(
                 p.constructor(t.simple(5, 6))
                     .name(12, 5).push(p.var(19, 1))
@@ -984,54 +1022,54 @@ mod tests {
 
     #[test]
     fn var_ignored() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
-            stmtit(&global_arena, b":var _ := 1;"),
-            s.var(p.ignored(5), e.int(10, 1)).build()
+            stmtit(&env, b":var _ := 1;"),
+            s.var(p.ignored(5), e.int(1, 10)).build()
         );
     }
 
     #[test]
     fn var_ignored_nested() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
-            stmtit(&global_arena, b":var (_, b) := (1, 2);"),
+            stmtit(&env, b":var (_, b) := (1, 2);"),
             s.var(
                 p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
-                e.tuple().push(e.int(16, 1)).push(e.int(19, 1)).build(),
+                e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
             ).build()
         );
     }
 
     #[test]
     fn var_tuple() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
-            stmtit(&global_arena, b":var (a, b) := (1, 2);"),
+            stmtit(&env, b":var (a, b) := (1, 2);"),
             s.var(
                 p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
-                e.tuple().push(e.int(16, 1)).push(e.int(19, 1)).build(),
+                e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
             ).build()
         );
     }
 
     #[test]
     fn var_tuple_keyed() {
-        let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let env = Env::new();
+        let f = env.factory();
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
         assert_eq!(
-            stmtit(&global_arena, b":var (.x: a, .y: b) := foo();"),
+            stmtit(&env, b":var (.x: a, .y: b) := foo();"),
             s.var(
                 p.tuple()
                     .name(6, 2).push(p.var(10, 1))
@@ -1044,11 +1082,11 @@ mod tests {
 
     #[test]
     fn shunting_yard_prefix() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b":not a :or b :and c"),
+            exprit(&env, b":not a :or b :and c"),
             e.bin_op(
                 e.pre_op(e.var(5, 1)).build(),
                 e.bin_op(e.var(11, 1), e.var(18, 1)).and().build()
@@ -1058,88 +1096,70 @@ mod tests {
 
     #[test]
     fn shunting_yard_simple() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         let left = e.bin_op(
-            e.int(0, 1),
-            e.bin_op(e.int(4, 1), e.int(8, 1)).times().build()
+            e.int(1, 0),
+            e.bin_op(e.int(2, 4), e.int(3, 8)).times().build()
         ).build();
 
         let right =
-            e.bin_op(e.int(12, 1), e.int(17, 1)).floor_by().build();
+            e.bin_op(e.int(4, 12), e.int(5, 17)).floor_by().build();
 
         assert_eq!(
-            exprit(&global_arena, b"1 + 2 * 3 < 4 // 5"),
+            exprit(&env, b"1 + 2 * 3 < 4 // 5"),
             e.bin_op(left, right).less_than().build()
         )
     }
 
     #[test]
     fn tuple_basic() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"(1)"),
+            exprit(&env, b"(1)"),
             e.tuple().push(e.int(1, 1)).build()
         );
     }
 
     #[test]
     fn tuple_keyed() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
         assert_eq!(
-            exprit(&global_arena, b"(.x := 1, .y := 2)"),
+            exprit(&env, b"(.x := 1, .y := 2)"),
             e.tuple()
-                .name(1, 2).separator(4).push(e.int(7, 1))
-                .name(10, 2).separator(13).push(e.int(16, 1))
+                .name(1, 2).separator(4).push(e.int(1, 7))
+                .name(10, 2).separator(13).push(e.int(2, 16))
                 .build()
         );
     }
 
     #[test]
     fn tuple_nested() {
-        let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let env = Env::new();
+        let e = env.factory().expr();
 
-        let inner = e.tuple().push(e.int(5, 1)).push(e.int(8, 1)).build();
+        let inner = e.tuple().push(e.int(2, 5)).push(e.int(3, 8)).build();
 
         assert_eq!(
-            exprit(&global_arena, b"(1, (2, 3), 4)"),
-            e.tuple().push(e.int(1, 1)).push(inner).push(e.int(12, 1)).build()
+            exprit(&env, b"(1, (2, 3), 4)"),
+            e.tuple().push(e.int(1, 1)).push(inner).push(e.int(4, 12)).build()
         );
     }
 
-    fn exprit<'g>(global_arena: &'g mem::Arena, raw: &[u8]) -> Expression<'g> {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let e = {
-            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_expression(&mut raw)
-        };
-        local_arena.recycle();
-
-        e
+    fn exprit<'g>(env: &'g Env, raw: &[u8]) -> Expression<'g> {
+        let local = env.local();
+        let mut raw = local.raw(raw);
+        env.scrubber().scrub_expr(super::parse_expression(&mut raw))
     }
 
-    fn stmtit<'g>(global_arena: &'g mem::Arena, raw: &[u8])
-        -> Statement<'g>
-    {
-        use super::super::com::RawParser;
-
-        let mut local_arena = mem::Arena::new();
-
-        let stmt = {
-            let mut raw = RawParser::from_raw(raw, &global_arena, &local_arena);
-            super::parse_statement(&mut raw)
-        };
-        local_arena.recycle();
-
-        stmt
+    fn stmtit<'g>(env: &'g Env, raw: &[u8]) -> Statement<'g> {
+        let local = env.local();
+        let mut raw = local.raw(raw);
+        env.scrubber().scrub_stmt(super::parse_statement(&mut raw))
     }
 }

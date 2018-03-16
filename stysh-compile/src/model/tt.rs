@@ -5,6 +5,7 @@
 
 use std;
 use basic::com::{self, Span};
+use basic::mem::{CloneInto, Arena};
 
 /// A List of Token Trees.
 pub type List<'a> = &'a [Node<'a>];
@@ -229,9 +230,10 @@ impl Token {
         debug_assert!(offset <= std::u32::MAX as usize);
         debug_assert!(length < (1usize << 24));
         debug_assert!((kind as u32) < (1u32 << 8));
+
         Token {
             kind_length: ((kind as u32) << 24) + (length as u32),
-            offset: offset as u32
+            offset: offset as u32,
         }
     }
 
@@ -241,16 +243,12 @@ impl Token {
     }
 
     /// Returns the length of the token.
-    pub fn length(&self) -> usize {
-        (self.kind_length & 0x00FFFFFF) as usize
-    }
+    pub fn length(&self) -> usize { (self.kind_length & 0x00FFFFFF) as usize }
 
     /// Returns the start position of the token.
     ///
     /// Equivalent to calling `self.span().offset()`.
-    pub fn offset(&self) -> usize {
-        self.offset as usize
-    }
+    pub fn offset(&self) -> usize { self.offset as usize }
 }
 
 //
@@ -301,6 +299,15 @@ impl Span for Token {
         com::Range::new(self.offset(), self.length())
     }
 }
+
+//
+//  Implementations of CloneInto
+//
+impl<'target> CloneInto<'target> for StringFragment {
+    type Output = Self;
+
+    fn clone_into(&self, _: &'target Arena) -> Self { *self }
+} 
 
 //
 //  Implementation Details

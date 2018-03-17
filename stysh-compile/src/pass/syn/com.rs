@@ -133,7 +133,7 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
     }
 
     pub fn intern_id_of(&self, token: tt::Token) -> mem::InternId {
-        let raw = &self.source[token.span()];
+        let raw = self.source(token);
         if let Some(id) = self.interner.lookup(raw) {
             id
         } else {
@@ -141,16 +141,8 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
         }
     }
 
-    pub fn source_of(&self, id: mem::InternId) -> &'g [u8] {
-        if let Some(raw) = self.interner.get(id) {
-            raw
-        } else {
-            panic!("Unknown intern ID {:?}", id);
-        }
-    }
-
-    pub fn source(&self, token: tt::Token) -> &'g [u8] {
-        self.source_of(self.intern_id_of(token))
+    pub fn source(&self, token: tt::Token) -> &'a [u8] {
+        &self.source[token.span()]
     }
 
     pub fn resolve_type(&self, token: tt::Token) -> ast::TypeIdentifier {

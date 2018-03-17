@@ -15,7 +15,6 @@ use super::scp::{BlockScope, Scope};
 pub struct NameResolver<'a, 'g, 'local>
     where 'g: 'a
 {
-    code_fragment: &'a [u8],
     scope: &'a Scope<'g>,
     registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
@@ -30,7 +29,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
-        source: &'a [u8],
         scope: &'a Scope<'g>,
         registry: &'a hir::Registry<'g>,
         global: &'g mem::Arena,
@@ -39,7 +37,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         -> NameResolver<'a, 'g, 'local>
     {
         NameResolver {
-            code_fragment: source,
             scope: scope,
             registry: registry,
             global_arena: global,
@@ -442,9 +439,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 
         match lit {
             Bool(b, r) => self.value_of_literal_bool(b, r),
-            Bytes(b, r) => self.value_of_literal_bytes(b, r),
+            Bytes(_, b, r) => self.value_of_literal_bytes(b, r),
             Integral(i, r) => self.value_of_literal_integral(i, r),
-            String(s, r) => self.value_of_literal_string(s, r),
+            String(_, s, r) => self.value_of_literal_string(s, r),
         }
     }
 
@@ -463,14 +460,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_bytes(
-        &mut self,
-        bytes: &[ast::StringFragment],
-        range: com::Range
-    )
+    fn value_of_literal_bytes(&mut self, bytes: &[u8], range: com::Range)
         -> hir::Value<'g>
     {
-        let value = self.catenate_fragments(bytes);
+        let value = self.global_arena.insert_slice(bytes);
 
         //  TODO(matthieum): Fix type, should be Array[[Byte]].
         hir::Value {
@@ -492,14 +485,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_string(
-        &mut self,
-        string: &[ast::StringFragment],
-        range: com::Range
-    )
+    fn value_of_literal_string(&mut self, string: &[u8], range: com::Range)
         -> hir::Value<'g>
     {
-        let value = self.catenate_fragments(string);
+        let value = self.global_arena.insert_slice(string);
 
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::String),
@@ -580,24 +569,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         -> hir::Value<'g>
     {
         self.scope.lookup_binding(var.into())
-    }
-
-    fn catenate_fragments(&self, f: &[ast::StringFragment]) -> &'g [u8] {
-        use model::ast::StringFragment::*;
-
-        let mut buffer = mem::Array::new(self.local_arena);
-        for &fragment in f {
-            match fragment {
-                Text(tok) => buffer.extend(self.source(tok.span())),
-                SpecialCharacter(tok) => match self.source(tok.span()) {
-                    b"N" => buffer.push(b'\n'),
-                    _ => unimplemented!(),
-                },
-                _ => unimplemented!(),
-            }
-        }
-
-        self.global_arena.insert_slice(buffer.into_slice())
     }
 
     fn common_type(&self, types: &[hir::Type<'g>]) -> Option<hir::Type<'g>> {
@@ -742,16 +713,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         where 'a: 'b
     {
         NameResolver {
-            code_fragment: self.code_fragment,
             scope: scope,
             registry: self.registry,
             global_arena: self.global_arena,
             local_arena: self.local_arena,
         }
-    }
-
-    fn source(&self, range: com::Range) -> &[u8] {
-        &self.code_fragment[range]
     }
 }
 
@@ -998,7 +964,7 @@ mod tests {
         let env = Env::new(b"'Hello, World!'", &global_arena);
 
         assert_eq!(
-            env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
+            env.value_of(&e.literal(0, 15).push_text(1, 13).string(b"Hello, World!").build()),
             v.string("Hello, World!", 0)
         );
     }
@@ -1447,7 +1413,6 @@ mod tests {
         ast_resolver: ast::interning::Resolver<'g>,
         hir_resolver: hir::interning::Resolver<'g>,
         scrubber: hir::interning::Scrubber<'g>,
-        fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
 
@@ -1460,7 +1425,6 @@ mod tests {
                 ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner, arena),
                 scrubber: hir::interning::Scrubber::new(arena),
-                fragment: fragment,
                 arena: arena,
             }
         }
@@ -1532,7 +1496,6 @@ mod tests {
             -> super::NameResolver<'a, 'g, 'local>
         {
             super::NameResolver::new(
-                self.fragment,
                 &self.scope,
                 &self.registry, 
                 self.arena, 

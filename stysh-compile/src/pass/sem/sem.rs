@@ -15,7 +15,6 @@ use super::nmr::{self, scp};
 pub struct GraphBuilder<'a, 'g, 'local>
     where 'g: 'a
 {
-    code_fragment: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
@@ -30,7 +29,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
-        source: com::CodeFragment,
         scope: &'a scp::Scope<'g>,
         registry: &'a hir::Registry<'g>,
         global: &'g mem::Arena,
@@ -39,7 +37,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         -> GraphBuilder<'a, 'g, 'local>
     {
         GraphBuilder {
-            code_fragment: source,
             scope: scope,
             registry: registry,
             global_arena: global,
@@ -221,7 +218,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         -> nmr::NameResolver<'b, 'g, 'local>
     {
         nmr::NameResolver::new(
-            &*self.code_fragment,
             scope,
             self.registry,
             self.global_arena,
@@ -236,7 +232,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 #[cfg(test)]
 mod tests {
     use std::rc;
-    use basic::{com, mem};
+    use basic::mem;
     use model::ast;
     use model::ast::builder::Factory as SynFactory;
     use model::hir::builder::Factory as SemFactory;
@@ -475,7 +471,6 @@ mod tests {
         registry: MockRegistry<'g>,
         resolver: ast::interning::Resolver<'g>,
         scrubber: Scrubber<'g>,
-        fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
 
@@ -487,7 +482,6 @@ mod tests {
                 registry: MockRegistry::new(arena),
                 resolver: ast::interning::Resolver::new(fragment, interner, arena),
                 scrubber: Scrubber::new(arena),
-                fragment: fragment,
                 arena: arena,
             }
         }
@@ -496,7 +490,6 @@ mod tests {
             -> super::GraphBuilder<'a, 'g, 'local>
         {
             super::GraphBuilder::new(
-                com::CodeFragment::new(self.fragment.to_vec()),
                 &self.scope,
                 &self.registry, 
                 self.arena, 

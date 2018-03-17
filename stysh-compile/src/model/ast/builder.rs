@@ -662,9 +662,9 @@ impl<'a> LiteralBuilder<'a> {
     }
 
     /// Sets up bytes.
-    pub fn bytes(&mut self) -> &mut Self {
+    pub fn bytes(&mut self, assembled: &'a [u8]) -> &mut Self {
         let range = self.literal.span();
-        self.literal = Literal::Bytes(&[], range);
+        self.literal = Literal::Bytes(&[], assembled, range);
         self
     }
 
@@ -676,9 +676,9 @@ impl<'a> LiteralBuilder<'a> {
     }
 
     /// Sets up a string.
-    pub fn string(&mut self) -> &mut Self {
+    pub fn string(&mut self, assembled: &'a [u8]) -> &mut Self {
         let range = self.literal.span();
-        self.literal = Literal::String(&[], range);
+        self.literal = Literal::String(&[], assembled, range);
         self
     }
 
@@ -715,8 +715,8 @@ impl<'a> LiteralBuilder<'a> {
         use self::Literal::*;
 
         match self.literal {
-            Bytes(_, r) => Bytes(self.fragments.clone().into_slice(), r),
-            String(_, r) => String(self.fragments.clone().into_slice(), r),
+            Bytes(_, a, r) => Bytes(self.fragments.clone().into_slice(), a, r),
+            String(_, a, r) => String(self.fragments.clone().into_slice(), a, r),
             other => other,
         }.into()
     }

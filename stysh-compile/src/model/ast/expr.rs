@@ -127,11 +127,11 @@ pub enum Literal<'a> {
     /// A boolean value.
     Bool(bool, com::Range),
     /// A bytes value.
-    Bytes(&'a [StringFragment], com::Range),
+    Bytes(&'a [StringFragment], &'a [u8], com::Range),
     /// An integral value.
     Integral(i64, com::Range),
     /// A string value.
-    String(&'a [StringFragment], com::Range),
+    String(&'a [StringFragment], &'a [u8], com::Range),
 }
 
 /// A if-else expression.
@@ -296,9 +296,9 @@ impl<'a> Span for Literal<'a> {
 
         match *self {
             Bool(_, r) => r,
-            Bytes(_, r) => r,
+            Bytes(_, _, r) => r,
             Integral(_, r) => r,
-            String(_, r) => r,
+            String(_, _, r) => r,
         }
     }
 }
@@ -331,9 +331,17 @@ impl<'a, 'target> mem::CloneInto<'target> for Literal<'a> {
 
         match *self {
             Bool(b, r) => Bool(b, r),
-            Bytes(b, r) => Bytes(mem::CloneInto::clone_into(b, arena), r),
+            Bytes(f, b, r) => Bytes(
+                arena.insert_slice(f),
+                arena.insert_slice(b),
+                r,
+            ),
             Integral(i, r) => Integral(i, r),
-            String(s, r) => String(mem::CloneInto::clone_into(s, arena), r),
+            String(f, s, r) => String(
+                arena.insert_slice(f),
+                arena.insert_slice(s),
+                r,
+            ),
         }
     }
 }

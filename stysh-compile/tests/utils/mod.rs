@@ -1,6 +1,6 @@
 /// Utilities for the integration tests
 
-use stysh_compile::basic::{com, mem};
+use stysh_compile::basic::mem;
 use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::scp;
@@ -44,8 +44,6 @@ fn interpret_impl<'a, 'g, 's>(
 where
     'g: 'a + 's
 {
-    let code = com::CodeFragment::new(raw.to_vec());
-
     let mut local_arena = mem::Arena::new();
 
     let nodes = create_ast(raw, interner, arena, &mut local_arena);
@@ -59,9 +57,8 @@ where
             ast::Node::Item(i) => {
                 use self::hir::Prototype::*;
 
-                let code = code.clone();
                 let prototype =
-                    create_prototype(&i, code, scope, def_registry, arena, &mut local_arena);
+                    create_prototype(&i, scope, def_registry, arena, &mut local_arena);
                 prototypes.push((i, arena.insert(prototype)));
 
                 match prototype {
@@ -85,8 +82,7 @@ where
     for (i, p) in prototypes {
         use self::hir::Item::*;
 
-        let code = code.clone();
-        let item = create_item(&i, p, code, scope, def_registry, arena, &mut local_arena);
+        let item = create_item(&i, p, scope, def_registry, arena, &mut local_arena);
 
         match item {
             Enum(_) => unimplemented!(),
@@ -106,7 +102,6 @@ where
     //  Finally, interpret the expression.
     let value = create_value(
         &expression.expect("One expression is necessary!"),
-        code,
         scope,
         def_registry,
         arena,
@@ -136,7 +131,6 @@ fn create_ast<'g>(
 
 fn create_prototype<'a, 'g>(
     item: &ast::Item,
-    code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
@@ -146,7 +140,7 @@ fn create_prototype<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
+    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
         .prototype(item);
     local_arena.recycle();
 
@@ -156,7 +150,6 @@ fn create_prototype<'a, 'g>(
 fn create_item<'a, 'g>(
     item: &ast::Item,
     proto: &'g hir::Prototype<'g>,
-    code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
@@ -166,7 +159,7 @@ fn create_item<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
+    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
         .item(proto, item);
     local_arena.recycle();
 
@@ -175,7 +168,6 @@ fn create_item<'a, 'g>(
 
 fn create_value<'a, 'g>(
     expr: &ast::Expression,
-    code: com::CodeFragment,
     scope: &'a scp::Scope<'g>,
     registry: &'a hir::Registry<'g>,
     global_arena: &'g mem::Arena,
@@ -185,7 +177,7 @@ fn create_value<'a, 'g>(
 {
     use stysh_compile::pass::sem::GraphBuilder;
 
-    let result = GraphBuilder::new(code, scope, registry, global_arena, local_arena)
+    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
         .expression(expr);
     local_arena.recycle();
 

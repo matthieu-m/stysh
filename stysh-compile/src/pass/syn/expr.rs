@@ -154,31 +154,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                         },
                     }
                 },
-                tt::Node::Braced(o, n, c) => {
-                    self.raw.pop_node();
-
-                    match o.kind() {
-                        K::BraceOpen => {
-                            let block = self.parse_braces(n, o, c);
-                            Expression::Block(self.raw.intern(block))
-                        },
-                        K::ParenthesisOpen => self.parse_parens(n, o, c),
-                        _ => unimplemented!(),
-                    }
-                },
-                tt::Node::Bytes(_, f, _) => {
-                    self.raw.pop_node();
-
-                    let bytes = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::Bytes(bytes, node.span()))
-                },
-                tt::Node::String(_, f, _) => {
-                    self.raw.pop_node();
-
-                    let string = self.raw.global().insert_slice(f);
-                    Expression::Lit(Literal::String(string, node.span()))
-                },
-                tt::Node::UnexpectedBrace(_) => unimplemented!(),
+                tt::Node::Braced(..) => self.parse_braced(node),
+                tt::Node::Bytes(..) => self.parse_bytes(node),
+                tt::Node::String(..) => self.parse_string(node),
+                tt::Node::UnexpectedBrace(..) => unimplemented!(),
             };
 
             yard.push_expression(expr);
@@ -226,6 +205,25 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         Expression::Lit(Literal::Bool(value, token.span()))
     }
 
+    fn parse_braced(&mut self, node: tt::Node<'a>) -> Expression<'g> {
+        use model::tt::Kind as K;
+
+        if let tt::Node::Braced(o, n, c) = node {
+            self.raw.pop_node();
+
+            match o.kind() {
+                K::BraceOpen => {
+                    let block = self.parse_braces(n, o, c);
+                    Expression::Block(self.raw.intern(block))
+                },
+                K::ParenthesisOpen => self.parse_parens(n, o, c),
+                _ => unimplemented!(),
+            }
+        } else {
+            unreachable!("Not a Braced node: {:?}", node);
+        }
+    }
+
     fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
         -> Block<'g>
     {
@@ -245,6 +243,17 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         }
     }
 
+    fn parse_bytes(&mut self, node: tt::Node) -> Expression<'g> {
+        if let tt::Node::Bytes(_, f, _) = node {
+            self.raw.pop_node();
+
+            let (fragments, result) = self.parse_string_impl(f);
+            Expression::Lit(Literal::Bytes(fragments, result, node.span()))
+        } else {
+            unreachable!("Not a Bytes node: {:?}", node);
+        }
+    }
+
     fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
         let sep = tt::Kind::SignBind;
         let c =
@@ -255,7 +264,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn parse_field_identifier(&mut self) -> FieldIdentifier {
         let token = self.raw.pop_kind(tt::Kind::NameField).expect("Token");
         let id = self.raw.intern_id_of(token);
-        let source = &self.raw.source_of(id)[1..];
+        let source = &self.raw.source(token)[1..];
         debug_assert!(!source.is_empty());
 
         if source[0] < b'0' || source[0] > b'9' {
@@ -338,6 +347,17 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         Expression::Tuple(self.parse_tuple(ns, o, c))
     }
 
+    fn parse_string(&mut self, node: tt::Node) -> Expression<'g> {
+        if let tt::Node::String(_, f, _) = node {
+            self.raw.pop_node();
+
+            let (fragments, result) = self.parse_string_impl(f);
+            Expression::Lit(Literal::String(fragments, result, node.span()))
+        } else {
+            unreachable!("Not a String node: {:?}", node);
+        }
+    }
+
     fn parse_tuple(
         &mut self,
         ns: &'a [tt::Node<'a>],
@@ -347,6 +367,29 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         -> Tuple<'g, Expression<'g>>
     {
         self.raw.parse_tuple(parse_expression, tt::Kind::SignBind, ns, o, c)
+    }
+
+    fn parse_string_impl(&self, f: &[StringFragment])
+        -> (&'g [StringFragment], &'g [u8])
+    {
+        use self::StringFragment::*;
+
+        let mut buffer = self.raw.local_array();
+        for &fragment in f {
+            match fragment {
+                Text(tok) => buffer.extend(self.raw.source(tok)),
+                SpecialCharacter(tok) => match self.raw.source(tok) {
+                    b"N" => buffer.push(b'\n'),
+                    _ => unimplemented!(),
+                },
+                _ => unimplemented!(),
+            }
+        }
+
+        (
+            self.raw.global().insert_slice(f),
+            self.raw.global().insert_slice(buffer.into_slice()),
+        )
     }
 }
 
@@ -754,7 +797,7 @@ mod tests {
 
         assert_eq!(
             exprit(&env, b"b'1 + 2'"),
-            e.literal(0, 8).push_text(2, 5).bytes().build()
+            e.literal(0, 8).push_text(2, 5).bytes(b"1 + 2").build()
         );
     }
 
@@ -844,7 +887,7 @@ mod tests {
 
         assert_eq!(
             exprit(&env, b"'1 + 2'"),
-            e.literal(0, 7).push_text(1, 5).string().build()
+            e.literal(0, 7).push_text(1, 5).string(b"1 + 2").build()
         );
     }
 

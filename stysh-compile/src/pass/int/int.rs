@@ -465,7 +465,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let mut registry = SimpleRegistry::new(&global_arena);
 
-        let id = hir::ItemIdentifier(range(42, 5));
+        let id = hir::ItemIdentifier(Default::default(), range(42, 5));
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
         
         registry.insert(
@@ -556,7 +556,7 @@ mod tests {
 
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
         let rec = hir::Type::Rec(hir::RecordProto {
-            name: hir::ItemIdentifier(range(5, 4)),
+            name: hir::ItemIdentifier(Default::default(), range(5, 4)),
             range: range(0, 20),
             enum_: hir::ItemIdentifier::unresolved(),
         });

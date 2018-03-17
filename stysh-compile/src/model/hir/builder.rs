@@ -216,7 +216,7 @@ impl<'a> ItemFactory<'a> {
 
     /// Creates an ItemIdentifier.
     pub fn id(&self, pos: usize, len: usize) -> ItemIdentifier {
-        ItemIdentifier(range(pos, len))
+        ItemIdentifier(Default::default(), range(pos, len))
     }
 
     /// Creates an EnumBuilder.
@@ -339,7 +339,7 @@ impl<'a> PrototypeFactory<'a> {
     /// Creates an EnumProtoBuilder.
     pub fn enum_(&self, name: ItemIdentifier) -> EnumProtoBuilder {
         let mut e = EnumProtoBuilder::new(name, 0);
-        e.range(name.0.offset() - 6, name.0.length() + 6);
+        e.range(name.span().offset() - 6, name.span().length() + 6);
         e
     }
 
@@ -357,8 +357,8 @@ impl<'a> PrototypeFactory<'a> {
     /// Creates a RecordProtoBuilder.
     pub fn rec(&self, name: ItemIdentifier, pos: usize) -> RecordProtoBuilder {
         let mut r = RecordProtoBuilder::new(name, pos);
-        if pos != name.0.offset() {
-            r.range(name.0.offset() - 5, name.0.length() + 5);
+        if pos != name.span().offset() {
+            r.range(name.span().offset() - 5, name.span().length() + 5);
         }
         r
     }
@@ -392,8 +392,8 @@ impl<'a> FunctionProtoBuilder<'a> {
     pub fn push(&mut self, name: ValueIdentifier, type_: Type<'a>) -> &mut Self
     {
         let gvn = Default::default();
-        let len = name.0.length() + 2 + type_.span().length();
-        let range = range(name.0.offset(), len);
+        let len = name.span().length() + 2 + type_.span().length();
+        let range = range(name.span().offset(), len);
         self.arguments.push(Binding::Argument(name, gvn, type_, range));
         self
     }
@@ -555,7 +555,7 @@ impl<'a> ValueFactory<'a> {
 
     /// Creates an ValueIdentifier.
     pub fn id(&self, pos: usize, len: usize) -> ValueIdentifier {
-        ValueIdentifier(range(pos, len))
+        ValueIdentifier(Default::default(), range(pos, len))
     }
 
     /// Creates an ArgumentRef Value.
@@ -563,7 +563,7 @@ impl<'a> ValueFactory<'a> {
         -> Value<'a>
     {
         value(type_, Expr::ArgumentRef(name, Default::default()))
-            .with_range(pos, name.0.length())
+            .with_range(pos, name.span().length())
     }
 
     /// Creates a BlockBuilder.
@@ -653,7 +653,7 @@ impl<'a> ValueFactory<'a> {
     /// Creates an unresolved ref Value.
     pub fn unresolved_ref(&self, name: ValueIdentifier) -> Value<'a> {
         value(Type::unresolved(), Expr::UnresolvedRef(name))
-            .with_range(name.0.offset(), name.0.length())
+            .with_range(name.span().offset(), name.span().length())
     }
 
     /// Creates a variable ref Value.
@@ -661,7 +661,7 @@ impl<'a> ValueFactory<'a> {
         -> Value<'a>
     {
         value(type_, Expr::VariableRef(name, Default::default()))
-            .with_range(pos, name.0.length())
+            .with_range(pos, name.span().length())
     }
 
     /// Shortcut: creates a Bool ref.
@@ -829,11 +829,11 @@ impl<'a> CallBuilder<'a> {
                 Builtin(BuiltinFunction::Not) => (off - 5, len + 5),
                 Builtin(_) => (off, len),
                 Function(p) => {
-                    let n = p.name.0.length();
+                    let n = p.name.span().length();
                     (off - 1 - n, len + 2 + n)
                 },
                 Unknown(n) => {
-                    let n = n.0.length();
+                    let n = n.span().length();
                     (off - 1 - n, len + 2 + n)
                 },
                 Unresolved(_) => (0, 0),

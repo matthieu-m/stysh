@@ -129,18 +129,29 @@ pub enum Type<'a> {
 }
 
 /// An item identifier.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ItemIdentifier(pub com::Range);
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ItemIdentifier(pub mem::InternId, pub com::Range);
 
 //
 //  Public interface
 //
 
 impl ItemIdentifier {
-    /// Returns a sentinel instance of ItemIdentifier.
-    pub fn unresolved() -> ItemIdentifier {
-        ItemIdentifier(com::Range::new(0, 0))
+    /// Returns the InternId.
+    pub fn id(&self) -> mem::InternId { self.0 }
+
+    /// Sets the InternId.
+    pub fn with_id(self, id: mem::InternId) -> Self {
+        ItemIdentifier(id, self.1)
     }
+
+    /// Sets the Range.
+    pub fn with_range(self, range: com::Range) -> Self {
+        ItemIdentifier(self.0, range)
+    }
+
+    /// Returns a sentinel instance of ItemIdentifier.
+    pub fn unresolved() -> ItemIdentifier { Default::default() }
 }
 
 impl Type<'static> {
@@ -267,7 +278,7 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
 impl Span for ItemIdentifier {
     /// Returns the range spanned by the ItemIdentifier.
-    fn span(&self) -> com::Range { self.0 }
+    fn span(&self) -> com::Range { self.1 }
 }
 
 impl<'a> Span for Prototype<'a> {
@@ -325,7 +336,7 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
 
 impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
     fn from(value: ast::TypeIdentifier) -> Self {
-        ItemIdentifier(value.span())
+        ItemIdentifier(value.id(), value.span())
     }
 }
 
@@ -365,7 +376,7 @@ impl fmt::Display for BuiltinType {
 
 impl<'a> fmt::Display for ItemIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "<{}>", self.0)
+        write!(f, "<{}>", self.span())
     }
 }
 

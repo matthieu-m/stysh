@@ -6,6 +6,7 @@
 //! This modules also defines a `SimpleRegistry` structure, a simple
 //! implementation of the `Registry` trait.
 
+use basic::com::Span;
 use basic::mem;
 use model::{hir, sir};
 
@@ -41,7 +42,7 @@ impl<'a> SimpleRegistry<'a> {
     {
         assert!(
             self.cfgs.insert(id, cfg).is_none(),
-            "{} already known", id.0
+            "{} already known", id.span()
         );
     }
 }

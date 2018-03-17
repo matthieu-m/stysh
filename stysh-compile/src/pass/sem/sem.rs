@@ -107,7 +107,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         for a in fun.arguments {
             arguments.push(hir::Binding::Argument(
-                hir::ValueIdentifier(a.name.span()),
+                hir::ValueIdentifier(a.name.id(), a.name.span()),
                 Default::default(),
                 self.resolver(self.scope).type_of(&a.type_),
                 a.span()
@@ -116,7 +116,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         hir::Prototype::Fun(
             hir::FunctionProto {
-                name: hir::ItemIdentifier(fun.name.span()),
+                name: hir::ItemIdentifier(fun.name.id(), fun.name.span()),
                 range: com::Range::new(
                     fun.keyword as usize,
                     fun.result.span().end_offset() - (fun.keyword as usize)
@@ -210,7 +210,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         -> scp::FunctionScope<'b, 'g>
     {
         scp::FunctionScope::new(
-            &*self.code_fragment,
             parent,
             p,
             self.global_arena,
@@ -236,11 +235,13 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 //
 #[cfg(test)]
 mod tests {
+    use std::rc;
     use basic::{com, mem};
     use model::ast;
     use model::ast::builder::Factory as SynFactory;
     use model::hir::builder::Factory as SemFactory;
     use model::hir::*;
+    use model::hir::interning::Scrubber;
     use model::hir::mocks::MockRegistry;
     use super::scp::mocks::MockScope;
 
@@ -391,6 +392,8 @@ mod tests {
             &global_arena,
         );
 
+        let (a, b) = (env.lookup(b"a"), env.lookup(b"b"));
+
         let ast = SynFactory::new(&global_arena);
         let e = ast.expr();
         let hir = SemFactory::new(&global_arena);
@@ -398,8 +401,8 @@ mod tests {
 
         let f =
             p.fun(i.id(5, 3), t.int())
-                .push(v.id(9, 1), t.int())
-                .push(v.id(17, 1), t.int())
+                .push(v.id(9, 1).with_id(a), t.int())
+                .push(v.id(17, 1).with_id(b), t.int())
                 .range(0, 31)
                 .build();
 
@@ -423,7 +426,7 @@ mod tests {
                 .push(17, 1, ast.type_().simple(17, 1))
                 .build()
             ),
-            i.fun(f, v.block(body).build()).into()
+            env.scrubber.scrub_item(i.fun(f, v.block(body).build()).into())
         );
     }
 
@@ -470,15 +473,20 @@ mod tests {
     struct Env<'g> {
         scope: MockScope<'g>,
         registry: MockRegistry<'g>,
+        resolver: ast::interning::Resolver<'g>,
+        scrubber: Scrubber<'g>,
         fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
 
     impl<'g> Env<'g> {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
+            let interner = rc::Rc::new(mem::Interner::new());
             Env {
-                scope: MockScope::new(fragment, arena),
+                scope: MockScope::new(arena),
                 registry: MockRegistry::new(arena),
+                resolver: ast::interning::Resolver::new(fragment, interner, arena),
+                scrubber: Scrubber::new(arena),
                 fragment: fragment,
                 arena: arena,
             }
@@ -497,18 +505,26 @@ mod tests {
         }
 
         fn proto_of(&self, item: &ast::Item) -> Prototype<'g> {
+            let item = self.resolver.resolve_item(*item);
+
             let mut local_arena = mem::Arena::new();
-            let result = self.builder(&local_arena).prototype(item);
+            let result = self.builder(&local_arena).prototype(&item);
             local_arena.recycle();
-            result
+            self.scrubber.scrub_prototype(result)
         }
 
         fn item_of(&self, proto: &Prototype, item: &ast::Item) -> Item<'g> {
-            let mut local_arena = mem::Arena::new();
+            let item = self.resolver.resolve_item(*item);
             let proto = self.arena.intern_ref(proto);
-            let result = self.builder(&local_arena).item(proto, item);
+
+            let mut local_arena = mem::Arena::new();
+            let result = self.builder(&local_arena).item(proto, &item);
             local_arena.recycle();
-            result
+            self.scrubber.scrub_item(result)
+        }
+
+        fn lookup(&self, raw: &[u8]) -> mem::InternId {
+            self.resolver.interner().lookup(raw).expect("Known identifier")
         }
     }
 }

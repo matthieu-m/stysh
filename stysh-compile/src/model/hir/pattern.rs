@@ -71,7 +71,7 @@ impl<'a> Span for Pattern<'a> {
             Constructor(c) => c.span(),
             Ignored(r) => r,
             Tuple(_, r) => r,
-            Var(v, _) => v.0,
+            Var(v, _) => v.span(),
         }
     }
 }

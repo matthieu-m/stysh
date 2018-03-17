@@ -13,10 +13,9 @@ pub fn interpret<'g>(
     -> hir::Value<'g>
 {
     let scope_arena = mem::Arena::new();
-    let builtin = scp::BuiltinScope::new(raw);
+    let builtin = scp::BuiltinScope::new();
     let fake = hir::mocks::MockRegistry::new(arena);
-    let mut scope =
-        scp::BlockScope::new(raw, &builtin, &fake, arena, &scope_arena);
+    let mut scope = scp::BlockScope::new(&builtin, &fake, arena, &scope_arena);
     let mut def_registry = hir::mocks::MockRegistry::new(arena);
     let mut cfg_registry = int::SimpleRegistry::new(arena);
 

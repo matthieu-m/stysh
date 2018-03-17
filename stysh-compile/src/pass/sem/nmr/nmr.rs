@@ -212,7 +212,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         if let hir::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
             if let Some(e) = self.registry.lookup_enum(e.name) {
                 for r in e.variants {
-                    if self.source(r.prototype.name.0) == self.source(t.span()) {
+                    if r.prototype.name.id() == t.id() {
                         return hir::Type::Rec(*r.prototype);
                     }
                 }
@@ -260,7 +260,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_block(&mut self, block: &ast::Block) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
-                self.code_fragment,
                 self.scope,
                 self.registry,
                 self.global_arena,
@@ -391,8 +390,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
                     gvn: Default::default(),
                 }
             },
-            ast::FieldIdentifier::Name(_, r) => {
-                let id = hir::ValueIdentifier(r);
+            ast::FieldIdentifier::Name(n, r) => {
+                let id = hir::ValueIdentifier(n, r);
 
                 hir::Value {
                     type_: hir::Type::unresolved(),
@@ -513,7 +512,6 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_loop(&mut self, loop_: &ast::Loop) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
-                self.code_fragment,
                 self.scope,
                 self.registry,
                 self.global_arena,
@@ -762,7 +760,11 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 //
 #[cfg(test)]
 mod tests {
+    use std::rc;
+
     use basic::{com, mem};
+    use basic::com::Span;
+
     use model::{ast, hir};
     use model::ast::builder::Factory as AstFactory;
     use model::hir::builder::Factory as HirFactory;
@@ -801,10 +803,10 @@ mod tests {
         let hir = HirFactory::new(&global_arena);
         let (i, p, v) = (hir.item(), hir.proto(), hir.value());
 
-        let mut env = Env::new(b"Rec", &global_arena);
+        let mut env = Env::new(b"Rec   Rec", &global_arena);
 
-        let rec = p.rec(i.id(45, 3), 0).build();
-        env.scope.types.insert(i.id(0, 3), hir::Type::Rec(rec));
+        let rec = p.rec(i.id(6, 3), 0).build();
+        env.insert_record_prototype(rec, &[0]);
 
         assert_eq!(
             env.value_of(
@@ -823,10 +825,10 @@ mod tests {
         let hir = HirFactory::new(&global_arena);
         let (i, p, v) = (hir.item(), hir.proto(), hir.value());
 
-        let mut env = Env::new(b"Rec(1)", &global_arena);
+        let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
 
-        let rec = p.rec(i.id(45, 3), 0).build();
-        env.scope.types.insert(i.id(0, 3), hir::Type::Rec(rec));
+        let rec = p.rec(i.id(9, 3), 0).build();
+        env.insert_record_prototype(rec, &[0]);
 
         assert_eq!(
             env.value_of(
@@ -941,9 +943,9 @@ mod tests {
         let hir = HirFactory::new(&global_arena);
         let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
-        let mut env = Env::new(b"basic(1, 2)", &global_arena);
+        let mut env = Env::new(b"basic(1, 2)    basic", &global_arena);
 
-        let proto = p.fun(i.id(42, 5), t.int()).build();
+        let proto = p.fun(i.id(15, 5), t.int()).build();
         env.insert_function_prototype(proto, &[0]);
 
         assert_eq!(
@@ -1442,15 +1444,22 @@ mod tests {
     struct Env<'g> {
         scope: MockScope<'g>,
         registry: hir::mocks::MockRegistry<'g>,
+        ast_resolver: ast::interning::Resolver<'g>,
+        hir_resolver: hir::interning::Resolver<'g>,
+        scrubber: hir::interning::Scrubber<'g>,
         fragment: &'g [u8],
         arena: &'g mem::Arena,
     }
 
     impl<'g> Env<'g> {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
+            let interner = rc::Rc::new(mem::Interner::new());
             Env {
-                scope: MockScope::new(fragment, arena),
+                scope: MockScope::new(arena),
                 registry: hir::mocks::MockRegistry::new(arena),
+                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
+                hir_resolver: hir::interning::Resolver::new(fragment, interner, arena),
+                scrubber: hir::interning::Scrubber::new(arena),
                 fragment: fragment,
                 arena: arena,
             }
@@ -1462,12 +1471,32 @@ mod tests {
             positions: &[usize],
         )
         {
-            let len = enum_.prototype.name.0.length();
+            let enum_ = self.hir_resolver.resolve_enum(enum_);
+            let name = enum_.prototype.name;
+            let len = name.span().length();
+            println!("Registered enum: {:?}", name);
+
             for p in positions {
-                let id = hir::ItemIdentifier(range(*p, len));
+                let id = hir::ItemIdentifier(name.id(), range(*p, len));
                 self.scope.types.insert(id, hir::Type::Enum(*enum_.prototype));
             }
-            self.registry.enums.insert(enum_.prototype.name, enum_);
+            self.registry.enums.insert(name, enum_);
+        }
+
+        fn insert_function_prototype(
+            &mut self,
+            proto: hir::FunctionProto<'g>,
+            positions: &[usize],
+        )
+        {
+            let proto = self.hir_resolver.resolve_function_prototype(proto);
+            let len = proto.name.span().length();
+            println!("Registered function: {:?}", proto.name);
+
+            for p in positions {
+                let id = hir::ValueIdentifier(proto.name.id(), range(*p, len));
+                self.scope.callables.insert(id, hir::Callable::Function(proto));
+            }
         }
 
         fn insert_record(
@@ -1476,26 +1505,26 @@ mod tests {
             positions: &[usize],
         )
         {
-            let len = record.prototype.name.0.length();
-            for p in positions {
-                let id = hir::ItemIdentifier(range(*p, len));
-                self.scope.types.insert(id, hir::Type::Rec(*record.prototype));
-            }
+            let record = self.hir_resolver.resolve_record(record);
+            self.insert_record_prototype(*record.prototype, positions);
+            println!("Registered record: {:?}", record.prototype.name);
+
             self.registry.records.insert(record.prototype.name, record);
         }
 
-        fn insert_function_prototype(
+        fn insert_record_prototype(
             &mut self,
-            proto: hir::FunctionProto<'g>,
+            proto: hir::RecordProto,
             positions: &[usize],
-
         )
         {
-            let len = proto.name.0.length();
+            let proto = self.hir_resolver.resolve_record_prototype(proto);
+            let len = proto.name.span().length();
+            println!("Registered record prototype: {:?}", proto.name);
 
             for p in positions {
-                let id = hir::ValueIdentifier(range(*p, len));
-                self.scope.callables.insert(id, hir::Callable::Function(proto));
+                let id = hir::ItemIdentifier(proto.name.id(), range(*p, len));
+                self.scope.types.insert(id, hir::Type::Rec(proto));
             }
         }
 
@@ -1512,10 +1541,13 @@ mod tests {
         }
 
         fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {
+            let expr = self.ast_resolver.resolve_expr(*expr);
+
             let mut local_arena = mem::Arena::new();
-            let result = self.resolver(&local_arena).value_of(expr);
+            let result = self.resolver(&local_arena).value_of(&expr);
             local_arena.recycle();
-            result
+
+            self.scrubber.scrub_value(result)
         }
     }
 

@@ -17,6 +17,8 @@
 
 #[cfg(test)]
 pub mod builder;
+#[cfg(test)]
+pub mod interning;
 
 mod common;
 mod item;

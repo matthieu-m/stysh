@@ -136,7 +136,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::Env;
+    use super::super::com::tests::{Env, LocalEnv};
     use model::ast::*;
 
     #[test]
@@ -150,6 +150,25 @@ mod tests {
                 5,
                 3,
                 t.simple(14, 3),
+                e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
+            ).build()
+        );
+    }
+
+    #[test]
+    fn basic_argument_less_named() {
+        let env = Env::new();
+        let local = env.local(b":fun add() -> Int { 1 + 2 }");
+        let (e, i, _, _, t) = env.factories();
+
+        let add = local.resolve_variable(5, 3);
+        let int = local.resolve_type(14, 3);
+
+        assert_eq!(
+            funit_resolved(&local),
+            i.function_named(
+                add,
+                t.simple_named(int),
                 e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
             ).build()
         );
@@ -175,10 +194,12 @@ mod tests {
     }
 
     fn funit<'g>(env: &'g Env, raw: &[u8]) -> Function<'g> {
-        let local = env.local();
-        env.scrubber().scrub_function(
-            super::FunParser::new(local.raw(raw)).parse()
-        )
+        let local = env.local(raw);
+        env.scrubber().scrub_function(funit_resolved(&local))
+    }
+
+    fn funit_resolved<'g>(local: &LocalEnv<'g>) -> Function<'g> {
+        super::FunParser::new(local.raw()).parse()
     }
 }
 

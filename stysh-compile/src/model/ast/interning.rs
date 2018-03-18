@@ -341,7 +341,7 @@ impl<'g> Resolver<'g> {
     }
 
     fn resolve_field_identifier(&self, f: FieldIdentifier) -> FieldIdentifier {
-        f.with_id(self.from_range(f.span()))
+        f.with_id(self.from_range(f.span().skip_left(1)))
     }
 
     fn resolve_function(&self, f: Function) -> Function<'g> {
@@ -506,10 +506,15 @@ impl<'g> Resolver<'g> {
             fields.push(scrubber(*f));
         }
 
+        let mut names = self.array(t.names.len());
+        for n in t.names {
+            names.push((self.from_range(n.1.skip_left(1)), n.1));
+        }
+
         Tuple {
             fields: fields.into_slice(),
             commas: CloneInto::clone_into(t.commas, self.global_arena),
-            names: CloneInto::clone_into(t.names, self.global_arena),
+            names: names.into_slice(),
             separators: CloneInto::clone_into(t.separators, self.global_arena),
             open: t.open,
             close: t.close,
@@ -706,10 +711,15 @@ impl<'g> Scrubber<'g> {
             fields.push(scrubber(*f));
         }
 
+        let mut names = self.array(t.names.len());
+        for n in t.names {
+            names.push((Default::default(), n.1));
+        }
+
         Tuple {
             fields: fields.into_slice(),
             commas: CloneInto::clone_into(t.commas, self.global_arena),
-            names: CloneInto::clone_into(t.names, self.global_arena),
+            names: names.into_slice(),
             separators: CloneInto::clone_into(t.separators, self.global_arena),
             open: t.open,
             close: t.close,

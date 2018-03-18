@@ -199,7 +199,7 @@ pub struct ConstructorBuilder<'a, T:'a> {
 pub struct TupleBuilder<'a, T: 'a> {
     fields: mem::Array<'a, T>,
     commas: mem::Array<'a, u32>,
-    names: mem::Array<'a, com::Range>,
+    names: mem::Array<'a, (mem::InternId, com::Range)>,
     separators: mem::Array<'a, u32>,
     open: u32,
     close: u32,
@@ -358,7 +358,12 @@ impl<'a> ExprFactory<'a> {
 
     /// Creates a Var Expression.
     pub fn var(&self, pos: usize, len: usize) -> Expression<'a> {
-        Expression::Var(VariableIdentifier(Default::default(), range((pos, len))))
+        self.var_named(var_id(pos, len))
+    }
+
+    /// Creates a Var Expression, named.
+    pub fn var_named(&self, name: VariableIdentifier) -> Expression<'a> {
+        Expression::Var(name)
     }
 }
 
@@ -511,7 +516,7 @@ impl<'a> FieldAccessBuilder<'a> {
     pub fn new(arena: &'a mem::Arena, accessed: Expression<'a>) -> Self {
         FieldAccessBuilder {
             accessed: arena.insert(accessed),
-            field: FieldIdentifier::Name(Default::default(), Default::default()),
+            field: field_id(0, 0),
         }
     }
 
@@ -523,9 +528,13 @@ impl<'a> FieldAccessBuilder<'a> {
     }
 
     /// Sets the name of the field.
-    pub fn name(&mut self) -> &mut Self {
-        let range = self.field.span();
-        self.field = FieldIdentifier::Name(Default::default(), range);
+    pub fn name(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.named(field_id(pos, len))
+    }
+
+    /// Sets the name of the field, with its ID.
+    pub fn named(&mut self, name: FieldIdentifier) -> &mut Self {
+        self.field = name;
         self
     }
 
@@ -823,6 +832,11 @@ impl<'a> ItemFactory<'a> {
         EnumBuilder::new(self.arena, pos, len)
     }
 
+    /// Creates a EnumBuilder, named.
+    pub fn enum_named(&self, name: TypeIdentifier) -> EnumBuilder<'a> {
+        EnumBuilder::named(self.arena, name)
+    }
+
     /// Creates a FunctionBuilder.
     pub fn function(
         &self,
@@ -836,23 +850,42 @@ impl<'a> ItemFactory<'a> {
         FunctionBuilder::new(self.arena, (pos, len), result, body)
     }
 
+    /// Creates a FunctionBuilder, named.
+    pub fn function_named(
+        &self,
+        name: VariableIdentifier,
+        result: Type<'a>,
+        body: Block<'a>,
+    )
+        ->  FunctionBuilder<'a>
+    {
+        FunctionBuilder::named(self.arena, name, result, body)
+    }
+
     /// Creates a wrapped RecordBuilder.
     pub fn record(&self, pos: usize, len: usize) -> RecordBuilder<'a> {
         RecordBuilder::new(pos, len)
+    }
+
+    /// Creates a wrapped RecordBuilder, named.
+    pub fn record_named(&self, name: TypeIdentifier) -> RecordBuilder<'a> {
+        RecordBuilder::named(name)
     }
 }
 
 impl<'a> EnumBuilder<'a> {
     /// Creates a new instance.
-    pub fn new(
-        arena: &'a mem::Arena,
-        pos: usize,
-        len: usize,
-    )
+    pub fn new(arena: &'a mem::Arena, pos: usize, len: usize)
         -> Self
     {
+        Self::named(arena, type_id(pos, len))
+    }
+
+    /// Creates a new instance.
+    pub fn named(arena: &'a mem::Arena, name: TypeIdentifier) -> Self
+    {
         EnumBuilder {
-            name: type_id(pos, len),
+            name: name,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -890,7 +923,18 @@ impl<'a> EnumBuilder<'a> {
     )
         -> &mut Self
     {
-        self.variants.push(InnerRecord::Tuple(type_id(pos, len), fields));
+        self.push_named_tuple(type_id(pos, len), fields)
+    }
+
+    /// Appends a Tuple InnerRecord with its ID.
+    pub fn push_named_tuple(
+        &mut self,
+        name: TypeIdentifier,
+        fields: Tuple<'a, Type<'a>>,
+    )
+        -> &mut Self
+    {
+        self.variants.push(InnerRecord::Tuple(name, fields));
         self.commas.push(U32_NONE);
         self
     }
@@ -904,7 +948,12 @@ impl<'a> EnumBuilder<'a> {
 
     /// Appends a Unit InnerRecord.
     pub fn push_unit(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.variants.push(InnerRecord::Unit(type_id(pos, len)));
+        self.push_named_unit(type_id(pos, len))
+    }
+
+    /// Appends a Unit InnerRecord with its ID.
+    pub fn push_named_unit(&mut self, name: TypeIdentifier) -> &mut Self {
+        self.variants.push(InnerRecord::Unit(name));
         self.commas.push(U32_NONE);
         self
     }
@@ -972,8 +1021,20 @@ impl<'a> FunctionBuilder<'a> {
     )
         -> Self
     {
+        Self::named(arena, var_id(name.0, name.1), result, body)
+    }
+
+    /// Creates a new instance, named.
+    pub fn named(
+        arena: &'a mem::Arena,
+        name: VariableIdentifier,
+        result: Type<'a>,
+        body: Block<'a>,
+    )
+        -> Self
+    {
         FunctionBuilder {
-            name: VariableIdentifier(Default::default(), range(name)),
+            name: name,
             result: result,
             body: body,
             keyword: U32_NONE,
@@ -985,16 +1046,18 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     /// Appends an argument.
-    pub fn push(
-        &mut self,
-        pos: usize,
-        len: usize,
-        type_: Type<'a>,
-    )
+    pub fn push(&mut self, pos: usize, len: usize, type_: Type<'a>)
+        -> &mut Self
+    {
+        self.push_named(var_id(pos, len), type_)
+    }
+
+    /// Appends an argument, named.
+    pub fn push_named(&mut self, name: VariableIdentifier, type_: Type<'a>)
         -> &mut Self
     {
         self.arguments.push(Argument {
-            name: VariableIdentifier(Default::default(), range((pos, len))),
+            name: name,
             type_: type_,
             colon: U32_NONE,
             comma: U32_NONE,
@@ -1091,7 +1154,12 @@ impl<'a> FunctionBuilder<'a> {
 impl<'a> RecordBuilder<'a> {
     /// Creates a new instance, defaults to Unit.
     pub fn new(pos: usize, len: usize) -> Self {
-        let inner = InnerRecord::Unit(type_id(pos, len));
+        Self::named(type_id(pos, len))
+    }
+
+    /// Overrides the name, defaults to Unit.
+    pub fn named(t: TypeIdentifier) -> Self {
+        let inner = InnerRecord::Unit(t);
         RecordBuilder {
             inner: inner,
             keyword: U32_NONE,
@@ -1113,28 +1181,28 @@ impl<'a> RecordBuilder<'a> {
 
     /// Sets up a Missing InnerRecord.
     pub fn missing(&mut self) -> &mut Self {
-        let name = self.name();
-        self.inner = InnerRecord::Missing(name);
+        let range = self.name().span();
+        self.inner = InnerRecord::Missing(range);
         self
     }
 
     /// Sets up a Tuple InnerRecord.
     pub fn tuple(&mut self, fields: Tuple<'a, Type<'a>>) -> &mut Self {
-        let name = TypeIdentifier(Default::default(), self.name());
+        let name = self.name();
         self.inner = InnerRecord::Tuple(name, fields);
         self
     }
 
     /// Sets up an Unexpected InnerRecord.
     pub fn unexpected(&mut self) -> &mut Self {
-        let name = self.name();
-        self.inner = InnerRecord::Unexpected(name);
+        let range = self.name().span();
+        self.inner = InnerRecord::Unexpected(range);
         self
     }
 
     /// Sets up a Unit InnerRecord.
     pub fn unit(&mut self) -> &mut Self {
-        let name = TypeIdentifier(Default::default(), self.name());
+        let name = self.name();
         self.inner = InnerRecord::Unit(name);
         self
     }
@@ -1161,14 +1229,12 @@ impl<'a> RecordBuilder<'a> {
     }
 
     /// Extracts the range of the name.
-    fn name(&self) -> com::Range {
+    fn name(&self) -> TypeIdentifier {
         use self::InnerRecord::*;
 
         match self.inner {
-            Missing(r) => r,
-            Tuple(id, _) => id.span(),
-            Unexpected(r) => r,
-            Unit(id) => id.span(),
+            Missing(r) | Unexpected(r) => TypeIdentifier(Default::default(), r),
+            Tuple(id, _) | Unit(id) => id,
         }
     }
 }
@@ -1201,11 +1267,7 @@ impl<'a> PatternFactory<'a> {
 
     /// Creates a Var Pattern.
     pub fn var(&self, pos: usize, len: usize) -> Pattern<'static> {
-        Pattern::Var(self.id(pos, len))
-    }
-
-    fn id(&self, pos: usize, len: usize) -> VariableIdentifier {
-        VariableIdentifier(Default::default(), range((pos, len)))
+        Pattern::Var(var_id(pos, len))
     }
 }
 
@@ -1458,6 +1520,14 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
         self
     }
 
+    /// Appends a name.
+    pub fn full_name(&mut self, name: (mem::InternId, com::Range))
+        -> &mut Self
+    {
+        self.arguments.full_name(name);
+        self
+    }
+
     /// Overrides the position of the last inserted separator.
     pub fn separator(&mut self, pos: u32) -> &mut Self {
         self.arguments.separator(pos);
@@ -1510,9 +1580,17 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
         self
     }
 
-    /// Appends a name.
+    /// Appends a name, with no InternId.
     pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
-        self.names.push(range((pos, length)));
+        self.full_name((Default::default(), range((pos, length))));
+        self
+    }
+
+    /// Appends a full name.
+    pub fn full_name(&mut self, name: (mem::InternId, com::Range))
+        -> &mut Self
+    {
+        self.names.push(name);
         self.separators.push(U32_NONE);
         self
     }
@@ -1549,7 +1627,7 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
         for (s, n) in separators.iter_mut().zip(names.iter()) {
             if *s != U32_NONE { continue; }
 
-            *s = n.end_offset() as u32;
+            *s = n.1.end_offset() as u32;
         }
 
         let fields = self.fields.clone().into_slice();
@@ -1566,7 +1644,7 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
 
         let open = if self.open == U32_NONE {
             names.first()
-                .map(|r| r.offset())
+                .map(|r| r.1.offset())
                 .or_else(|| fields.first().map(|f| f.span().offset()))
                 .map(|o| o as u32 - 1)
                 .unwrap_or(0)
@@ -1602,7 +1680,12 @@ impl<'a> TypeFactory<'a> {
 
     /// Creates a Simple Type.
     pub fn simple(&self, pos: usize, len: usize) -> Type<'a> {
-        Type::Simple(type_id(pos, len))
+        self.simple_named(type_id(pos, len))
+    }
+
+    /// Creates a Simple Type with its ID.
+    pub fn simple_named(&self, name: TypeIdentifier) -> Type<'a> {
+        Type::Simple(name)
     }
 
     /// Creates a TupleBuilder.
@@ -1614,8 +1697,13 @@ impl<'a> TypeFactory<'a> {
 impl<'a> NestedTypeBuilder<'a> {
     /// Creates an instance.
     pub fn new(arena: &'a mem::Arena, pos: usize, len: usize) -> Self {
+        Self::named(arena, type_id(pos, len))
+    }
+
+    /// Creates an instance, named.
+    pub fn named(arena: &'a mem::Arena, name: TypeIdentifier) -> Self {
         NestedTypeBuilder {
-            name: type_id(pos, len),
+            name: name,
             components: mem::Array::new(arena),
             colons: mem::Array::new(arena),
         }
@@ -1623,8 +1711,13 @@ impl<'a> NestedTypeBuilder<'a> {
 
     /// Appends a path component.
     pub fn push(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.components.push(type_id(pos, len));
-        self.colons.push((pos + len) as u32);
+        self.push_named(type_id(pos, len))
+    }
+
+    /// Appends a path component.
+    pub fn push_named(&mut self, name: TypeIdentifier) -> &mut Self {
+        self.components.push(name);
+        self.colons.push(name.span().end_offset() as u32);
         self
     }
 
@@ -1661,6 +1754,14 @@ fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
 
 fn range(tup: (usize, usize)) -> com::Range { com::Range::new(tup.0, tup.1) }
 
+fn field_id(pos: usize, len: usize) -> FieldIdentifier {
+    FieldIdentifier::Name(Default::default(), range((pos, len)))
+}
+
 fn type_id(pos: usize, len: usize) -> TypeIdentifier {
     TypeIdentifier(Default::default(), range((pos, len)))
+}
+
+fn var_id(pos: usize, len: usize) -> VariableIdentifier {
+    VariableIdentifier(Default::default(), range((pos, len)))
 }

@@ -43,7 +43,7 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
         loop {
             if let Some(n) = inner.pop_kind(tt::Kind::NameField) {
-                names.push(n.span());
+                names.push((self.intern_id_of(n), n.span()));
                 named = true;
             }
 
@@ -55,7 +55,8 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
                 fields.push(inner_parser(&mut inner));
 
                 if names.len() < fields.len() {
-                    names.push(com::Range::new(t.span().offset(), 0));
+                    let range = com::Range::new(t.span().offset(), 0);
+                    names.push((Default::default(), range));
                 }
 
                 if separators.len() < names.len() {
@@ -137,12 +138,16 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
         if let Some(id) = self.interner.lookup(raw) {
             id
         } else {
-            panic!("Unknown token {:?}", token);
+            panic!("Unknown token {:?}: {:?}", token, raw);
         }
     }
 
     pub fn source(&self, token: tt::Token) -> &'a [u8] {
-        &self.source[token.span()]
+        if token.kind() == tt::Kind::NameField {
+            &self.source[token.span()][1..]
+        } else {
+            &self.source[token.span()]
+        }
     }
 
     pub fn resolve_type(&self, token: tt::Token) -> ast::TypeIdentifier {
@@ -275,7 +280,8 @@ impl<'a> std::fmt::Debug for ParserState<'a>  {
 
 #[cfg(test)]
 pub mod tests {
-    use basic::mem;
+    use basic::{com, mem};
+    use model::ast;
     use model::ast::builder::{
         Factory, ExprFactory, ItemFactory, PatternFactory, StmtFactory,
         TypeFactory,
@@ -289,6 +295,7 @@ pub mod tests {
     }
 
     pub struct LocalEnv<'g> {
+        raw: &'g [u8],
         interner: &'g mem::Interner,
         global_arena: &'g mem::Arena,
         local_arena: mem::Arena,
@@ -302,8 +309,9 @@ pub mod tests {
             }
         }
 
-        pub fn local<'g>(&'g self) -> LocalEnv<'g> {
+        pub fn local<'g>(&'g self, raw: &'g [u8]) -> LocalEnv<'g> {
             LocalEnv {
+                raw: raw,
                 interner: &self.interner,
                 global_arena: &self.global_arena,
                 local_arena: mem::Arena::new(),
@@ -332,20 +340,45 @@ pub mod tests {
     }
 
     impl<'g> LocalEnv<'g> {
-        pub fn raw<'local>(
-            &'local self,
-            raw: &'local [u8],
-        )
+        pub fn raw<'local>(&'local self)
             -> RawParser<'local, 'g, 'local>
             where
                 'g: 'local
         {
             RawParser::from_raw(
-                raw,
+                self.raw,
                 self.interner,
                 self.global_arena,
                 &self.local_arena
             )
+        }
+
+        pub fn resolve(&self, pos: usize, len: usize)
+            -> (mem::InternId, com::Range)
+        {
+            let range = com::Range::new(pos, len);
+            (self.interner.insert(&self.raw[range]), range)
+        }
+
+        pub fn resolve_field(&self, pos: usize, len: usize)
+            -> (mem::InternId, com::Range)
+        {
+            let id = self.resolve(pos + 1, len - 1).0;
+            (id, com::Range::new(pos, len))
+        }
+
+        pub fn resolve_type(&self, pos: usize, len: usize)
+            -> ast::TypeIdentifier
+        {
+            let (id, range) = self.resolve(pos, len);
+            ast::TypeIdentifier(id, range)
+        }
+
+        pub fn resolve_variable(&self, pos: usize, len: usize)
+            -> ast::VariableIdentifier
+        {
+            let (id, range) = self.resolve(pos, len);
+            ast::VariableIdentifier(id, range)
         }
     }
 

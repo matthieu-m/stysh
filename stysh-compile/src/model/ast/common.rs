@@ -1,6 +1,7 @@
 //! Common types.
 
 use basic::com::{self, Span};
+use basic::mem;
 
 use model::ast::*;
 use model::tt;
@@ -27,7 +28,7 @@ pub struct Tuple<'a, T: 'a> {
     /// -   otherwise, the slice has the same size as the fields.
     /// An absent name is placed at the offset of the first character of the
     /// field it would have preceeded, with a length of 0.
-    pub names: &'a [com::Range],
+    pub names: &'a [(mem::InternId, com::Range)],
     /// Offsets of the separators between names and fields, an absent separator
     /// is placed at the offset of the first field it would have preceeded.
     /// Note: The separator is ':' for types and patterns and ':=' for values.
@@ -64,7 +65,7 @@ impl<'a, T: 'a> Tuple<'a, T> {
     pub fn name(&self, i: usize) -> Option<tt::Token> {
         self.names
             .get(i)
-            .map(|&r| Self::token(tt::Kind::NameField, r.offset(), r.length()))
+            .map(|&r| Self::token(tt::Kind::NameField, r.1.offset(), r.1.length()))
     }
 
     /// Returns the token of the opening parenthesis.

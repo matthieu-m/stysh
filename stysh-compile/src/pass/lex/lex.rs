@@ -289,7 +289,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
         // TODO(matthieum): validate identifiers.
         debug_assert!(tok.raw.len() > 1);
 
-        self.interner.insert(tok.raw);
+        self.interner.insert(&tok.raw[1..]);
         Some(Token::new(Kind::NameField, tok.offset, tok.raw.len()))
     }
 

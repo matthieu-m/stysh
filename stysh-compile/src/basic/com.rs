@@ -98,6 +98,22 @@ impl Range {
         Range { offset: self.offset + (n as u32), ..self }
     }
 
+    /// Skips n from the left.
+    pub fn skip_left(self, n: usize) -> Range {
+        Range {
+            offset: self.offset + (n as u32),
+            length: self.length - (n as u32),
+        }
+    }
+
+    /// Skips n from the right.
+    pub fn skip_right(self, n: usize) -> Range {
+        Range {
+            offset: self.offset,
+            length: self.length - (n as u32),
+        }
+    }
+
     /// Extend one range with another, the resulting range spans both ranges,
     /// and in the case they were discontiguous also spans the interval.
     pub fn extend(self, other: Range) -> Range {

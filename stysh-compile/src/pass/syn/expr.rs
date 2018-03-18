@@ -264,7 +264,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     fn parse_field_identifier(&mut self) -> FieldIdentifier {
         let token = self.raw.pop_kind(tt::Kind::NameField).expect("Token");
         let id = self.raw.intern_id_of(token);
-        let source = &self.raw.source(token)[1..];
+        let source = self.raw.source(token);
         debug_assert!(!source.is_empty());
 
         if source[0] < b'0' || source[0] > b'9' {
@@ -751,7 +751,7 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 //
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::Env;
+    use super::super::com::tests::{Env, LocalEnv};
     use model::ast::*;
 
     #[test]
@@ -936,19 +936,20 @@ mod tests {
     #[test]
     fn constructor_keyed() {
         let env = Env::new();
-        let (e, _, p, s, t) = env.factories();
+        let local = env.local(b"Person(.name := jack_jack, .age := 1)");
+        let (e, _, _, _, t) = env.factories();
 
-        let code = b":var p := Person(.name := jack_jack, .age := 1);";
+        let person = local.resolve_type(0, 6);
+        let jack_jack = local.resolve_variable(16, 9);
+        let (name, age) =
+            (local.resolve_field(7, 5), local.resolve_field(27, 4));
 
         assert_eq!(
-            stmtit(&env, code),
-            s.var(
-                p.var(5, 1),
-                e.constructor(t.simple(10, 6))
-                    .name(17, 5).separator(23).push(e.var(26, 9))
-                    .name(37, 4).separator(42).push(e.int(1, 45))
-                    .build(),
-            ).build()
+            exprit_resolved(&local),
+            e.constructor(t.simple_named(person))
+                .full_name(name).separator(13).push(e.var_named(jack_jack))
+                .full_name(age).separator(32).push(e.int(1, 35))
+                .build()
         );
     }
 
@@ -966,11 +967,16 @@ mod tests {
     #[test]
     fn field_access_keyed() {
         let env = Env::new();
+        let local = env.local(b"tup.x");
         let e = env.factory().expr();
 
+        let tup = local.resolve_variable(0, 3);
+        let x = local.resolve_field(3, 2);
+        let x = FieldIdentifier::Name(x.0, x.1);
+
         assert_eq!(
-            exprit(&env, b"tup.x"),
-            e.field_access(e.var(0, 3)).build()
+            exprit_resolved(&local),
+            e.field_access(e.var_named(tup)).named(x).build()
         );
     }
 
@@ -1182,6 +1188,23 @@ mod tests {
     }
 
     #[test]
+    fn tuple_keyed_named() {
+        let env = Env::new();
+        let local = env.local(b"(.x := 1, .y := 2)");
+        let e = env.factory().expr();
+
+        let (x, y) = (local.resolve_field(1, 2), local.resolve_field(10, 2));
+
+        assert_eq!(
+            exprit_resolved(&local),
+            e.tuple()
+                .full_name(x).separator(4).push(e.int(1, 7))
+                .full_name(y).separator(13).push(e.int(2, 16))
+                .build()
+        );
+    }
+
+    #[test]
     fn tuple_nested() {
         let env = Env::new();
         let e = env.factory().expr();
@@ -1195,14 +1218,22 @@ mod tests {
     }
 
     fn exprit<'g>(env: &'g Env, raw: &[u8]) -> Expression<'g> {
-        let local = env.local();
-        let mut raw = local.raw(raw);
-        env.scrubber().scrub_expr(super::parse_expression(&mut raw))
+        let local = env.local(raw);
+        env.scrubber().scrub_expr(exprit_resolved(&local))
+    }
+
+    fn exprit_resolved<'g>(local: &LocalEnv<'g>) -> Expression<'g> {
+        let mut raw = local.raw();
+        super::parse_expression(&mut raw)
     }
 
     fn stmtit<'g>(env: &'g Env, raw: &[u8]) -> Statement<'g> {
-        let local = env.local();
-        let mut raw = local.raw(raw);
-        env.scrubber().scrub_stmt(super::parse_statement(&mut raw))
+        let local = env.local(raw);
+        env.scrubber().scrub_stmt(stmtit_resolved(&local))
+    }
+
+    fn stmtit_resolved<'g>(local: &LocalEnv<'g>) -> Statement<'g> {
+        let mut raw = local.raw();
+        super::parse_statement(&mut raw)
     }
 }

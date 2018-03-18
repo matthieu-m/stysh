@@ -244,7 +244,7 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::Env;
+    use super::super::com::tests::{Env, LocalEnv};
     use model::ast::*;
 
     #[test]
@@ -290,6 +290,26 @@ mod tests {
     }
 
     #[test]
+    fn enum_unit_multiple_named() {
+        let env = Env::new();
+        let local = env.local(b":enum Simple { First, Second, Third }");
+        let i = env.factory().item();
+
+        let simple = local.resolve_type(6, 6);
+        let (first, second, third) =
+            (local.resolve_type(15, 5), local.resolve_type(22, 6), local.resolve_type(30, 5));
+
+        assert_eq!(
+            enumit_resolved(&local),
+            i.enum_named(simple)
+                .push_named_unit(first)
+                .push_named_unit(second)
+                .push_named_unit(third)
+                .build()
+        );
+    }
+
+    #[test]
     fn rec_tuple() {
         let env = Env::new();
         let (_, i, _, _, t) = env.factories();
@@ -308,14 +328,21 @@ mod tests {
     #[test]
     fn rec_tuple_keyed() {
         let env = Env::new();
+        let local = env.local(b":rec Person(.name: String, .age: Int);");
         let (_, i, _, _, t) = env.factories();
 
+        let person = local.resolve_type(5, 6);
+        let name = local.resolve_field(12, 5);
+        let string = local.resolve_type(19, 6);
+        let age = local.resolve_field(27, 4);
+        let int = local.resolve_type(33, 3);
+
         assert_eq!(
-            recit(&env, b":rec Person(.name: String, .age: Int);"),
-            i.record(5, 6).tuple(
+            recit_resolved(&local),
+            i.record_named(person).tuple(
                 t.tuple()
-                    .name(12, 5).push(t.simple(19, 6))
-                    .name(27, 4).push(t.simple(33, 3))
+                    .full_name(name).push(t.simple_named(string))
+                    .full_name(age).push(t.simple_named(int))
                     .build()
             ).build()
         );
@@ -454,21 +481,33 @@ mod tests {
         );
     }
 
-    fn enumit<'g>(env: &'g Env, raw: &[u8]) -> Enum<'g> {
-        let local = env.local();
-        let mut raw = local.raw(raw);
-        env.scrubber().scrub_enum(super::parse_enum(&mut raw))
+    fn enumit<'g>(env: &'g Env, raw: &'g [u8]) -> Enum<'g> {
+        let local = env.local(raw);
+        env.scrubber().scrub_enum(enumit_resolved(&local))
     }
 
-    fn recit<'g>(env: &'g Env, raw: &[u8]) -> Record<'g> {
-        let local = env.local();
-        let mut raw = local.raw(raw);
-        env.scrubber().scrub_record(super::parse_record(&mut raw))
+    fn enumit_resolved<'g>(local: &LocalEnv<'g>) -> Enum<'g> {
+        let mut raw = local.raw();
+        super::parse_enum(&mut raw)
     }
 
-    fn typeit<'g>(env: &'g Env, raw: &[u8]) -> Type<'g> {
-        let local = env.local();
-        let mut raw = local.raw(raw);
-        env.scrubber().scrub_type(super::parse_type(&mut raw))
+    fn recit<'g>(env: &'g Env, raw: &'g [u8]) -> Record<'g> {
+        let local = env.local(raw);
+        env.scrubber().scrub_record(recit_resolved(&local))
+    }
+
+    fn recit_resolved<'g>(local: &LocalEnv<'g>) -> Record<'g> {
+        let mut raw = local.raw();
+        super::parse_record(&mut raw)
+    }
+
+    fn typeit<'g>(env: &'g Env, raw: &'g [u8]) -> Type<'g> {
+        let local = env.local(raw);
+        env.scrubber().scrub_type(typeit_resolved(&local))
+    }
+
+    fn typeit_resolved<'g>(local: &LocalEnv<'g>) -> Type<'g> {
+        let mut raw = local.raw();
+        super::parse_type(&mut raw)
     }
 }

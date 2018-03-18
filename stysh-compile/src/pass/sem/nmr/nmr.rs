@@ -92,16 +92,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
             unimplemented!("Unknown type - {:?}", c.type_)
         };
 
-        let mut arguments =
-            mem::Array::with_capacity(c.arguments.len(), self.global_arena);
-
-        for f in c.arguments.fields {
-            arguments.push(self.pattern_of(f));
-        }
-
         hir::Pattern::Constructor(hir::Constructor {
             type_: rec,
-            arguments: arguments.into_slice(),
+            arguments: self.tuple_of(&c.arguments, Self::pattern_of),
             range: c.span(),
         })
     }
@@ -115,15 +108,8 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn pattern_of_tuple(&mut self, t: &ast::Tuple<ast::Pattern>)
         -> hir::Pattern<'g>
     {
-        let mut fields =
-            mem::Array::with_capacity(t.fields.len(), self.global_arena);
-
-        for f in t.fields {
-            fields.push(self.pattern_of(f));
-        }
-
         hir::Pattern::Tuple(
-            hir::Tuple { fields: fields.into_slice() },
+            self.tuple_of(t, Self::pattern_of),
             t.span(),
         )
     }
@@ -224,14 +210,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn type_of_tuple(&mut self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
-        let mut fields =
-            mem::Array::with_capacity(t.fields.len(), self.global_arena);
-
-        for f in t.fields {
-            fields.push(self.type_of(f));
-        }
-
-        hir::Type::Tuple(hir::Tuple { fields: fields.into_slice() })
+        hir::Type::Tuple(self.tuple_of(t, Self::type_of))
     }
 
     fn value_of_expr(&mut self, expr: &ast::Expression) -> hir::Value<'g> {
@@ -326,22 +305,14 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_constructor(&mut self, c: ast::Constructor<ast::Expression>)
         -> hir::Value<'g>
     {
-        if let hir::Type::Rec(record) = self.type_of(&c.type_) {
-            let mut values = mem::Array::with_capacity(
-                c.arguments.len(),
-                self.global_arena
-            );
-
-            for e in c.arguments.fields {
-                values.push(self.value_of(e));
-            }
-
+        if let hir::Type::Rec(type_) = self.type_of(&c.type_) {
+            let arguments = self.tuple_of(&c.arguments, Self::value_of);
             return hir::Value {
-                type_: hir::Type::Rec(record),
+                type_: hir::Type::Rec(type_),
                 range: c.span(),
                 expr: hir::Expr::Constructor(hir::Constructor {
-                    type_: record,
-                    arguments: values.into_slice(),
+                    type_: type_,
+                    arguments: arguments,
                     range: c.span(),
                 }),
                 gvn: Default::default(),
@@ -376,27 +347,32 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_field(&mut self, field: ast::FieldAccess) -> hir::Value<'g> {
+        use self::ast::FieldIdentifier::*;
+
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
-        match field.field {
-            ast::FieldIdentifier::Index(index, _) => {
-                hir::Value {
-                    type_: self.type_of_field_index(accessed, index),
-                    range: field.span(),
-                    expr: hir::Expr::FieldAccess(accessed, index),
-                    gvn: Default::default(),
-                }
-            },
-            ast::FieldIdentifier::Name(n, r) => {
-                let id = hir::ValueIdentifier(n, r);
+        let index = match field.field {
+            Index(index, _) => index,
+            Name(n, r)
+                => if let Some(index) = self.index_of(accessed.type_, n) {
+                    index
+                } else {
+                    let id = hir::ValueIdentifier(n, r);
 
-                hir::Value {
-                    type_: hir::Type::unresolved(),
-                    range: field.span(),
-                    expr: hir::Expr::UnresolvedField(accessed, id),
-                    gvn: Default::default(),
-                }
-            },
+                    return hir::Value {
+                        type_: hir::Type::unresolved(),
+                        range: field.span(),
+                        expr: hir::Expr::UnresolvedField(accessed, id),
+                        gvn: Default::default(),
+                    };
+                },
+        };
+
+        hir::Value {
+            type_: self.type_of_field_index(accessed, index),
+            range: field.span(),
+            expr: hir::Expr::FieldAccess(accessed, index),
+            gvn: Default::default(),
         }
     }
 
@@ -546,21 +522,17 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn value_of_tuple(&mut self, tup: &ast::Tuple<ast::Expression>)
         -> hir::Value<'g>
     {
-        let mut types =
-            mem::Array::with_capacity(tup.fields.len(), self.global_arena);
-        let mut values =
-            mem::Array::with_capacity(tup.fields.len(), self.global_arena);
+        let expr = self.tuple_of(tup, Self::value_of);
 
-        for e in tup.fields {
-            let v = self.value_of(e);
-            types.push(v.type_);
-            values.push(v);
-        }
+        let type_ = hir::Tuple {
+            fields: self.slice_of(expr.fields, |_, v| v.type_),
+            names: expr.names,
+        };
 
         hir::Value {
-            type_: hir::Type::Tuple(hir::Tuple { fields: types.into_slice() }),
+            type_: hir::Type::Tuple(type_),
             range: tup.span(),
-            expr: hir::Expr::Tuple(hir::Tuple { fields: values.into_slice() }),
+            expr: hir::Expr::Tuple(expr),
             gvn: Default::default(),
         }
     }
@@ -686,6 +658,25 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
+    fn index_of(&self, type_: hir::Type, id: mem::InternId) -> Option<u16> {
+        if let hir::Type::Tuple(ref tuple) = type_ {
+            tuple.names.iter().position(|v| v.id() == id).map(|p| p as u16)
+        } else {
+            None
+        }
+    }
+
+    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
+        where 'a: 'b
+    {
+        NameResolver {
+            scope: scope,
+            registry: self.registry,
+            global_arena: self.global_arena,
+            local_arena: self.local_arena,
+        }
+    }
+
     fn statements<'b>(
         &self,
         stmts: &[ast::Statement],
@@ -709,16 +700,45 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         self.global_arena.insert_slice(statements.into_slice())
     }
 
-    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
-        where 'a: 'b
+    fn slice_of<'b, T: 'b, U: 'g, F: Fn(&mut Self, &'b T) -> U>(
+        &mut self,
+        input: &'b [T],
+        transformer: F,
+    )
+        -> &'g [U]
     {
-        NameResolver {
-            scope: scope,
-            registry: self.registry,
-            global_arena: self.global_arena,
-            local_arena: self.local_arena,
+        let mut result =
+            mem::Array::with_capacity(input.len(), self.global_arena);
+
+        for i in input {
+            result.push(transformer(self, i));
         }
+
+        result.into_slice()
     }
+
+    pub fn tuple_of<'b, T: 'b, U: 'g, F: Fn(&mut Self, &'b T) -> U>(
+        &mut self,
+        tup: &'b ast::Tuple<'b, T>,
+        transformer: F,
+    )
+        -> hir::Tuple<'g, U>
+    {
+        debug_assert!(
+            tup.names.is_empty() || tup.names.len() == tup.fields.len()
+        );
+
+        let fields = self.slice_of(tup.fields, transformer);
+
+        let names = if !tup.names.is_empty() {
+            self.slice_of(tup.names, |_, &(i, r)| hir::ValueIdentifier(i, r))
+        } else {
+            &[]
+        };
+
+        hir::Tuple { fields, names }
+    }
+
 }
 
 //
@@ -843,30 +863,6 @@ mod tests {
                     .build_value()
             ).build()
         );
-    }
-
-    #[test]
-    fn value_basic_tuple_field_access() {
-        let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new(&global_arena).value();
-
-        let env = Env::new(b"(42, 43).1", &global_arena);
-
-        assert_eq!(
-            env.value_of(
-                &e.field_access(
-                    e.tuple().push(e.int(42, 1)).push(e.int(43, 5)).build(),
-                )
-                    .index(1)
-                    .build()
-            ),
-            v.field_access(
-                1,
-                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build()
-            ).build()
-        )
     }
 
     #[test]
@@ -1210,6 +1206,62 @@ mod tests {
     }
 
     #[test]
+    fn value_tuple_field_access() {
+        let global_arena = mem::Arena::new();
+        let e = AstFactory::new(&global_arena).expr();
+
+        let v = HirFactory::new(&global_arena).value();
+
+        let env = Env::new(b"(42, 43).1", &global_arena);
+
+        assert_eq!(
+            env.value_of(
+                &e.field_access(
+                    e.tuple().push(e.int(42, 1)).push(e.int(43, 5)).build(),
+                )
+                    .index(1)
+                    .build()
+            ),
+            v.field_access(
+                1,
+                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build()
+            ).build()
+        )
+    }
+
+    #[test]
+    fn value_tuple_keyed_field_access() {
+        let global_arena = mem::Arena::new();
+        let e = AstFactory::new(&global_arena).expr();
+
+        let v = HirFactory::new(&global_arena).value();
+
+        let env = Env::new(b"(.x := 42, .y := 43).y", &global_arena);
+
+        let (x, y) = (env.field_id(1, 2), env.field_id(11, 2));
+
+        assert_eq!(
+            env.value_of_resolved(
+                &e.field_access(
+                    e.tuple()
+                        .push(e.int(42, 7)).name(1, 2)
+                        .push(e.int(43, 17)).name(11, 2)
+                        .build(),
+                )
+                    .name(20, 2)
+                    .build()
+            ),
+            v.field_access(
+                1,
+                v.tuple()
+                    .push(v.int(42, 7)).name(x)
+                    .push(v.int(43, 17)).name(y)
+                    .build()
+            ).build()
+        )
+    }
+
+    #[test]
     fn value_var_basic() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
@@ -1492,6 +1544,12 @@ mod tests {
             }
         }
 
+        fn field_id(&self, pos: usize, len: usize) -> hir::ValueIdentifier {
+            let field = range(pos + 1, len - 1);
+            let range = range(pos, len);
+            hir::ValueIdentifier(self.hir_resolver.from_range(field), range)
+        }
+
         fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)
             -> super::NameResolver<'a, 'g, 'local>
         {
@@ -1504,13 +1562,17 @@ mod tests {
         }
 
         fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {
+            self.scrubber.scrub_value(self.value_of_resolved(expr))
+        }
+
+        fn value_of_resolved(&self, expr: &ast::Expression) -> hir::Value<'g> {
             let expr = self.ast_resolver.resolve_expr(*expr);
 
             let mut local_arena = mem::Arena::new();
             let result = self.resolver(&local_arena).value_of(&expr);
             local_arena.recycle();
 
-            self.scrubber.scrub_value(result)
+            result
         }
     }
 

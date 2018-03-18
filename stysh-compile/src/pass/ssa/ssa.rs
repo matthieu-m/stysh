@@ -177,13 +177,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
             hir::Expr::Call(callable, args)
                 => Some(self.convert_call(current, callable, args, gvn, r)),
             hir::Expr::Constructor(c)
-                => Some(self.convert_constructor(
-                    current,
-                    c.type_,
-                    c.arguments,
-                    gvn,
-                    r
-                )),
+                => Some(self.convert_constructor(current, c, gvn, r)),
             hir::Expr::FieldAccess(v, i)
                 => Some(self.convert_field_access(current, value.type_, v, i, r)),
             hir::Expr::If(cond, true_, false_)
@@ -303,19 +297,18 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn convert_constructor(
         &mut self,
         current: ProtoBlock<'g, 'local>,
-        rec: hir::RecordProto,
-        args: &[hir::Value<'g>],
+        cons: hir::Constructor<'g, hir::Value<'g>>,
         gvn: hir::Gvn,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
     {
         let (mut current, arguments) =
-            self.convert_array_of_values(current, args);
+            self.convert_array_of_values(current, cons.arguments.fields);
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::New(hir::Type::Rec(rec), arguments, range)
+            sir::Instruction::New(hir::Type::Rec(cons.type_), arguments, range)
         );
 
         current
@@ -509,7 +502,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 return current;
             },
             Constructor(pattern) => (
-                pattern.arguments,
+                pattern.arguments.fields,
                 self.extract_fields_types(type_),
             ),
             Tuple(pattern, _) => (

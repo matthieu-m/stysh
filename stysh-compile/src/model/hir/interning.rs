@@ -51,7 +51,7 @@ impl<'g> Resolver<'g> {
     /// Resolves InternId, recursively.
     pub fn resolve_enum_prototype(&self, e: EnumProto) -> EnumProto {
         EnumProto {
-            name: self.resolve_item_identifier(e.name),
+            name: self.resolve_item_id(e.name),
             range: e.range,
         }
     }
@@ -68,7 +68,7 @@ impl<'g> Resolver<'g> {
     /// Resolves InternId, recursively.
     pub fn resolve_function_prototype(&self, f: FunctionProto) -> FunctionProto<'g> {
         FunctionProto {
-            name: self.resolve_item_identifier(f.name),
+            name: self.resolve_item_id(f.name),
             range: f.range,
             arguments: self.resolve_array(f.arguments, |b| self.resolve_binding(b)),
             result: self.resolve_type(f.result),
@@ -108,10 +108,16 @@ impl<'g> Resolver<'g> {
     /// Resolves InternId, recursively.
     pub fn resolve_record_prototype(&self, r: RecordProto) -> RecordProto {
         RecordProto {
-            name: self.resolve_item_identifier(r.name),
+            name: self.resolve_item_id(r.name),
             range: r.range,
-            enum_: self.resolve_item_identifier(r.enum_),
+            enum_: self.resolve_item_id(r.enum_),
         }
+    }
+
+    /// Obtains the InternId of the specified range.
+    pub fn from_range(&self, range: com::Range) -> mem::InternId {
+        let raw = &self.source[range];
+        self.interner.insert(raw)
     }
 }
 
@@ -217,7 +223,7 @@ impl<'g> Resolver<'g> {
 
         match b {
             Argument(v, g, t, r) => Argument(
-                self.resolve_value_identifier(v),
+                self.resolve_value_id(v),
                 g,
                 self.resolve_type(t),
                 r,
@@ -231,13 +237,14 @@ impl<'g> Resolver<'g> {
         }
     }
 
-    fn resolve_item_identifier(&self, i: ItemIdentifier) -> ItemIdentifier {
+    fn resolve_item_id(&self, i: ItemIdentifier) -> ItemIdentifier {
         i.with_id(self.from_range(i.span()))
     }
 
     fn resolve_tuple_type(&self, t: Tuple<Type>) -> Tuple<'g, Type<'g>> {
         Tuple {
-            fields: self.resolve_array(t.fields, |t| self.resolve_type(t))
+            fields: self.resolve_array(t.fields, |t| self.resolve_type(t)),
+            names: self.resolve_array(t.names, |v| self.resolve_value_id(v)),
         }
     }
 
@@ -249,11 +256,11 @@ impl<'g> Resolver<'g> {
             Enum(e) => Enum(self.resolve_enum_prototype(e)),
             Rec(r) => Rec(self.resolve_record_prototype(r)),
             Tuple(t) => Tuple(self.resolve_tuple_type(t)),
-            Unresolved(i) => Unresolved(self.resolve_item_identifier(i)),
+            Unresolved(i) => Unresolved(self.resolve_item_id(i)),
         }
     }
 
-    fn resolve_value_identifier(&self, v: ValueIdentifier) -> ValueIdentifier {
+    fn resolve_value_id(&self, v: ValueIdentifier) -> ValueIdentifier {
         v.with_id(self.from_range(v.span()))
     }
 
@@ -272,11 +279,6 @@ impl<'g> Resolver<'g> {
             result.push(resolver(*i));
         }
         result.into_slice()
-    }
-
-    fn from_range(&self, range: com::Range) -> mem::InternId {
-        let raw = &self.source[range];
-        self.interner.insert(raw)
     }
 }
 
@@ -483,7 +485,7 @@ impl<'g> Scrubber<'g> {
     {
         Constructor {
             type_: self.scrub_record_proto(c.type_),
-            arguments: self.scrub_array(c.arguments, scrubber),
+            arguments: self.scrub_tuple_impl(c.arguments, scrubber),
             range: c.range,
         }
     }
@@ -495,7 +497,10 @@ impl<'g> Scrubber<'g> {
     )
         -> Tuple<'g, U>
     {
-        Tuple { fields: self.scrub_array(c.fields, scrubber) }
+        Tuple {
+            fields: self.scrub_array(c.fields, scrubber),
+            names: self.scrub_array(c.names, |v| self.scrub_value_id(v)),
+        }
     }
 
 }

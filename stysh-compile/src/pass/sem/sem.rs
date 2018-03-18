@@ -179,23 +179,16 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     {
         use self::ast::InnerRecord::*;
 
-        let fields: &'g [hir::Type<'g>] = match r.inner {
-            Missing(_) | Unexpected(_) | Unit(_) => &[],
-            Tuple(_, tup) => {
-                let mut fields =
-                    mem::Array::with_capacity(tup.len(), self.global_arena);
-                
-                for f in tup.fields {
-                    fields.push(self.resolver(self.scope).type_of(f));
-                }
-
-                fields.into_slice()
-            },
+        let definition = match r.inner {
+            Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
+            Tuple(_, tup)
+                => self.resolver(self.scope)
+                    .tuple_of(&tup, nmr::NameResolver::type_of),
         };
 
         hir::Item::Rec(hir::Record {
             prototype: p,
-            definition: hir::Tuple { fields }
+            definition: definition,
         })
     }
 

@@ -154,7 +154,7 @@ pub struct ValueTupleBuilder<'a> {
 #[derive(Clone)]
 pub struct ConstructorBuilder<'a, T: 'a> {
     record: RecordProto,
-    arguments: mem::Array<'a, T>,
+    arguments: TupleBuilder<'a, T>,
     range: com::Range,
 }
 
@@ -175,6 +175,7 @@ pub struct RecordProtoBuilder {
 #[derive(Clone)]
 pub struct TupleBuilder<'a, T: 'a> {
     fields: mem::Array<'a, T>,
+    names: mem::Array<'a, ValueIdentifier>,
 }
 
 //
@@ -287,6 +288,12 @@ impl<'a> RecordBuilder<'a> {
     /// Pushes a field.
     pub fn push(&mut self, t: Type<'a>) -> &mut Self {
         self.definition.push(t);
+        self
+    }
+
+    /// Overrides the name of the last field, if any.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.definition.name(name);
         self
     }
 
@@ -1003,17 +1010,18 @@ impl<'a> ValueTupleBuilder<'a> {
         self
     }
 
+    /// Overrides the name of the last field, if any.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.type_.name(name);
+        self.expr.name(name);
+        self
+    }
+
     /// Creates a Tuple Value.
     pub fn build(&self) -> Value<'a> {
-        let values = &self.expr.fields;
-        let (off, len) = if values.len() == 0 {
-            (0, 0)
-        } else {
-            let off = values.first().unwrap().range.offset() - 1;
-            let end = values.last().unwrap().range.end_offset() + 1;
-            (off, end - off)
-        };
-        value(self.type_.build(), self.expr.build()).with_range(off, len)
+        let range = self.expr.span();
+        value(self.type_.build(), self.expr.build())
+            .with_range(range.offset(), range.length())
     }
 }
 
@@ -1088,7 +1096,7 @@ impl<'a, T> ConstructorBuilder<'a, T> {
     {
         ConstructorBuilder {
             record: record,
-            arguments: mem::Array::new(arena),
+            arguments: TupleBuilder::new(arena),
             range: range(pos, len),
         }
     }
@@ -1099,6 +1107,11 @@ impl<'a, T> ConstructorBuilder<'a, T> {
         self
     }
 
+    /// Overrides the name of the last field, if any.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.arguments.name(name);
+        self
+    }
 }
 
 impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
@@ -1106,7 +1119,7 @@ impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
     pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
         Constructor {
             type_: self.record,
-            arguments: self.arguments.clone().into_slice(),
+            arguments: self.arguments.build(),
             range: self.range,
         }.into()
     }
@@ -1122,13 +1135,35 @@ impl<'a> ConstructorBuilder<'a, Value<'a>> {
 impl<'a, T: 'a> TupleBuilder<'a, T> {
     /// Creates a new instance.
     pub fn new(arena: &'a mem::Arena) -> Self {
-        TupleBuilder { fields: mem::Array::new(arena) }
+        TupleBuilder {
+            fields: mem::Array::new(arena),
+            names: mem::Array::new(arena),
+        }
     }
 
     /// Appends a field.
     pub fn push(&mut self, field: T) -> &mut Self {
         self.fields.push(field);
+        self.names.push(Default::default());
         self
+    }
+
+    /// Overrides the name of the last field, if any.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        if let Some(last) = self.names.last_mut() {
+            *last = name;
+        }
+        self
+    }
+
+    fn names(&self) -> &'a [ValueIdentifier] {
+        if let Some(first) = self.names.first() {
+            if *first != Default::default() {
+                return self.names.clone().into_slice();
+            }
+        }
+
+        &[]
     }
 }
 
@@ -1137,7 +1172,26 @@ impl<'a, T: 'a + Clone> TupleBuilder<'a, T> {
     pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
         Tuple {
             fields: self.fields.clone().into_slice(),
+            names: self.names(),
         }.into()
+    }
+}
+
+impl<'a, T: 'a + Span> Span for TupleBuilder<'a, T> {
+    /// Computes the range spanned by the tuple.
+    fn span(&self) -> com::Range {
+        let off =
+            self.names()
+                .first().map(|v| v.span().offset() - 1)
+                .or_else(|| self.fields.first().map(|f| f.span().offset() - 1))
+                .unwrap_or(0);
+
+        let end =
+            self.fields
+                .last().map(|f| f.span().end_offset() + 1)
+                .unwrap_or(0);
+
+        com::Range::new(off, end - off)
     }
 }
 

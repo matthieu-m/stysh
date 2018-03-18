@@ -356,6 +356,12 @@ impl<'a, 'target> CloneInto<'target> for Value<'a> {
     }
 }
 
+impl<'target> CloneInto<'target> for ValueIdentifier {
+    type Output = ValueIdentifier;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
+}
+
 //
 //  Span Implementations
 //

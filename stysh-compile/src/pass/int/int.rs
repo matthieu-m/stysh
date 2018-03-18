@@ -202,7 +202,7 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         let index = index as usize;
 
         match self.get_value(value).expr {
-            Constructor(c) => self.arena.intern(&c.arguments[index]),
+            Constructor(c) => self.arena.intern(&c.arguments.fields[index]),
             Tuple(tup) => self.arena.intern(&tup.fields[index]),
             _ => unreachable!(),
         }
@@ -300,7 +300,10 @@ impl<'a, 'g, 'local> BlockInterpreter<'a, 'g, 'local>
         hir::Value {
             type_: type_,
             range: range,
-            expr: hir::Expr::Tuple(hir::Tuple{ fields: elements.into_slice() }),
+            expr: hir::Expr::Tuple(hir::Tuple{
+                fields: elements.into_slice(),
+                names: &[],
+            }),
             gvn: Default::default(),
         }
     }
@@ -519,7 +522,9 @@ mod tests {
 
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
         let inner_type = [int, int];
-        let type_ = hir::Type::Tuple(hir::Tuple { fields: &inner_type });
+        let type_ = hir::Type::Tuple(
+            hir::Tuple { fields: &inner_type, names: &[] }
+        );
 
         assert_eq!(
             eval(
@@ -544,6 +549,7 @@ mod tests {
                 range: range(0, 0),
                 expr: hir::Expr::Tuple(hir::Tuple {
                     fields: &[sem_int(1), sem_int(2)],
+                    names: &[],
                 }),
                 gvn: Default::default(),
             }

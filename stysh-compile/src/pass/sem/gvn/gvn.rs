@@ -6,7 +6,7 @@
 //!         assigned to each and every value. The IDs should not be expected
 //!         to appear in any order (depth-first, breadth-first, ...).
 
-use basic::mem;
+use basic::mem::{self, CloneInto};
 
 use model::hir::*;
 
@@ -99,7 +99,7 @@ impl<'g, 'local> Impl<'g, 'local> {
     {
         Constructor {
             type_: constructor.type_,
-            arguments: self.patterns(constructor.arguments),
+            arguments: self.tuple_pattern(&constructor.arguments),
             range: constructor.range,
         }
     }
@@ -109,7 +109,7 @@ impl<'g, 'local> Impl<'g, 'local> {
     {
         Constructor {
             type_: constructor.type_,
-            arguments: self.values(constructor.arguments),
+            arguments: self.tuple_value(&constructor.arguments),
             range: constructor.range,
         }
     }
@@ -215,12 +215,18 @@ impl<'g, 'local> Impl<'g, 'local> {
     fn tuple_pattern(&mut self, tuple: &Tuple<Pattern>)
         -> Tuple<'g, Pattern<'g>>
     {
-        Tuple { fields: self.patterns(tuple.fields) }
+        Tuple {
+            fields: self.patterns(tuple.fields),
+            names: CloneInto::clone_into(tuple.names, self.arena),
+        }
     }
 
     fn tuple_value(&mut self, tuple: &Tuple<Value>) -> Tuple<'g, Value<'g>>
     {
-        Tuple { fields: self.values(tuple.fields) }
+        Tuple {
+            fields: self.values(tuple.fields),
+            names: CloneInto::clone_into(tuple.names, self.arena),
+        }
     }
 
     fn value(&mut self, value: &Value) -> Value<'g> {

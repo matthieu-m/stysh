@@ -126,21 +126,18 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 
     /// Adds a new pattern to the scope.
     pub fn add_pattern(&mut self, pat: Pattern<'g>, type_: Type<'g>) {
-        match pat {
-            Pattern::Constructor(c) => {
-                for (index, pat) in c.arguments.iter().enumerate() {
-                    let type_ = self.type_of_field(type_, index);
-                    self.add_pattern(*pat, type_)
-                }
+        let tuple = match pat {
+            Pattern::Ignored(_) => return,
+            Pattern::Var(id, _) => {
+                self.add_value(id, type_);
+                return;
             },
-            Pattern::Ignored(_) => (),
-            Pattern::Tuple(tuple, _) => {
-                for (index, pat) in tuple.fields.iter().enumerate() {
-                    let type_ = self.type_of_field(type_, index);
-                    self.add_pattern(*pat, type_)
-                }
-            },
-            Pattern::Var(id, _) => self.add_value(id, type_),
+            Pattern::Constructor(c) => c.arguments,
+            Pattern::Tuple(tuple, _) => tuple,
+        };
+        for (index, pat) in tuple.fields.iter().enumerate() {
+            let type_ = self.type_of_field(type_, index);
+            self.add_pattern(*pat, type_)
         }
     }
 

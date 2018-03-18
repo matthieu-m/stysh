@@ -23,7 +23,7 @@ pub struct Constructor<'a, T: 'a> {
     /// The type.
     pub type_: RecordProto,
     /// The arguments.
-    pub arguments: &'a [T],
+    pub arguments: Tuple<'a, T>,
     /// The range.
     pub range: com::Range,
 }
@@ -33,6 +33,8 @@ pub struct Constructor<'a, T: 'a> {
 pub struct Tuple<'a, T: 'a> {
     /// The tuple fields.
     pub fields: &'a [T],
+    /// The name of the fields, empty if unnamed, otherwise of equal length.
+    pub names: &'a [ValueIdentifier],
 }
 
 //
@@ -53,7 +55,7 @@ impl<'a> Binding<'a> {
 
 impl<T: 'static> Tuple<'static, T> {
     /// Returns a unit tuple.
-    pub fn unit() -> Self { Tuple { fields: &[] } }
+    pub fn unit() -> Self { Tuple { fields: &[], names: &[] } }
 }
 
 //
@@ -83,7 +85,7 @@ impl<'a, 'target, T> CloneInto<'target> for Constructor<'a, T>
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         Constructor {
             type_: self.type_,
-            arguments: CloneInto::clone_into(self.arguments, arena),
+            arguments: CloneInto::clone_into(&self.arguments, arena),
             range: self.range,
         }
     }
@@ -95,7 +97,10 @@ impl<'a, 'target, T> CloneInto<'target> for Tuple<'a, T>
     type Output = Tuple<'target, <T as CloneInto<'target>>::Output>;
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Tuple { fields: CloneInto::clone_into(self.fields, arena) }
+        Tuple {
+            fields: CloneInto::clone_into(self.fields, arena),
+            names: CloneInto::clone_into(self.names, arena),
+        }
     }
 }
 

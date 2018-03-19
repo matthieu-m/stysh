@@ -153,14 +153,7 @@ const ASCII: &'static [u8] =
       @ABCDEFGHIJKLMNOPQRSTUVWXYZ[.]^_\
       `abcdefghijklmnopqrstuvwxyz{|}~.";
 
-const BUILTIN: [&'static [u8]; 5] =
-    [BUILTIN_BOOL, BUILTIN_TRUE, BUILTIN_FALSE, BUILTIN_INT, BUILTIN_STRING];
-
-const BUILTIN_BOOL: &'static [u8] = b"Bool";
-const BUILTIN_TRUE: &'static [u8] = b"True";
-const BUILTIN_FALSE: &'static [u8] = b"False";
-const BUILTIN_INT: &'static [u8] = b"Int";
-const BUILTIN_STRING: &'static [u8] = b"String";
+const BUILTIN: [&[u8]; 5] = [b"Bool", b"True", b"False", b"Int", b"String"];
 
 impl InternId {
     fn from_magic(magic: usize) -> Self {

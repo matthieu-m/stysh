@@ -1373,6 +1373,59 @@ mod tests {
     }
 
     #[test]
+    fn value_var_pattern_keyed_constructor() {
+        let global_arena = mem::Arena::new();
+        let mut env = Env::new(
+            b":rec Some(.x: Int); { :var Some(.x: a) := Some(.x: 1); a }",
+            &global_arena
+        );
+
+        let ast = {
+            let f = AstFactory::new(&global_arena);
+            let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+
+            e.block(e.var(55, 1))
+                .push_stmt(s.var(
+                    p.constructor(t.simple(27, 4))
+                        .push(p.var(36, 1)).name(32, 2)
+                        .build(),
+                    e.constructor(t.simple(42, 4))
+                        .push(e.int(1, 51)).name(47, 2)
+                        .build(),
+                ).build())
+                .build()
+        };
+
+        let hir = {
+            let f = HirFactory::new(&global_arena);
+            let (i, p, s, t, v) =
+                (f.item(), f.pat(), f.stmt(), f.type_(), f.value());
+
+            let a = env.var_id(36, 1);
+
+            let rec =
+                i.rec(f.proto().rec(env.type_id(5, 4), 0).build())
+                    .push(t.int()).name(env.field_id(10, 2))
+                    .build();
+
+            env.insert_record(rec, &[27, 42]);
+
+            v.block(v.int_ref(a, 55))
+                .push(s.var(
+                    p.constructor(*rec.prototype, 27, 11)
+                        .push(p.var(a)).name(env.field_id(32, 2))
+                        .build(),
+                    v.constructor(*rec.prototype, 42, 11)
+                        .push(v.int(1, 51)).name(env.field_id(47, 2))
+                        .build(),
+                ))
+                .build()
+        };
+
+        assert_eq!(env.value_of_resolved(&ast::Expression::Block(&ast)), hir);
+    }
+
+    #[test]
     fn value_var_pattern_tuple() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
@@ -1523,8 +1576,6 @@ mod tests {
         {
             let record = self.hir_resolver.resolve_record(record);
             self.insert_record_prototype(*record.prototype, positions);
-            println!("Registered record: {:?}", record.prototype.name);
-
             self.registry.records.insert(record.prototype.name, record);
         }
 
@@ -1536,7 +1587,10 @@ mod tests {
         {
             let proto = self.hir_resolver.resolve_record_prototype(proto);
             let len = proto.name.span().length();
-            println!("Registered record prototype: {:?}", proto.name);
+            println!(
+                "Registered record prototype: {:?} (of {:?})",
+                proto.name, proto.enum_
+            );
 
             for p in positions {
                 let id = hir::ItemIdentifier(proto.name.id(), range(*p, len));
@@ -1548,6 +1602,16 @@ mod tests {
             let field = range(pos + 1, len - 1);
             let range = range(pos, len);
             hir::ValueIdentifier(self.hir_resolver.from_range(field), range)
+        }
+
+        fn var_id(&self, pos: usize, len: usize) -> hir::ValueIdentifier {
+            let range = range(pos, len);
+            hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
+        }
+
+        fn type_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
+            let range = range(pos, len);
+            hir::ItemIdentifier(self.hir_resolver.from_range(range), range)
         }
 
         fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)

@@ -116,8 +116,12 @@ impl<'g> Resolver<'g> {
 
     /// Obtains the InternId of the specified range.
     pub fn from_range(&self, range: com::Range) -> mem::InternId {
-        let raw = &self.source[range];
-        self.interner.insert(raw)
+        if range == Default::default() {
+            Default::default()
+        } else {
+            let raw = &self.source[range];
+            self.interner.insert(raw)
+        }
     }
 }
 

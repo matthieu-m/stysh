@@ -68,12 +68,8 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
         let mut arguments =
             IdMap::with_capacity(fun.arguments.len(), local_arena);
 
-        for &arg in fun.arguments {
-            if let Binding::Argument(value, _, _, _) = arg {
-                arguments.insert(value.id(), value);
-                continue;
-            }
-            panic!("All bindings in a function argument must be arguments!");
+        for a in fun.arguments {
+            arguments.insert(a.name.id(), a.name);
         }
 
         FunctionScope { parent, arguments }

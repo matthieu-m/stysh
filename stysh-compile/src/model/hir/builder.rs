@@ -80,7 +80,7 @@ pub struct RecordBuilder<'a> {
 pub struct FunctionProtoBuilder<'a> {
     name: ItemIdentifier,
     range: com::Range,
-    arguments: mem::Array<'a, Binding<'a>>,
+    arguments: mem::Array<'a, Argument<'a>>,
     result: Type<'a>,
     with_gvn: bool,
 }
@@ -424,15 +424,14 @@ impl<'a> FunctionProtoBuilder<'a> {
         let gvn = Default::default();
         let len = name.span().length() + 2 + type_.span().length();
         let range = range(name.span().offset(), len);
-        self.arguments.push(Binding::Argument(name, gvn, type_, range));
+        self.arguments.push(Argument { name, type_, range, gvn });
         self
     }
 
     /// Sets the range of the last argument.
     pub fn arg_range(&mut self, pos: usize, len: usize) -> &mut Self {
-        if let Some(&mut Binding::Argument(_, _, _, ref mut r))
-            = self.arguments.last_mut() {
-            *r = range(pos, len);
+        if let Some(a) = self.arguments.last_mut() {
+            a.range = range(pos, len);
         }
         self
     }
@@ -448,12 +447,10 @@ impl<'a> FunctionProtoBuilder<'a> {
         let arguments = self.arguments.clone().into_slice();
 
         for (i, a) in arguments.iter_mut().enumerate() {
-            if let &mut Binding::Argument(_, ref mut g, _, ref mut r) = a {
-                *g = Gvn(if self.with_gvn { i as u32 + 1 } else { 0 });
+            a.gvn = Gvn(if self.with_gvn { i as u32 + 1 } else { 0 });
 
-                if i + 1 == self.arguments.len() { continue; }
-                *r = range(r.offset(), r.length() + 1);
-            }
+            if i + 1 == self.arguments.len() { continue; }
+            a.range = range(a.range.offset(), a.range.length() + 1);
         }
 
         FunctionProto {
@@ -499,11 +496,12 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Creates a binding Stmt.
-    pub fn var(&self, pattern: Pattern<'a>, value: Value<'a>) -> Stmt<'a> {
-        let off = pattern.span().offset() - 5;
-        let end = value.range.end_offset() + 1;
+    pub fn var(&self, left: Pattern<'a>, right: Value<'a>) -> Stmt<'a> {
+        let off = left.span().offset() - 5;
+        let end = right.range.end_offset() + 1;
+        let range = range(off, end - off);
 
-        Stmt::Var(Binding::Variable(pattern, value, range(off, end - off)))
+        Stmt::Var(Binding { left, right, range })
     }
 
     /// Shortcut: Creates a simple binding Stmt.

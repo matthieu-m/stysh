@@ -159,10 +159,12 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         where
             'g: 'b
     {
-        let value = self.rescope(scope).value_of_expr(&var.expr);
-        let pattern = self.rescope(self.scope).pattern_of(&var.pattern);
-        scope.add_pattern(pattern);
-        hir::Stmt::Var(hir::Binding::Variable(pattern, value, var.span()))
+        let left = self.rescope(self.scope).pattern_of(&var.pattern);
+        let right = self.rescope(scope).value_of_expr(&var.expr);
+        let range = var.span();
+        scope.add_pattern(left);
+
+        hir::Stmt::Var(hir::Binding { left, right, range })
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)

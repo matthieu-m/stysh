@@ -67,12 +67,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             self.local_arena
         );
 
-        for &a in fun.prototype.arguments {
-            if let hir::Binding::Argument(_, gvn, type_, _) = a {
-                arguments.push((gvn.into(), type_));
-                continue;
-            }
-            panic!("All arguments should be of type Binding::Argument");
+        for a in fun.prototype.arguments {
+            arguments.push((a.gvn.into(), a.type_));
         }
 
         let mut first = ProtoBlock::new(
@@ -204,6 +200,19 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         } else {
             Some(current)
         }
+    }
+
+    fn convert_binding(
+        &mut self,
+        mut current: ProtoBlock<'g, 'local>,
+        b: hir::Binding<'g>,
+    )
+        -> ProtoBlock<'g, 'local>
+    {
+        current = self.convert_value(current, &b.right).expect("!Void");
+        let id = current.last_value();
+
+        self.convert_pattern(current, id, b.left, b.right.type_)
     }
 
     fn convert_block(
@@ -730,14 +739,9 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 hir::Stmt::Set(re) => {
                     current = self.convert_rebind(current, re);
                 },
-                hir::Stmt::Var(hir::Binding::Variable(pat, value, _)) => {
-                    current =
-                        self.convert_value(current, &value).expect("!Void");
-                    let id = current.last_value();
-                    current =
-                        self.convert_pattern(current, id, pat, value.type_);
+                hir::Stmt::Var(b) => {
+                    current = self.convert_binding(current, b);
                 },
-                hir::Stmt::Var(hir::Binding::Argument(..)) => unimplemented!(),
             }
         }
 

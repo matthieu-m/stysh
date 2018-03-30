@@ -29,6 +29,19 @@ pub enum Item<'a> {
     Rec(Record<'a>),
 }
 
+/// A function argument.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Argument<'a> {
+    /// The name.
+    pub name: ValueIdentifier,
+    /// The type.
+    pub type_: Type<'a>,
+    /// The range.
+    pub range: com::Range,
+    /// The GVN.
+    pub gvn: Gvn,
+}
+
 /// A built-in Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BuiltinType {
@@ -77,7 +90,7 @@ pub struct FunctionProto<'a> {
     /// The function prototype range.
     pub range: com::Range,
     /// The function arguments (always arguments).
-    pub arguments: &'a [Binding<'a>],
+    pub arguments: &'a [Argument<'a>],
     /// The return type of the function.
     pub result: Type<'a>,
 }
@@ -143,6 +156,14 @@ pub struct ItemIdentifier(pub mem::InternId, pub com::Range);
 //  Public interface
 //
 
+impl<'a> Argument<'a> {
+    /// Sets the gvn of the binding.
+    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Argument<'a> {
+        self.gvn = gvn.into();
+        self
+    }
+}
+
 impl ItemIdentifier {
     /// Returns the InternId.
     pub fn id(&self) -> mem::InternId { self.0 }
@@ -202,6 +223,19 @@ impl<'a> Type<'a> {
 //
 //  CloneInto implementations
 //
+
+impl<'a, 'target> CloneInto<'target> for Argument<'a> {
+    type Output = Argument<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Argument {
+            name: self.name,
+            type_: arena.intern(&self.type_),
+            range: self.range,
+            gvn: self.gvn,
+        }
+    }
+}
 
 impl<'target> CloneInto<'target> for EnumProto {
     type Output = EnumProto;
@@ -314,6 +348,11 @@ impl<'target> CloneInto<'target> for ItemIdentifier {
 //
 //  Span Implementations
 //
+
+impl<'a> Span for Argument<'a> {
+    /// Range spanned by the binding.
+    fn span(&self) -> com::Range { self.range }
+}
 
 impl Span for ItemIdentifier {
     /// Returns the range spanned by the ItemIdentifier.

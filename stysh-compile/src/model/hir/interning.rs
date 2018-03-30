@@ -70,7 +70,7 @@ impl<'g> Resolver<'g> {
         FunctionProto {
             name: self.resolve_item_id(f.name),
             range: f.range,
-            arguments: self.resolve_array(f.arguments, |b| self.resolve_binding(b)),
+            arguments: self.resolve_array(f.arguments, |a| self.resolve_argument(a)),
             result: self.resolve_type(f.result),
         }
     }
@@ -285,22 +285,20 @@ impl<'g> Scrubber<'g> {
 //
 
 impl<'g> Resolver<'g> {
-    fn resolve_binding(&self, b: Binding) -> Binding<'g> {
-        use self::Binding::*;
+    fn resolve_argument(&self, a: Argument) -> Argument<'g> {
+        let name = self.resolve_value_id(a.name);
+        let type_ = self.resolve_type(a.type_);
+        let (range, gvn) = (a.range, a.gvn);
 
-        match b {
-            Argument(v, g, t, r) => Argument(
-                self.resolve_value_id(v),
-                g,
-                self.resolve_type(t),
-                r,
-            ),
-            Variable(p, v, r) => Variable(
-                self.resolve_pattern(p),
-                self.resolve_value(v),
-                r
-            ),
-        }
+        Argument { name, type_, range, gvn }
+    }
+
+    fn resolve_binding(&self, b: Binding) -> Binding<'g> {
+        let left = self.resolve_pattern(b.left);
+        let right = self.resolve_value(b.right);
+        let range = b.range;
+
+        Binding { left, right, range }
     }
 
     fn resolve_block(&self, stmts: &[Stmt], v: Option<&Value>) -> Expr<'g> {
@@ -477,22 +475,20 @@ impl<'g> Resolver<'g> {
 //
 
 impl<'g> Scrubber<'g> {
-    fn scrub_binding(&self, b: Binding) -> Binding<'g> {
-        use self::Binding::*;
+    fn scrub_argument(&self, a: Argument) -> Argument<'g> {
+        let name = self.scrub_value_id(a.name);
+        let type_ = self.scrub_type(a.type_);
+        let (range, gvn) = (a.range, a.gvn);
 
-        match b {
-            Argument(id, g, t, r) => Argument(
-                self.scrub_value_id(id),
-                g,
-                self.scrub_type(t),
-                r,
-            ),
-            Variable(p, v, r) => Variable(
-                self.scrub_pattern(p),
-                self.scrub_value(v),
-                r
-            ),
-        }
+        Argument { name, type_, range, gvn }
+    }
+
+    fn scrub_binding(&self, b: Binding) -> Binding<'g> {
+        let left = self.scrub_pattern(b.left);
+        let right = self.scrub_value(b.right);
+        let range = b.range;
+
+        Binding { left, right, range }
     }
 
     fn scrub_block(&self, stmts: &[Stmt], v: Option<&Value>) -> Expr<'g> {
@@ -573,7 +569,7 @@ impl<'g> Scrubber<'g> {
         FunctionProto {
             name: self.scrub_item_id(f.name),
             range: f.range,
-            arguments: self.scrub_array(f.arguments, |b| self.scrub_binding(b)),
+            arguments: self.scrub_array(f.arguments, |a| self.scrub_argument(a)),
             result: self.scrub_type(f.result),
         }
     }

@@ -43,14 +43,11 @@ impl<'a, 'g> StatementFetcher<'a, 'g>
     where 'g: 'a
 {
     fn fetch_binding(&self, b: Binding<'g>) -> Resolution<Binding<'g>> {
-        if let Binding::Variable(p, v, r) = b {
-            let p = self.fetch_pattern(p);
-            let v = self.fetch_value(v);
+        let left = self.fetch_pattern(b.left);
+        let right = self.fetch_value(b.right);
+        let range = b.range;
 
-            return p.combine2(b, v, |p, v| Binding::Variable(p, v, r));
-        }
-
-        unreachable!("TODO: crack up Binding, it's unwieldy.");
+        left.combine2(b, right, |left, right| Binding { left, right, range })
     }
 
     fn fetch_rebinding(&self, r: ReBinding<'g>) -> Resolution<ReBinding<'g>> {

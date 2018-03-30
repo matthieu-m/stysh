@@ -107,12 +107,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
 
         for a in fun.arguments {
-            arguments.push(hir::Binding::Argument(
-                hir::ValueIdentifier(a.name.id(), a.name.span()),
-                Default::default(),
-                self.mapper(self.scope).type_of(&a.type_),
-                a.span()
-            ));
+            arguments.push(hir::Argument {
+                name: hir::ValueIdentifier(a.name.id(), a.name.span()),
+                type_: self.mapper(self.scope).type_of(&a.type_),
+                range: a.span(),
+                gvn: Default::default(),
+            });
         }
 
         hir::Prototype::Fun(
@@ -168,10 +168,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     fn fun_item(&mut self, fun: ast::Function, p: &'g hir::FunctionProto<'g>)
         -> hir::Item<'g>
     {
-        for b in p.arguments {
-            if let hir::Binding::Argument(name, _, ty, _) = *b {
-                self.context.insert_binding(name, ty);
-            }
+        for a in p.arguments {
+            self.context.insert_binding(a.name, a.type_);
         }
 
         let scope = self.function_scope(self.scope, p);

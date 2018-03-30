@@ -67,19 +67,20 @@ impl<'g, 'local> Impl<'g, 'local> {
     //
     //  Pattern Matching
     //
-    fn binding(&mut self, binding: &Binding) -> Binding<'g> {
-        use self::Binding::*;
+    fn argument(&mut self, argument: &Argument) -> Argument<'g> {
+        let (name, range) = (argument.name, argument.range);
+        let type_ = self.intern(&argument.type_);
+        let gvn = self.register_identifier(name);
 
-        match *binding {
-            Argument(id, _, t, r) => {
-                let gvn = self.register_identifier(id);
-                Argument(id, gvn, self.intern(&t), r)
-            },
-            Variable(p, v, r) => {
-                let value = self.value(&v);
-                Variable(self.pattern(&p), value, r)
-            },
-        }
+        Argument { name, type_, range, gvn }
+    }
+
+    fn binding(&mut self, binding: &Binding) -> Binding<'g> {
+        let right = self.value(&binding.right);
+        let left = self.pattern(&binding.left);
+        let range = binding.range;
+
+        Binding { left, right, range }
     }
 
     fn callable(&mut self, callable: &Callable) -> Callable<'g> {
@@ -141,7 +142,7 @@ impl<'g, 'local> Impl<'g, 'local> {
         let mut array = self.array(proto.arguments.len());
 
         for a in proto.arguments {
-            array.push(self.binding(a));
+            array.push(self.argument(a));
         }
 
         self.intern_ref(&FunctionProto {

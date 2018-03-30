@@ -153,11 +153,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
     {
         let args = if f.arguments.len() == args.len() {
             self.core.unify_slice(args, |i, v| {
-                if let Binding::Argument(_, _, ty, _) = f.arguments[i] {
-                    self.unify_value(v, ty)
-                } else {
-                    unimplemented!("TODO: crack up Binding")
-                }
+                self.unify_value(v, f.arguments[i].type_)
             })
         } else {
             unimplemented!(

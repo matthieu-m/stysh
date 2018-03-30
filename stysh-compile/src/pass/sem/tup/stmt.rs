@@ -43,16 +43,11 @@ impl<'a, 'g> StatementUnifier<'a, 'g>
     where 'g: 'a
 {
     fn unify_binding(&self, b: Binding<'g>) -> Resolution<Binding<'g>> {
-        use self::Binding::*;
+        let right = self.unify_value(b.right, Type::unresolved());
+        let left = self.unify_pattern(b.left, right.entity.type_);
+        let range = b.range;
 
-        if let Variable(p, v, r) = b {
-            let v = self.unify_value(v, Type::unresolved());
-            let p = self.unify_pattern(p, v.entity.type_);
-
-            return p.combine2(b, v, |p, v| Variable(p, v, r));
-        }
-
-        unreachable!("TODO: explode Binding.");
+        left.combine2(b, right, |left, right| Binding { left, right, range })
     }
 
     fn unify_rebinding(&self, r: ReBinding<'g>) -> Resolution<ReBinding<'g>> {

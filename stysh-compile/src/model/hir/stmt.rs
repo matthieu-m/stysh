@@ -20,6 +20,17 @@ pub enum Stmt<'a> {
     Var(Binding<'a>),
 }
 
+/// A binding.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Binding<'a> {
+    /// The left-hand side pattern.
+    pub left: Pattern<'a>,
+    /// The right-hand side value.
+    pub right: Value<'a>,
+    /// The range of the statement.
+    pub range: com::Range,
+}
+
 /// A re-binding.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ReBinding<'a> {
@@ -75,6 +86,18 @@ impl<'a, 'target> CloneInto<'target> for Stmt<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Binding<'a> {
+    type Output = Binding<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Binding {
+            left: arena.intern(&self.left),
+            right: arena.intern(&self.right),
+            range: self.range,
+        }
+    }
+}
+
 impl<'a, 'target> CloneInto<'target> for ReBinding<'a> {
     type Output = ReBinding<'target>;
 
@@ -101,6 +124,11 @@ impl<'a, 'target> CloneInto<'target> for Return<'a> {
 //
 //  Span Implementations
 //
+
+impl<'a> Span for Binding<'a> {
+    /// Range spanned by the re-binding.
+    fn span(&self) -> com::Range { self.range }
+}
 
 impl<'a> Span for ReBinding<'a> {
     /// Range spanned by the re-binding.
@@ -129,10 +157,10 @@ impl<'a> Span for Stmt<'a> {
 //  From Implementations
 //
 
-impl<'a> convert::From<ReBinding<'a>> for Stmt<'a> {
-    fn from(r: ReBinding<'a>) -> Self { Stmt::Set(r) }
-}
-
 impl<'a> convert::From<Binding<'a>> for Stmt<'a> {
     fn from(b: Binding<'a>) -> Self { Stmt::Var(b) }
+}
+
+impl<'a> convert::From<ReBinding<'a>> for Stmt<'a> {
+    fn from(r: ReBinding<'a>) -> Self { Stmt::Set(r) }
 }

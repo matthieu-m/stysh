@@ -98,7 +98,7 @@ impl<'g, 'local> Impl<'g, 'local> {
         -> Constructor<'g, Pattern<'g>>
     {
         Constructor {
-            type_: constructor.type_,
+            type_: self.intern(&constructor.type_),
             arguments: self.tuple_pattern(&constructor.arguments),
             range: constructor.range,
         }
@@ -108,7 +108,7 @@ impl<'g, 'local> Impl<'g, 'local> {
         -> Constructor<'g, Value<'g>>
     {
         Constructor {
-            type_: constructor.type_,
+            type_: self.intern(&constructor.type_),
             arguments: self.tuple_value(&constructor.arguments),
             range: constructor.range,
         }

@@ -3,7 +3,7 @@
 use stysh_compile::basic::mem;
 use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
-use stysh_compile::pass::sem::scp;
+use stysh_compile::pass::sem::{self, scp};
 
 pub fn interpret<'g>(
     raw: &'g [u8],
@@ -14,8 +14,7 @@ pub fn interpret<'g>(
 {
     let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new();
-    let fake = hir::mocks::MockRegistry::new(arena);
-    let mut scope = scp::BlockScope::new(&builtin, &fake, arena, &scope_arena);
+    let mut scope = scp::BlockScope::new(&builtin, arena, &scope_arena);
     let mut def_registry = hir::mocks::MockRegistry::new(arena);
     let mut cfg_registry = int::SimpleRegistry::new(arena);
 
@@ -138,9 +137,10 @@ fn create_prototype<'a, 'g>(
 )
     -> hir::Prototype<'g>
 {
-    use stysh_compile::pass::sem::GraphBuilder;
+    use self::sem::{Context, GraphBuilder};
 
-    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
+    let context = Context::default();
+    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
         .prototype(item);
     local_arena.recycle();
 
@@ -157,9 +157,10 @@ fn create_item<'a, 'g>(
 )
     -> hir::Item<'g>
 {
-    use stysh_compile::pass::sem::GraphBuilder;
+    use self::sem::{Context, GraphBuilder};
 
-    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
+    let context = Context::default();
+    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
         .item(proto, item);
     local_arena.recycle();
 
@@ -175,9 +176,10 @@ fn create_value<'a, 'g>(
 )
     -> hir::Value<'g>
 {
-    use stysh_compile::pass::sem::GraphBuilder;
+    use self::sem::{Context, GraphBuilder};
 
-    let result = GraphBuilder::new(scope, registry, global_arena, local_arena)
+    let context = Context::default();
+    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
         .expression(expr);
     local_arena.recycle();
 

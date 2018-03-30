@@ -565,7 +565,7 @@ mod tests {
             name: hir::ItemIdentifier(Default::default(), range(5, 4)),
             range: range(0, 20),
             enum_: hir::ItemIdentifier::unresolved(),
-        });
+        }, Default::default());
 
         assert_eq!(
             eval(

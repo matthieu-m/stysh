@@ -7,7 +7,8 @@ use basic::com::Span;
 
 use model::{ast, hir};
 
-use super::nmr::{self, scp};
+use super::{nef, tup, Context};
+use super::sym::{self, scp};
 
 /// The Stysh ASG builder.
 ///
@@ -17,6 +18,7 @@ pub struct GraphBuilder<'a, 'g, 'local>
 {
     scope: &'a scp::Scope<'g>,
     registry: &'a hir::Registry<'g>,
+    context: &'a Context<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -31,16 +33,18 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn new(
         scope: &'a scp::Scope<'g>,
         registry: &'a hir::Registry<'g>,
-        global: &'g mem::Arena,
-        local: &'local mem::Arena
+        context: &'a Context<'g>,
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena
     )
         -> GraphBuilder<'a, 'g, 'local>
     {
         GraphBuilder {
-            scope: scope,
-            registry: registry,
-            global_arena: global,
-            local_arena: local
+            scope,
+            registry,
+            context,
+            global_arena,
+            local_arena,
         }
     }
 
@@ -55,7 +59,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
     /// Translates a stand-alone expression.
     pub fn expression(&mut self, e: &ast::Expression) -> hir::Value<'g> {
-        self.resolver(self.scope).value_of(e)
+        self.mapper(self.scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
@@ -106,7 +110,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             arguments.push(hir::Binding::Argument(
                 hir::ValueIdentifier(a.name.id(), a.name.span()),
                 Default::default(),
-                self.resolver(self.scope).type_of(&a.type_),
+                self.mapper(self.scope).type_of(&a.type_),
                 a.span()
             ));
         }
@@ -119,7 +123,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                     fun.result.span().end_offset() - (fun.keyword as usize)
                 ),
                 arguments: arguments.into_slice(),
-                result: self.resolver(self.scope).type_of(&fun.result),
+                result: self.mapper(self.scope).type_of(&fun.result),
             }
         )
     }
@@ -164,14 +168,32 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     fn fun_item(&mut self, fun: ast::Function, p: &'g hir::FunctionProto<'g>)
         -> hir::Item<'g>
     {
-        let scope = self.function_scope(self.scope, p);
+        for b in p.arguments {
+            if let hir::Binding::Argument(name, _, ty, _) = *b {
+                self.context.insert_binding(name, ty);
+            }
+        }
 
-        hir::Item::Fun(hir::Function {
-            prototype: p,
-            body:
-                self.resolver(&scope)
-                    .value_of(&ast::Expression::Block(&fun.body))
-        })
+        let scope = self.function_scope(self.scope, p);
+        let mut body =
+            self.mapper(&scope)
+                .value_of(&ast::Expression::Block(&fun.body));
+
+        for _ in 0..3 {
+            let mut altered = 0;
+
+            let res = self.nested().fetch_value(body);
+            body = res.entity;
+            altered += res.altered;
+
+            let res = self.unifier().unify_value(body, p.result);
+            body = res.entity;
+            altered += res.altered;
+
+            if altered == 0 { break; }
+        }
+
+        hir::Item::Fun(hir::Function { prototype: p, body: body })
     }
 
     fn rec_item(&mut self, r: ast::Record, p: &'g hir::RecordProto)
@@ -181,9 +203,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
         let definition = match r.inner {
             Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
-            Tuple(_, tup)
-                => self.resolver(self.scope)
-                    .tuple_of(&tup, nmr::NameResolver::type_of),
+            Tuple(_, tup) => {
+                let mapper = self.mapper(self.scope);
+                mapper.tuple_of(&tup, |t| mapper.type_of(t))
+            },
         };
 
         hir::Item::Rec(hir::Record {
@@ -199,23 +222,21 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     )
         -> scp::FunctionScope<'b, 'g>
     {
-        scp::FunctionScope::new(
-            parent,
-            p,
-            self.global_arena,
-            self.local_arena,
-        )
+        scp::FunctionScope::new(parent, p, self.local_arena)
     }
 
-    fn resolver<'b>(&'b self, scope: &'b scp::Scope<'g>)
-        -> nmr::NameResolver<'b, 'g, 'local>
+    fn mapper<'b>(&'b self, scope: &'b scp::Scope<'g>)
+        -> sym::SymbolMapper<'b, 'g, 'local>
     {
-        nmr::NameResolver::new(
-            scope,
-            self.registry,
-            self.global_arena,
-            self.local_arena
-        )
+        sym::SymbolMapper::new(scope, self.context, self.global_arena, self.local_arena)
+    }
+
+    fn nested(&self) -> nef::NestedEntityFetcher<'a, 'g> {
+        nef::NestedEntityFetcher::new(self.registry, self.context, self.global_arena)
+    }
+
+    fn unifier(&self) -> tup::TypeUnifier<'a, 'g> {
+        tup::TypeUnifier::new(self.registry, self.context, self.global_arena)
     }
 }
 
@@ -232,6 +253,7 @@ mod tests {
     use model::hir::*;
     use model::hir::interning::Scrubber;
     use model::hir::mocks::MockRegistry;
+    use super::Context;
     use super::scp::mocks::MockScope;
 
     #[test]
@@ -399,7 +421,8 @@ mod tests {
             v.call()
                 .push(v.arg_ref(t.int(), v.id(9, 1), 34))
                 .push(v.arg_ref(t.int(), v.id(17, 1), 38))
-                .build();
+                .build()
+                .with_type(t.int());
 
         assert_eq!(
             env.item_of(
@@ -462,6 +485,7 @@ mod tests {
     struct Env<'g> {
         scope: MockScope<'g>,
         registry: MockRegistry<'g>,
+        context: Context<'g>,
         resolver: ast::interning::Resolver<'g>,
         scrubber: Scrubber<'g>,
         arena: &'g mem::Arena,
@@ -473,6 +497,7 @@ mod tests {
             Env {
                 scope: MockScope::new(arena),
                 registry: MockRegistry::new(arena),
+                context: Context::default(),
                 resolver: ast::interning::Resolver::new(fragment, interner, arena),
                 scrubber: Scrubber::new(arena),
                 arena: arena,
@@ -484,7 +509,8 @@ mod tests {
         {
             super::GraphBuilder::new(
                 &self.scope,
-                &self.registry, 
+                &self.registry,
+                &self.context,
                 self.arena, 
                 local
             )

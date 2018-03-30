@@ -21,7 +21,7 @@ pub enum Binding<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Constructor<'a, T: 'a> {
     /// The type.
-    pub type_: RecordProto,
+    pub type_: Type<'a>,
     /// The arguments.
     pub arguments: Tuple<'a, T>,
     /// The range.
@@ -58,6 +58,11 @@ impl<T: 'static> Tuple<'static, T> {
     pub fn unit() -> Self { Tuple { fields: &[], names: &[] } }
 }
 
+impl<'a, T: 'a> Tuple<'a, T> {
+    /// Returns the number of fields.
+    pub fn len(&self) -> usize { self.fields.len() }
+}
+
 //
 //  CloneInto implementations
 //
@@ -84,7 +89,7 @@ impl<'a, 'target, T> CloneInto<'target> for Constructor<'a, T>
 
     fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
         Constructor {
-            type_: self.type_,
+            type_: arena.intern(&self.type_),
             arguments: CloneInto::clone_into(&self.arguments, arena),
             range: self.range,
         }

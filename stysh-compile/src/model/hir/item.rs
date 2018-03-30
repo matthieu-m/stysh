@@ -10,7 +10,7 @@ use model::ast;
 use model::hir::*;
 
 /// A registry of the definitions
-pub trait Registry<'a> {
+pub trait Registry<'a>: fmt::Debug {
     /// Get the definition of the enum.
     fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'a>>;
 
@@ -82,6 +82,13 @@ pub struct FunctionProto<'a> {
     pub result: Type<'a>,
 }
 
+/// A Path.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Path<'a> {
+    /// The path components, in order; possibly empty.
+    pub components: &'a [Type<'a>],
+}
+
 /// An annotated prototype.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Prototype<'a> {
@@ -119,13 +126,13 @@ pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type.
-    Enum(EnumProto),
+    Enum(EnumProto, Path<'a>),
     /// A record type.
-    Rec(RecordProto),
+    Rec(RecordProto, Path<'a>),
     /// A tuple type.
     Tuple(Tuple<'a, Type<'a>>),
-    /// An unresolved type.
-    Unresolved(ItemIdentifier),
+    /// An unresolved type, possibly nested.
+    Unresolved(ItemIdentifier, Path<'a>),
 }
 
 /// An item identifier.
@@ -172,7 +179,23 @@ impl Type<'static> {
 
     /// Returns an unresolved type.
     pub fn unresolved() -> Self {
-        Type::Unresolved(ItemIdentifier::unresolved())
+        Type::Unresolved(ItemIdentifier::unresolved(), Default::default())
+    }
+}
+
+impl<'a> Type<'a> {
+    /// Switches the path of the type.
+    ///
+    /// Panics: If this variant has no path.
+    pub fn with_path(self, p: Path<'a>) -> Type<'a> {
+        use self::Type::*;
+
+        match self {
+            Enum(e, _) => Enum(e, p),
+            Rec(r, _) => Rec(r, p),
+            Unresolved(i, _) => Unresolved(i, p),
+            _ => panic!("{} has no path!", self),
+        }
     }
 }
 
@@ -237,6 +260,16 @@ impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
     }
 }
 
+impl<'a, 'target> CloneInto<'target> for Path<'a> {
+    type Output = Path<'target>;
+
+    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
+        Path {
+            components: CloneInto::clone_into(self.components, arena),
+        }
+    }
+}
+
 impl<'target> CloneInto<'target> for RecordProto {
     type Output = RecordProto;
 
@@ -264,12 +297,18 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
         match *self {
             Builtin(t) => Builtin(t),
-            Enum(e) => Enum(e),
-            Rec(r) => Rec(r),
+            Enum(e, p) => Enum(e, CloneInto::clone_into(&p, arena)),
+            Rec(r, p) => Rec(r, CloneInto::clone_into(&p, arena)),
             Tuple(t) => Tuple(arena.intern(&t)),
-            Unresolved(n) => Unresolved(n),
+            Unresolved(n, p) => Unresolved(n, CloneInto::clone_into(&p, arena)),
         }
     }
+}
+
+impl<'target> CloneInto<'target> for ItemIdentifier {
+    type Output = ItemIdentifier;
+
+    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
 }
 
 //
@@ -300,18 +339,20 @@ impl<'a> Span for Type<'a> {
         use self::Type::*;
         use self::BuiltinType::*;
 
-        fn len(i: ItemIdentifier) -> usize { i.span().length() }
+        fn len(i: ItemIdentifier, p: Path) -> usize {
+            p.components.iter().map(|c| c.span().length() + 2).sum::<usize>()
+                + i.span().length()
+        }
 
         let len = match *self {
             Builtin(Bool) => 4,
             Builtin(Int) => 3,
             Builtin(String) => 6,
             Builtin(Void) => 4,
-            Enum(p) => len(p.name),
-            Rec(r) => len(r.name)
-                + if len(r.enum_) > 0 { 2 + len(r.enum_) } else { 0 },
+            Enum(e, p) => len(e.name, p),
+            Rec(r, p) => len(r.name, p),
             Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
-            Unresolved(i) => len(i),
+            Unresolved(i, p) => len(i, p),
         };
 
         com::Range::new(0, len)
@@ -353,11 +394,11 @@ impl convert::From<RecordProto> for Prototype<'static> {
 }
 
 impl convert::From<EnumProto> for Type<'static> {
-    fn from(e: EnumProto) -> Self { Type::Enum(e) }
+    fn from(e: EnumProto) -> Self { Type::Enum(e, Path::default()) }
 }
 
 impl convert::From<RecordProto> for Type<'static> {
-    fn from(r: RecordProto) -> Self { Type::Rec(r) }
+    fn from(r: RecordProto) -> Self { Type::Rec(r, Path::default()) }
 }
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
@@ -367,6 +408,14 @@ impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
 //
 //  Implementation Details
 //
+
+impl Default for Path<'static> {
+    fn default() -> Self { Path { components: &[] } }
+}
+
+impl Default for Type<'static> {
+    fn default() -> Self { Type::unresolved() }
+}
 
 impl fmt::Display for BuiltinType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -380,14 +429,24 @@ impl<'a> fmt::Display for ItemIdentifier {
     }
 }
 
+impl<'a> fmt::Display for Path<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        for c in self.components {
+            write!(f, "{}::", c)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             Type::Builtin(t) => write!(f, "{}", t),
-            Type::Enum(e) => write!(f, "{}", e.name),
-            Type::Rec(r) => write!(f, "{}", r.name),
+            Type::Enum(e, p) => write!(f, "{}{}", p, e.name),
+            Type::Rec(r, p) => write!(f, "{}{}", p, r.name),
             Type::Tuple(t) => write!(f, "{}", t),
-            Type::Unresolved(i) => write!(f, "{}", i),
+            Type::Unresolved(i, p) => write!(f, "{}{}", p, i),
         }
     }
 }
@@ -395,15 +454,17 @@ impl<'a> fmt::Display for Type<'a> {
 /// Mocks for the traits.
 pub mod mocks {
     use basic::mem;
+    use basic::com::{self, Span};
+
     use super::{Enum, ItemIdentifier, Record, Registry};
 
     /// A mock for the Regitry trait.
     #[derive(Debug)]
     pub struct MockRegistry<'g> {
         /// Map of enums to be returned from lookup_enum.
-        pub enums: mem::ArrayMap<'g, ItemIdentifier, Enum<'g>>,
+        pub enums: mem::ArrayMap<'g, com::Range, Enum<'g>>,
         /// Map of records to be returned from lookup_record.
-        pub records: mem::ArrayMap<'g, ItemIdentifier, Record<'g>>,
+        pub records: mem::ArrayMap<'g, com::Range, Record<'g>>,
     }
 
     impl<'g> MockRegistry<'g> {
@@ -414,15 +475,31 @@ pub mod mocks {
                 records: mem::ArrayMap::new(arena),
             }
         }
+
+        /// Inserts an enum, indexing it by the span of its identifier.
+        ///
+        /// Note:   Also inserts all records it contains.
+        pub fn insert_enum(&mut self, e: Enum<'g>) {
+            self.enums.insert(e.prototype.name.span(), e);
+
+            for r in e.variants {
+                self.insert_record(*r);
+            }
+        }
+
+        /// Inserts a record, indexing it by the span of its identifier.
+        pub fn insert_record(&mut self, r: Record<'g>) {
+            self.records.insert(r.prototype.name.span(), r);
+        }
     }
 
     impl<'g> Registry<'g> for MockRegistry<'g> {
         fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'g>> {
-            self.enums.get(&id).cloned()
+            self.enums.get(&id.span()).cloned()
         }
 
         fn lookup_record(&self, id: ItemIdentifier) -> Option<Record<'g>> {
-            self.records.get(&id).cloned()
+            self.records.get(&id.span()).cloned()
         }
     }
 }

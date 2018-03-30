@@ -12,41 +12,41 @@ use model::hir::*;
 //
 
 /// Factory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Factory<'a> {
     arena: &'a mem::Arena,
 }
 
 /// ItemFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ItemFactory<'a> {
     arena: &'a mem::Arena,
 }
 
 /// PatternFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PatternFactory<'a> {
     arena: &'a mem::Arena,
 }
 
 /// PrototypeFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PrototypeFactory<'a> {
     arena: &'a mem::Arena,
 }
 
 /// StmtFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct StmtFactory<'a>(marker::PhantomData<&'a ()>);
 
 /// TypeFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TypeFactory<'a> {
     arena: &'a mem::Arena,
 }
 
 /// ValueFactory
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ValueFactory<'a> {
     arena: &'a mem::Arena,
 }
@@ -56,14 +56,14 @@ pub struct ValueFactory<'a> {
 //
 
 /// EnumBuilder
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EnumBuilder<'a> {
     prototype: &'a EnumProto,
     variants: mem::Array<'a, Record<'a>>,
 }
 
 /// RecordBuilder
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RecordBuilder<'a> {
     prototype: &'a RecordProto,
     definition: TupleBuilder<'a, Type<'a>>,
@@ -76,7 +76,7 @@ pub struct RecordBuilder<'a> {
 //
 //  Prototype Builders
 //
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FunctionProtoBuilder<'a> {
     name: ItemIdentifier,
     range: com::Range,
@@ -92,37 +92,55 @@ pub struct FunctionProtoBuilder<'a> {
 //
 //  Type Builders
 //
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct BuiltinTypeBuilder;
+
+#[derive(Clone, Debug)]
+pub struct TypeEnumBuilder<'a> {
+    proto: EnumProtoBuilder,
+    path: PathBuilder<'a>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeRecordBuilder<'a> {
+    proto: RecordProtoBuilder,
+    path: PathBuilder<'a>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeUnresolvedBuilder<'a> {
+    name: ItemIdentifier,
+    path: PathBuilder<'a>,
+}
 
 //
 //  Value Builders
 //
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockBuilder<'a> {
     value: Option<&'a Value<'a>>,
     statements: mem::Array<'a, Stmt<'a>>,
     range: com::Range,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct BuiltinValueBuilder;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CallBuilder<'a> {
     callable: Callable<'a>,
     unresolved: mem::Array<'a, Callable<'a>>,
     arguments: mem::Array<'a, Value<'a>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FieldAccessBuilder<'a> {
     index: u16,
     type_: Option<Type<'a>>,
     value: &'a Value<'a>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct IfBuilder<'a> {
     type_: Option<Type<'a>>,
     condition: &'a Value<'a>,
@@ -130,18 +148,18 @@ pub struct IfBuilder<'a> {
     false_: &'a Value<'a>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ImplicitBuilder<'a> {
     arena: &'a mem::Arena,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LoopBuilder<'a>{
     statements: mem::Array<'a, Stmt<'a>>,
     range: com::Range,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ValueTupleBuilder<'a> {
     type_: TupleBuilder<'a, Type<'a>>,
     expr: TupleBuilder<'a, Value<'a>>,
@@ -151,20 +169,25 @@ pub struct ValueTupleBuilder<'a> {
 //  Low-Level Builders
 //
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ConstructorBuilder<'a, T: 'a> {
-    record: RecordProto,
+    type_: Type<'a>,
     arguments: TupleBuilder<'a, T>,
     range: com::Range,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct EnumProtoBuilder {
     name: ItemIdentifier,
     range: com::Range,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
+pub struct PathBuilder<'a> {
+    components: mem::Array<'a, Type<'a>>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct RecordProtoBuilder {
     name: ItemIdentifier,
     range: com::Range,
@@ -172,7 +195,7 @@ pub struct RecordProtoBuilder {
 }
 
 /// TupleBuilder
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TupleBuilder<'a, T: 'a> {
     fields: mem::Array<'a, T>,
     names: mem::Array<'a, ValueIdentifier>,
@@ -314,10 +337,10 @@ impl<'a> PatternFactory<'a> {
     pub fn new(arena: &'a mem::Arena) -> Self { PatternFactory { arena } }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, record: RecordProto, pos: usize, len: usize)
+    pub fn constructor(&self, type_: Type<'a>, pos: usize, len: usize)
         -> ConstructorBuilder<'a, Pattern<'a>>
     {
-        ConstructorBuilder::new(self.arena, record, pos, len)
+        ConstructorBuilder::new(self.arena, type_, pos, len)
     }
 
     /// Creates an ignored Pattern.
@@ -511,18 +534,18 @@ impl<'a> TypeFactory<'a> {
     /// Shortcut: creates a Void Type.
     pub fn void(&self) -> Type<'a> { Type::Builtin(self.builtin().void()) }
 
-    /// Creates an EnumProtoBuilder.
+    /// Creates a TypeEnumBuilder.
     pub fn enum_(&self, name: ItemIdentifier, pos: usize)
-        -> EnumProtoBuilder
+        -> TypeEnumBuilder<'a>
     {
-        EnumProtoBuilder::new(name, pos)
+        TypeEnumBuilder::new(name, pos, self.arena)
     }
 
-    /// Creates a RecordProtoBuilder.
+    /// Creates a TypeRecordBuilder.
     pub fn record(&self, name: ItemIdentifier, pos: usize)
-        -> RecordProtoBuilder
+        -> TypeRecordBuilder<'a>
     {
-        RecordProtoBuilder::new(name, pos)
+        TypeRecordBuilder::new(name, pos, self.arena)
     }
 
     /// Creates a TupleBuilder.
@@ -530,9 +553,9 @@ impl<'a> TypeFactory<'a> {
         TupleBuilder::new(self.arena)
     }
 
-    /// Creates an unresolved type.
-    pub fn unresolved(&self, id: ItemIdentifier) -> Type<'a> {
-        Type::Unresolved(id)
+    /// Creates a TypeUnresolvedBuilder.
+    pub fn unresolved(&self, id: ItemIdentifier) -> TypeUnresolvedBuilder<'a> {
+        TypeUnresolvedBuilder::new(id, self.arena)
     }
 }
 
@@ -551,6 +574,90 @@ impl BuiltinTypeBuilder {
 
     /// Creates a Void BuiltinType.
     pub fn void(&self) -> BuiltinType { BuiltinType::Void }
+}
+
+impl<'a> TypeEnumBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(name: ItemIdentifier, pos: usize, arena: &'a mem::Arena) -> Self {
+        TypeEnumBuilder {
+            proto: EnumProtoBuilder::new(name, pos),
+            path: PathBuilder::new(arena),
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.proto.range(pos, len);
+        self
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        self.path.push(component);
+        self
+    }
+
+    /// Creates a Enum Type.
+    pub fn build(&self) -> Type<'a> {
+        Type::Enum(self.proto.build(), self.path.build())
+    }
+}
+
+impl<'a> TypeRecordBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(name: ItemIdentifier, pos: usize, arena: &'a mem::Arena) -> Self {
+        TypeRecordBuilder {
+            proto: RecordProtoBuilder::new(name, pos),
+            path: PathBuilder::new(arena),
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.proto.range(pos, len);
+        self
+    }
+
+    /// Sets an enum.
+    pub fn enum_(&mut self, name: ItemIdentifier) -> &mut Self {
+        self.proto.enum_(name);
+        self
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        if let Type::Enum(e, _) = component {
+            self.proto.enum_(e.name);
+        }
+        self.path.push(component);
+        self
+    }
+
+    /// Creates a Record Type.
+    pub fn build(&self) -> Type<'a> {
+        Type::Rec(self.proto.build(), self.path.build())
+    }
+}
+
+impl<'a> TypeUnresolvedBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(name: ItemIdentifier, arena: &'a mem::Arena) -> Self {
+        TypeUnresolvedBuilder {
+            name: name,
+            path: PathBuilder::new(arena),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        self.path.push(component);
+        self
+    }
+
+    /// Creates an Unresolved Type.
+    pub fn build(&self) -> Type<'a> {
+        Type::Unresolved(self.name, self.path.build())
+    }
 }
 
 //
@@ -614,10 +721,10 @@ impl<'a> ValueFactory<'a> {
     pub fn call(&self) -> CallBuilder<'a> { CallBuilder::new(self.arena) }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, record: RecordProto, pos: usize, len: usize)
+    pub fn constructor(&self, type_: Type<'a>, pos: usize, len: usize)
         -> ConstructorBuilder<'a, Value<'a>>
     {
-        ConstructorBuilder::new(self.arena, record, pos, len)
+        ConstructorBuilder::new(self.arena, type_, pos, len)
     }
 
     /// Creates a FieldAccessBuilder.
@@ -651,10 +758,11 @@ impl<'a> ValueFactory<'a> {
     pub fn unresolved_field(&self, id: ValueIdentifier, v: Value<'a>)
         -> Value<'a>
     {
+        let r = v.span().extend(id.span());
         value(
             Type::unresolved(),
             Expr::UnresolvedField(self.arena.insert(v), id),
-        )
+        ).with_range(r.offset(), r.length())
     }
 
     /// Creates an unresolved ref Value.
@@ -664,26 +772,26 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Creates a variable ref Value.
-    pub fn var_ref(&self, type_: Type<'a>, name: ValueIdentifier, pos: usize)
+    pub fn var_ref(&self, name: ValueIdentifier, pos: usize)
         -> Value<'a>
     {
-        value(type_, Expr::VariableRef(name, Default::default()))
+        value(Type::unresolved(), Expr::VariableRef(name, Default::default()))
             .with_range(pos, name.span().length())
     }
 
     /// Shortcut: creates a Bool ref.
     pub fn bool_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(Type::Builtin(BuiltinType::Bool), name, pos)
+        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::Bool))
     }
 
     /// Shortcut: creates a Int ref.
     pub fn int_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(Type::Builtin(BuiltinType::Int), name, pos)
+        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::Int))
     }
 
     /// Shortcut: creates a String ref.
     pub fn string_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(Type::Builtin(BuiltinType::String), name, pos)
+        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::String))
     }
 }
 
@@ -848,7 +956,7 @@ impl<'a> CallBuilder<'a> {
         }).unwrap_or((0, 0));
 
         value(
-            callable.result_type(),
+            Type::unresolved(),
             Expr::Call(callable, self.arguments.clone().into_slice()),
         ).with_range(off, len)
     }
@@ -883,7 +991,7 @@ impl<'a> FieldAccessBuilder<'a> {
             };
             fields.get(i as usize)
                 .cloned()
-                .unwrap_or(Type::Builtin(BuiltinType::Int))
+                .unwrap_or(Type::unresolved())
         });
 
         value(type_, Expr::FieldAccess(self.value, self.index))
@@ -949,7 +1057,7 @@ impl<'a> ImplicitBuilder<'a> {
     /// Creates a to-enum implicit Value.
     pub fn enum_(&self, e: EnumProto, v: Value<'a>) -> Value<'a> {
         value(
-            Type::Enum(e),
+            Type::Enum(e, Path::default()),
             Expr::Implicit(Implicit::ToEnum(e, self.arena.insert(v))),
         ).with_range(v.range.offset(), v.range.length())
     }
@@ -1052,6 +1160,24 @@ impl EnumProtoBuilder {
     }
 }
 
+impl<'a> PathBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(arena: &'a mem::Arena) -> Self {
+        PathBuilder { components: mem::Array::new(arena) }
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        self.components.push(component);
+        self
+    }
+
+    /// Builds a Path.
+    pub fn build(&self) -> Path<'a> {
+        Path { components: self.components.clone().into_slice() }
+    }
+}
+
 impl RecordProtoBuilder {
     /// Creates an instance.
     pub fn new(name: ItemIdentifier, pos: usize) -> Self {
@@ -1088,14 +1214,14 @@ impl<'a, T> ConstructorBuilder<'a, T> {
     /// Creates an instance.
     pub fn new(
         arena: &'a mem::Arena,
-        record: RecordProto,
+        type_: Type<'a>,
         pos: usize,
         len: usize
     )
         -> Self
     {
         ConstructorBuilder {
-            record: record,
+            type_: type_,
             arguments: TupleBuilder::new(arena),
             range: range(pos, len),
         }
@@ -1116,19 +1242,26 @@ impl<'a, T> ConstructorBuilder<'a, T> {
 
 impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
     /// Creates a Constructor.
-    pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
+    pub fn build(&self) -> Constructor<'a, T> {
         Constructor {
-            type_: self.record,
+            type_: self.type_,
             arguments: self.arguments.build(),
             range: self.range,
-        }.into()
+        }
+    }
+}
+
+impl<'a> ConstructorBuilder<'a, Pattern<'a>> {
+    /// Shortcut: creates a Pattern.
+    pub fn build_pattern(&self) -> Pattern<'a> {
+        self.build().into()
     }
 }
 
 impl<'a> ConstructorBuilder<'a, Value<'a>> {
     /// Shortcut: creates a Value.
     pub fn build_value(&self) -> Value<'a> {
-        self.build::<Value<'a>>()
+        self.build().into()
     }
 }
 

@@ -21,7 +21,7 @@ pub trait Scope<'g>: fmt::Debug {
     /// Returns an unresolved reference.
     fn unresolved_binding(&self, name: ValueIdentifier) -> Value<'g> {
         Value {
-            type_: Type::Unresolved(ItemIdentifier::unresolved()),
+            type_: Type::unresolved(),
             range: name.span(),
             expr: Expr::UnresolvedRef(name),
             gvn: Default::default(),
@@ -35,7 +35,7 @@ pub trait Scope<'g>: fmt::Debug {
 
     /// Returns an unresolved reference.
     fn unresolved_type(&self, name: ItemIdentifier) -> Type<'g> {
-        Type::Unresolved(name)
+        Type::Unresolved(name, Path::default())
     }
 }
 
@@ -53,7 +53,7 @@ pub struct FunctionScope<'a, 'g>
     where 'g: 'a
 {
     parent: &'a Scope<'g>,
-    arguments: IdMap<'a, (ValueIdentifier, Type<'g>)>,
+    arguments: IdMap<'a, ValueIdentifier>,
 }
 
 impl<'a, 'g> FunctionScope<'a, 'g> {
@@ -61,7 +61,6 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
     pub fn new(
         parent: &'a Scope<'g>,
         fun: &'a FunctionProto<'a>,
-        global_arena: &'g mem::Arena,
         local_arena: &'a mem::Arena,
     )
         -> FunctionScope<'a, 'g>
@@ -70,9 +69,8 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
             IdMap::with_capacity(fun.arguments.len(), local_arena);
 
         for &arg in fun.arguments {
-            if let Binding::Argument(value, _, type_, _) = arg {
-                let type_ = global_arena.intern(&type_);
-                arguments.insert(value.id(), (value, type_));
+            if let Binding::Argument(value, _, _, _) = arg {
+                arguments.insert(value.id(), value);
                 continue;
             }
             panic!("All bindings in a function argument must be arguments!");
@@ -87,10 +85,9 @@ pub struct BlockScope<'a, 'g, 'local>
     where 'g: 'a + 'local
 {
     parent: &'a Scope<'g>,
-    registry: &'a Registry<'g>,
     functions: IdMap<'local, Callable<'g>>,
     types: IdMap<'local, Type<'g>>,
-    values: IdMap<'local, (ValueIdentifier, Type<'g>)>,
+    values: IdMap<'local, ValueIdentifier>,
     global_arena: &'g mem::Arena,
 }
 
@@ -98,7 +95,6 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     /// Create a new instance of BlockScope.
     pub fn new(
         parent: &'a Scope<'g>,
-        registry: &'a Registry<'g>,
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
     )
@@ -106,7 +102,6 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     {
         BlockScope {
             parent: parent,
-            registry: registry,
             functions: IdMap::new(local_arena),
             types: IdMap::new(local_arena),
             values: IdMap::new(local_arena),
@@ -116,7 +111,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 
     /// Adds a new enum to the scope.
     pub fn add_enum(&mut self, proto: EnumProto) {
-        self.types.insert(proto.name.id(), Type::Enum(proto));
+        self.types.insert(proto.name.id(), Type::Enum(proto, Path::default()));
     }
 
     /// Adds a new function identifier to the scope.
@@ -125,38 +120,22 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     }
 
     /// Adds a new pattern to the scope.
-    pub fn add_pattern(&mut self, pat: Pattern<'g>, type_: Type<'g>) {
+    pub fn add_pattern(&mut self, pat: Pattern<'g>) {
         let tuple = match pat {
             Pattern::Ignored(_) => return,
             Pattern::Var(id, _) => {
-                self.add_value(id, type_);
+                self.add_value(id);
                 return;
             },
             Pattern::Constructor(c) => c.arguments,
             Pattern::Tuple(tuple, _) => tuple,
         };
-        for (index, pat) in tuple.fields.iter().enumerate() {
-            let type_ = self.type_of_field(type_, index);
-            self.add_pattern(*pat, type_)
-        }
+        for p in tuple.fields { self.add_pattern(*p); }
     }
 
     /// Adds a new value identifier to the scope.
-    pub fn add_value(&mut self, name: ValueIdentifier, type_: Type<'g>) {
-        self.values.insert(name.id(), (name, type_));
-    }
-
-    fn type_of_field(&self, type_: Type<'g>, index: usize) -> Type<'g> {
-        let fields = match type_ {
-            Type::Rec(r)
-                => self.registry
-                    .lookup_record(r.name)
-                    .map(|r| r.definition.fields)
-                    .unwrap_or(&[]),
-            Type::Tuple(t) => t.fields,
-            _ => &[],
-        };
-        fields.get(index).cloned().unwrap_or(Type::unresolved())
+    pub fn add_value(&mut self, name: ValueIdentifier) {
+        self.values.insert(name.id(), name);
     }
 }
 
@@ -188,9 +167,9 @@ impl<'g> Scope<'g> for BuiltinScope {
 
 impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        if let Some(&(id, type_)) = self.arguments.get(&name.id()) {
+        if let Some(&id) = self.arguments.get(&name.id()) {
             return Value {
-                type_: type_,
+                type_: Type::unresolved(),
                 range: name.span(),
                 expr: Expr::ArgumentRef(id, Default::default()),
                 gvn: Default::default(),
@@ -211,9 +190,9 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
 
 impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        if let Some(&(id, type_)) = self.values.get(&name.id()) {
+        if let Some(&id) = self.values.get(&name.id()) {
             return Value {
-                type_: self.global_arena.intern(&type_),
+                type_: Type::unresolved(),
                 range: name.span(),
                 expr: Expr::VariableRef(id, Default::default()),
                 gvn: Default::default(),
@@ -371,7 +350,7 @@ mod tests {
         let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
 
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, &prot, &arena, &arena);
+        let scope = FunctionScope::new(&builtin, &prot, &arena);
 
         assert_eq!(
             scope.lookup_binding(v.id(23, 1).with_id(a)),
@@ -391,6 +370,7 @@ mod tests {
         let arena = mem::Arena::new();
         let f = Factory::new(&arena);
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let unresolved = t.unresolved(Default::default()).build();
 
         let prot =
             p.fun(i.id(5, 3), t.int())
@@ -399,7 +379,7 @@ mod tests {
                 .build();
 
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, &prot, &arena, &arena);
+        let scope = FunctionScope::new(&builtin, &prot, &arena);
 
         assert_eq!(
             scope.lookup_binding(v.id(42, 1).with_id(c)),
@@ -408,12 +388,12 @@ mod tests {
 
         assert_eq!(
             scope.lookup_binding(v.id(34, 1).with_id(a)),
-            v.arg_ref(t.int(), v.id(9, 1).with_id(a), 34)
+            v.arg_ref(unresolved, v.id(9, 1).with_id(a), 34)
         );
 
         assert_eq!(
             scope.lookup_binding(v.id(38, 1).with_id(b)),
-            v.arg_ref(t.int(), v.id(17, 1).with_id(b), 38)
+            v.arg_ref(unresolved, v.id(17, 1).with_id(b), 38)
         );
     }
 }

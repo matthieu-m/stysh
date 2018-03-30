@@ -1,51 +1,50 @@
-//! Semantic pass: name resolution.
+//! Semantic pass: Symbol Mapping.
 //!
-//! High-level item in charge of name resolution.
+//! Mappings:
+//! -   maps variable to binding,
+//! -   maps function call to callable (binding or function),
+//! -   maps type or module to definition.
 
 use basic::{com, mem};
 use basic::com::Span;
 
 use model::{ast, hir};
 
+use super::Context;
 use super::scp::{BlockScope, Scope};
 
-/// The Name Resolver.
+/// The Symbol Mapper.
 ///
-/// Resolves which definition(s) each name refers to.
-pub struct NameResolver<'a, 'g, 'local>
+/// For each top-level reference to a symbol, resolves the symbol.
+pub struct SymbolMapper<'a, 'g, 'local>
     where 'g: 'a
 {
     scope: &'a Scope<'g>,
-    registry: &'a hir::Registry<'g>,
+    context: &'a Context<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
 
-impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
+impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     where 'g: 'a
 {
-    /// Creates a new instance of the name resolver.
+    /// Creates a new instance.
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
         scope: &'a Scope<'g>,
-        registry: &'a hir::Registry<'g>,
-        global: &'g mem::Arena,
-        local: &'local mem::Arena
+        context: &'a Context<'g>,
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena,
     )
-        -> NameResolver<'a, 'g, 'local>
+        -> Self
     {
-        NameResolver {
-            scope: scope,
-            registry: registry,
-            global_arena: global,
-            local_arena: local,
-        }
+        SymbolMapper { scope, context, global_arena, local_arena }
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&mut self, p: &ast::Pattern) -> hir::Pattern<'g> {
+    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::Pattern<'g> {
         use model::ast::Pattern;
 
         match *p {
@@ -57,7 +56,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&mut self, t: &ast::Type) -> hir::Type<'g> {
+    pub fn type_of(&self, t: &ast::Type) -> hir::Type<'g> {
         use model::ast::Type;
 
         match *t {
@@ -69,7 +68,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&mut self, e: &ast::Expression) -> hir::Value<'g> {
+    pub fn value_of(&self, e: &ast::Expression) -> hir::Value<'g> {
         self.value_of_expr(e)
     }
 }
@@ -77,39 +76,33 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
 //
 //  Implementation Details
 //
-impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
+impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     where 'g: 'a
 {
     fn pattern_of_constructor(
-        &mut self,
+        &self,
         c: ast::Constructor<ast::Pattern>,
     )
         -> hir::Pattern<'g>
     {
-        let rec = if let hir::Type::Rec(p) = self.type_of(&c.type_) {
-            p
-        } else {
-            unimplemented!("Unknown type - {:?}", c.type_)
-        };
-
         hir::Pattern::Constructor(hir::Constructor {
-            type_: rec,
-            arguments: self.tuple_of(&c.arguments, Self::pattern_of),
+            type_: self.type_of(&c.type_),
+            arguments: self.tuple_of(&c.arguments, |p| self.pattern_of(p)),
             range: c.span(),
         })
     }
 
-    fn pattern_of_ignored(&mut self, underscore: com::Range)
+    fn pattern_of_ignored(&self, underscore: com::Range)
         -> hir::Pattern<'static>
     {
         hir::Pattern::Ignored(underscore)
     }
 
-    fn pattern_of_tuple(&mut self, t: &ast::Tuple<ast::Pattern>)
+    fn pattern_of_tuple(&self, t: &ast::Tuple<ast::Pattern>)
         -> hir::Pattern<'g>
     {
         hir::Pattern::Tuple(
-            self.tuple_of(t, Self::pattern_of),
+            self.tuple_of(t, |p| self.pattern_of(p)),
             t.span(),
         )
     }
@@ -117,6 +110,9 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     fn pattern_of_var(&self, var: ast::VariableIdentifier)
         -> hir::Pattern<'static>
     {
+        self.context.insert_binding(var.into(), hir::Type::unresolved());
+        self.context.mark_unfetched_value(var.into());
+
         hir::Pattern::Var(var.into(), Default::default())
     }
 
@@ -165,55 +161,37 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     {
         let value = self.rescope(scope).value_of_expr(&var.expr);
         let pattern = self.rescope(self.scope).pattern_of(&var.pattern);
-        scope.add_pattern(pattern, value.type_);
+        scope.add_pattern(pattern);
         hir::Stmt::Var(hir::Binding::Variable(pattern, value, var.span()))
-    }
-
-    fn type_of_field_index(&self, value: &hir::Value<'g>, index: u16)
-        -> hir::Type<'g>
-    {
-        let index = index as usize;
-
-        let type_ = match value.type_ {
-            hir::Type::Rec(rec) =>
-                self.registry
-                    .lookup_record(rec.name)
-                    .and_then(|r| r.definition.fields.get(index)),
-            hir::Type::Tuple(tup) => tup.fields.get(index),
-            _ => None,
-        };
-
-        type_.cloned().unwrap_or(hir::Type::unresolved())
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::Type<'g>
     {
-        //  TODO: need to handle multi-level nesting.
-        assert_eq!(p.components.len(), 1);
+        let type_ = self.scope.lookup_type(p.components[0].into());
 
-        if let hir::Type::Enum(e) = self.scope.lookup_type(p.components[0].into()) {
-            if let Some(e) = self.registry.lookup_enum(e.name) {
-                for r in e.variants {
-                    if r.prototype.name.id() == t.id() {
-                        return hir::Type::Rec(*r.prototype);
-                    }
-                }
-            }
+        let mut path = self.array(p.components.len());
+        path.push(type_);
+        for &c in &p.components[1..] {
+            self.context.mark_unfetched_item(c.into());
+            path.push(hir::Type::Unresolved(c.into(), Default::default()));
         }
 
-        hir::Type::unresolved()
+        hir::Type::Unresolved(
+            t.into(),
+            hir::Path { components: path.into_slice() }
+        )
     }
 
     fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type<'g> {
         self.scope.lookup_type(t.into())
     }
 
-    fn type_of_tuple(&mut self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
-        hir::Type::Tuple(self.tuple_of(t, Self::type_of))
+    fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
+        hir::Type::Tuple(self.tuple_of(t, |t| self.type_of(t)))
     }
 
-    fn value_of_expr(&mut self, expr: &ast::Expression) -> hir::Value<'g> {
+    fn value_of_expr(&self, expr: &ast::Expression) -> hir::Value<'g> {
         use model::ast::Expression::*;
 
         match *expr {
@@ -233,11 +211,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_block(&mut self, block: &ast::Block) -> hir::Value<'g> {
+    fn value_of_block(&self, block: &ast::Block) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.scope,
-                self.registry,
                 self.global_arena,
                 self.local_arena
             );
@@ -245,14 +222,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let value = block.expression.map(
             |e| self.rescope(&scope).value_of_expr(e)
         );
-        let type_ =
-            value.map(|v| v.type_)
-                .or_else(|| stmts.last().map(|s| s.result_type()))
-                .unwrap_or(hir::Type::unit());
         let expr = value.map(|v| &*self.global_arena.insert(v));
 
         hir::Value {
-            type_: type_,
+            type_: hir::Type::unresolved(),
             range: block.span(),
             expr: hir::Expr::Block(stmts, expr),
             gvn: Default::default(),
@@ -260,7 +233,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_binary_operator(
-        &mut self,
+        &self,
         op: ast::BinaryOperator,
         left: &ast::Expression,
         right: &ast::Expression
@@ -292,7 +265,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         };
 
         hir::Value {
-            type_: op.result_type(),
+            type_: hir::Type::unresolved(),
             range: range,
             expr: hir::Expr::Call(
                 hir::Callable::Builtin(op),
@@ -302,102 +275,72 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_constructor(&mut self, c: ast::Constructor<ast::Expression>)
+    fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>)
         -> hir::Value<'g>
     {
-        if let hir::Type::Rec(type_) = self.type_of(&c.type_) {
-            let arguments = self.tuple_of(&c.arguments, Self::value_of);
-            return hir::Value {
-                type_: hir::Type::Rec(type_),
-                range: c.span(),
-                expr: hir::Expr::Constructor(hir::Constructor {
-                    type_: type_,
-                    arguments: arguments,
-                    range: c.span(),
-                }),
-                gvn: Default::default(),
-            };
-        }
+        let type_ = self.type_of(&c.type_);
+        let arguments = self.tuple_of(&c.arguments, |v| self.value_of(v));
 
-        unimplemented!("Unknown constructor call {:?}", c);
+        hir::Value {
+            type_: type_,
+            range: c.span(),
+            expr: hir::Expr::Constructor(hir::Constructor {
+                type_: type_,
+                arguments: arguments,
+                range: c.span(),
+            }),
+            gvn: Default::default(),
+        }
     }
 
-    fn value_of_call(&mut self, fun: ast::FunctionCall) -> hir::Value<'g> {
+    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::Value<'g> {
         let callable = if let ast::Expression::Var(id) = *fun.function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!()
         };
 
-        let mut values = mem::Array::with_capacity(
-            fun.arguments.len(),
-            self.global_arena
-        );
-
-        for e in fun.arguments.fields {
-            values.push(self.value_of(e));
-        }
+        let values = self.slice_of(fun.arguments.fields, |a| self.value_of(a));
 
         hir::Value {
-            type_: callable.result_type(),
+            type_: hir::Type::unresolved(),
             range: fun.span(),
-            expr: hir::Expr::Call(callable, values.into_slice()),
+            expr: hir::Expr::Call(callable, values),
             gvn: Default::default(),
         }
     }
 
-    fn value_of_field(&mut self, field: ast::FieldAccess) -> hir::Value<'g> {
+    fn value_of_field(&self, field: ast::FieldAccess) -> hir::Value<'g> {
         use self::ast::FieldIdentifier::*;
 
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
-        let index = match field.field {
-            Index(index, _) => index,
-            Name(n, r)
-                => if let Some(index) = self.index_of(accessed.type_, n) {
-                    index
-                } else {
-                    let id = hir::ValueIdentifier(n, r);
-
-                    return hir::Value {
-                        type_: hir::Type::unresolved(),
-                        range: field.span(),
-                        expr: hir::Expr::UnresolvedField(accessed, id),
-                        gvn: Default::default(),
-                    };
-                },
+        let expr = match field.field {
+            Index(index, _) => hir::Expr::FieldAccess(accessed, index),
+            Name(n, r) => {
+                self.context.mark_unfetched_value(hir::ValueIdentifier(n, r));
+                hir::Expr::UnresolvedField(
+                    accessed,
+                    hir::ValueIdentifier(n, r)
+                )
+            },
         };
 
         hir::Value {
-            type_: self.type_of_field_index(accessed, index),
+            type_: hir::Type::unresolved(),
             range: field.span(),
-            expr: hir::Expr::FieldAccess(accessed, index),
+            expr: expr,
             gvn: Default::default(),
         }
     }
 
-    fn value_of_if_else(&mut self, if_else: &ast::IfElse) -> hir::Value<'g> {
+    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::Value<'g> {
         let condition = self.value_of_expr(&if_else.condition);
-        let mut true_branch = self.value_of_block(&if_else.true_expr);
-        let mut false_branch = self.value_of_block(&if_else.false_expr);
-
-        let result = if true_branch.type_ != false_branch.type_ {
-            let common = self.common_type(
-                &[true_branch.type_, false_branch.type_]
-            );
-
-            if let Some(common) = common {
-                true_branch = self.implicit_cast(true_branch, common);
-                false_branch = self.implicit_cast(false_branch, common);
-            }
-
-            common
-        } else {
-            Some(true_branch.type_)
-        };
+        let true_branch = self.value_of_block(&if_else.true_expr);
+        let false_branch = self.value_of_block(&if_else.false_expr);
 
         hir::Value {
-            type_: result.unwrap_or(hir::Type::unresolved()),
+            type_: hir::Type::unresolved(),
             range: if_else.span(),
             expr: hir::Expr::If(
                 self.global_arena.insert(condition),
@@ -408,7 +351,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal(&mut self, lit: ast::Literal)
+    fn value_of_literal(&self, lit: ast::Literal)
         -> hir::Value<'g>
     {
         use model::ast::Literal::*;
@@ -422,7 +365,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
     }
 
     fn value_of_literal_bool(
-        &mut self,
+        &self,
         value: bool,
         range: com::Range
     )
@@ -436,7 +379,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_bytes(&mut self, bytes: &[u8], range: com::Range)
+    fn value_of_literal_bytes(&self, bytes: &[u8], range: com::Range)
         -> hir::Value<'g>
     {
         let value = self.global_arena.insert_slice(bytes);
@@ -450,7 +393,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_integral(&mut self, i: i64, range: com::Range)
+    fn value_of_literal_integral(&self, i: i64, range: com::Range)
         -> hir::Value<'g>
     {
         hir::Value {
@@ -461,7 +404,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_literal_string(&mut self, string: &[u8], range: com::Range)
+    fn value_of_literal_string(&self, string: &[u8], range: com::Range)
         -> hir::Value<'g>
     {
         let value = self.global_arena.insert_slice(string);
@@ -474,11 +417,10 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_loop(&mut self, loop_: &ast::Loop) -> hir::Value<'g> {
+    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::Value<'g> {
         let mut scope =
             BlockScope::new(
                 self.scope,
-                self.registry,
                 self.global_arena,
                 self.local_arena
             );
@@ -492,7 +434,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_prefix_operator(&mut self, 
+    fn value_of_prefix_operator(&self, 
         op: ast::PrefixOperator,
         expr: &ast::Expression,
         range: com::Range,
@@ -509,7 +451,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         };
 
         hir::Value {
-            type_: op.result_type(),
+            type_: hir::Type::unresolved(),
             range: range,
             expr: hir::Expr::Call(
                 hir::Callable::Builtin(op),
@@ -519,159 +461,30 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         }
     }
 
-    fn value_of_tuple(&mut self, tup: &ast::Tuple<ast::Expression>)
+    fn value_of_tuple(&self, tup: &ast::Tuple<ast::Expression>)
         -> hir::Value<'g>
     {
-        let expr = self.tuple_of(tup, Self::value_of);
-
-        let type_ = hir::Tuple {
-            fields: self.slice_of(expr.fields, |_, v| v.type_),
-            names: expr.names,
-        };
-
+        let expr = self.tuple_of(tup, |v| self.value_of(v));
         hir::Value {
-            type_: hir::Type::Tuple(type_),
+            type_: hir::Type::unresolved(),
             range: tup.span(),
             expr: hir::Expr::Tuple(expr),
             gvn: Default::default(),
         }
     }
 
-    fn value_of_variable(&mut self, var: ast::VariableIdentifier)
+    fn value_of_variable(&self, var: ast::VariableIdentifier)
         -> hir::Value<'g>
     {
         self.scope.lookup_binding(var.into())
     }
 
-    fn common_type(&self, types: &[hir::Type<'g>]) -> Option<hir::Type<'g>> {
-        types.iter().fold(Some(hir::Type::void()), |acc, current| {
-            self.common_type_impl(acc?, *current)
-        })
-    }
-
-    fn common_type_impl(&self, left: hir::Type<'g>, right: hir::Type<'g>)
-        -> Option<hir::Type<'g>>
-    {
-        use model::hir::*;
-
-        fn extract_enum_record<'a>(left: Type<'a>, right: Type<'a>)
-            -> Option<(EnumProto, RecordProto)>
-        {
-            if let Type::Enum(e) = left {
-                if let Type::Rec(r) = right {
-                    return Some((e, r));
-                }
-            }
-
-            if let Type::Enum(e) = right {
-                if let Type::Rec(r) = left {
-                    return Some((e, r));
-                }
-            }
-
-            None
-        }
-
-        if left == right || left == hir::Type::void() {
-            return Some(right);
-        }
-        if right == hir::Type::void() {
-            return Some(left);
-        }
-
-        if let (Type::Rec(left), Type::Rec(right)) = (left, right) {
-            if left.enum_ == right.enum_ {
-                if let Some(e) = self.registry.lookup_enum(left.enum_) {
-                    return Some(Type::Enum(*e.prototype));
-                }
-            }
-        }
-
-        let (e, r) = extract_enum_record(left, right)?;
-
-        if e.name == r.enum_ {
-            Some(Type::Enum(e))
-        } else {
-            None
-        }
-    }
-
-    fn implicit_cast(&self, original: hir::Value<'g>, target: hir::Type<'g>)
-        -> hir::Value<'g>
-    {
-        use model::hir::Type::*;
-
-        if original.type_ == target || original.type_ == hir::Type::void() {
-            return original;
-        }
-
-        match target {
-            Enum(e) => self.implicit_to_enum(original, e),
-            _ => unimplemented!("Conversion to {:?} of {:?}", target, original),
-        }
-    }
-
-    fn implicit_to_enum(&self, original: hir::Value<'g>, e: hir::EnumProto)
-        -> hir::Value<'g>
-    {
-        use model::hir::*;
-
-        if let Type::Enum(o) = original.type_ {
-            debug_assert!(o == e);
-            return original;
-        }
-
-        if let Type::Rec(r) = original.type_ {
-            debug_assert!(r.enum_ == e.name);
-
-            return self.implicit_cast_impl(original, |v| {
-                let v = self.global_arena.insert(v);
-                Value {
-                    type_: Type::Enum(e),
-                    range: v.range,
-                    expr: Expr::Implicit(Implicit::ToEnum(e, v)),
-                    gvn: Default::default(),
-                }
-            });
-        }
-
-        unreachable!("Should not cast anything but Enum or Rec: {:?}", original);
-    }
-
-    fn implicit_cast_impl<F>(&self, original: hir::Value<'g>, f: F)
-        -> hir::Value<'g>
-        where F: FnOnce(hir::Value<'g>) -> hir::Value<'g>
-    {
-        use model::hir::*;
-
-        match original.expr {
-            Expr::Block(stmts, v) => {
-                let v = v.map(|v| &*self.global_arena.insert(f(*v)));
-                Value {
-                    type_: v.map(|v| v.type_).unwrap_or(original.type_),
-                    range: original.range,
-                    expr: Expr::Block(stmts, v), 
-                    gvn: Default::default(),
-                }
-            },
-            _ => f(original),
-        }
-    }
-
-    fn index_of(&self, type_: hir::Type, id: mem::InternId) -> Option<u16> {
-        if let hir::Type::Tuple(ref tuple) = type_ {
-            tuple.names.iter().position(|v| v.id() == id).map(|p| p as u16)
-        } else {
-            None
-        }
-    }
-
-    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> NameResolver<'b, 'g, 'local>
+    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> SymbolMapper<'b, 'g, 'local>
         where 'a: 'b
     {
-        NameResolver {
+        SymbolMapper {
             scope: scope,
-            registry: self.registry,
+            context: self.context,
             global_arena: self.global_arena,
             local_arena: self.local_arena,
         }
@@ -686,39 +499,38 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         where
             'g: 'b
     {
-        let mut statements = mem::Array::new(self.local_arena);
-
-        for &s in stmts {
-            let stmt = match s {
+        self.slice_of(stmts, |&s| {
+            match s {
                 ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
                 ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
                 ast::Statement::Var(var) => self.stmt_of_var(&var, scope),
-            };
-            statements.push(stmt);
-        }
-
-        self.global_arena.insert_slice(statements.into_slice())
+            }
+        })
     }
 
-    fn slice_of<'b, T: 'b, U: 'g, F: Fn(&mut Self, &'b T) -> U>(
-        &mut self,
+    fn array<T>(&self, size: usize) -> mem::Array<'g, T> {
+        mem::Array::with_capacity(size, self.global_arena)
+    }
+
+    fn slice_of<'b, T: 'b, U: 'g, F: FnMut(&'b T) -> U>(
+        &self,
         input: &'b [T],
-        transformer: F,
+        mut transformer: F,
     )
         -> &'g [U]
     {
-        let mut result =
-            mem::Array::with_capacity(input.len(), self.global_arena);
+        let mut result = self.array(input.len());
 
         for i in input {
-            result.push(transformer(self, i));
+            result.push(transformer(i));
         }
 
         result.into_slice()
     }
 
-    pub fn tuple_of<'b, T: 'b, U: 'g, F: Fn(&mut Self, &'b T) -> U>(
-        &mut self,
+    /// TODO: Move functionality from GraphBuilder to SymbolMapper.
+    pub fn tuple_of<'b, T: 'b, U: 'g, F: FnMut(&'b T) -> U>(
+        &self,
         tup: &'b ast::Tuple<'b, T>,
         transformer: F,
     )
@@ -731,7 +543,7 @@ impl<'a, 'g, 'local> NameResolver<'a, 'g, 'local>
         let fields = self.slice_of(tup.fields, transformer);
 
         let names = if !tup.names.is_empty() {
-            self.slice_of(tup.names, |_, &(i, r)| hir::ValueIdentifier(i, r))
+            self.slice_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r))
         } else {
             &[]
         };
@@ -754,23 +566,29 @@ mod tests {
     use model::{ast, hir};
     use model::ast::builder::Factory as AstFactory;
     use model::hir::builder::Factory as HirFactory;
+    use super::super::Context;
     use super::super::scp::mocks::MockScope;
 
     #[test]
-    fn value_basic_add() {
+    fn value_block_empty() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-        let v = HirFactory::new(&global_arena).value();
-        let env = Env::new(b"1 + 2", &global_arena);
+        let env = Env::new(b"{}", &global_arena);
 
-        assert_eq!(
-            env.value_of(&e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
-            v.call().push(v.int(1, 0)).push(v.int(2, 4)).build()
-        );
+        let ast = {
+            let e = AstFactory::new(&global_arena).expr();
+            e.block_div().range(0, 2).build()
+        };
+
+        let hir = {
+            let v = HirFactory::new(&global_arena).value();
+            v.block_div().range(0, 2).build().without_type()
+        };
+
+        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
-    fn value_basic_boolean() {
+    fn value_builtin_boolean() {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
         let v = HirFactory::new(&global_arena).value();
@@ -783,122 +601,35 @@ mod tests {
     }
 
     #[test]
-    fn value_basic_constructor() {
+    fn value_builtin_string() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let hir = HirFactory::new(&global_arena);
-        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
+        let e = AstFactory::new(&global_arena).expr();
 
-        let mut env = Env::new(b"Rec   Rec", &global_arena);
+        let v = HirFactory::new(&global_arena).value();
 
-        let rec = p.rec(i.id(6, 3), 0).build();
-        env.insert_record_prototype(rec, &[0]);
+        let env = Env::new(b"'Hello, World!'", &global_arena);
 
         assert_eq!(
-            env.value_of(
-                &ast.expr().constructor(ast.type_().simple(0, 3)).build()
-            ),
-            v.constructor(rec, 0, 3).build_value()
+            env.value_of(&e.literal(0, 15).push_text(1, 13).string(b"Hello, World!").build()),
+            v.string("Hello, World!", 0)
         );
     }
 
     #[test]
-    fn value_basic_constructor_arguments() {
+    fn value_call_add() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let hir = HirFactory::new(&global_arena);
-        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
-
-        let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
-
-        let rec = p.rec(i.id(9, 3), 0).build();
-        env.insert_record_prototype(rec, &[0]);
+        let e = AstFactory::new(&global_arena).expr();
+        let v = HirFactory::new(&global_arena).value();
+        let env = Env::new(b"1 + 2", &global_arena);
 
         assert_eq!(
-            env.value_of(
-                &e.constructor(ast.type_().simple(0, 3))
-                    .parens(3, 5)
-                    .push(e.int(1, 4))
-                    .build()
-            ),
-            v.constructor(rec, 0, 6).push(v.int(1, 4)).build_value()
+            env.value_of(&e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
+            v.call().push(v.int(1, 0)).push(v.int(2, 4)).build().without_type()
         );
     }
 
     #[test]
-    fn value_basic_record_field_access() {
-        let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let hir = HirFactory::new(&global_arena);
-        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
-
-        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
-
-        let rec =
-            i.rec(p.rec(i.id(5, 3), 0).range(0, 14).build())
-                .push(t.int())
-                .build();
-
-        env.insert_record(rec, &[15]);
-
-        assert_eq!(
-            env.value_of(
-                &e.field_access(
-                    e.constructor(ast.type_().simple(15, 3))
-                        .parens(18, 21)
-                        .push(e.int(42, 19))
-                        .build(),
-                )
-                    .index(0)
-                    .build()
-            ),
-            v.field_access(
-                0,
-                v.constructor(*rec.prototype, 15, 7)
-                    .push(v.int(42, 19))
-                    .build_value()
-            ).build()
-        );
-    }
-
-    #[test]
-    fn value_basic_nested_constructor() {
-        let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let hir = HirFactory::new(&global_arena);
-        let (i, p, v) = (hir.item(), hir.proto(), hir.value());
-
-        let mut env = Env::new(
-            b":enum Simple { Unit }         Simple::Unit",
-            &global_arena
-        );
-
-        let enum_ =
-            i.enum_(p.enum_(i.id(6, 6)).build())
-                .push(i.unit(15, 4))
-                .build();
-        let rec = enum_.variants[0];
-
-        env.insert_enum(enum_, &[30]);
-
-        assert_eq!(
-            env.value_of(
-                &e.constructor(
-                    ast.type_().nested(38, 4).push(30, 6).build()
-                ).build()
-            ),
-            v.constructor(*rec.prototype, 30, 12).build_value()
-        );
-    }
-
-    #[test]
-    fn value_basic_call() {
+    fn value_call_basic() {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
@@ -908,7 +639,7 @@ mod tests {
         let mut env = Env::new(b"basic(1, 2)    basic", &global_arena);
 
         let proto = p.fun(i.id(15, 5), t.int()).build();
-        env.insert_function_prototype(proto, &[0]);
+        env.insert_function(proto, &[0]);
 
         assert_eq!(
             env.value_of(
@@ -922,11 +653,93 @@ mod tests {
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
                 .build()
+                .without_type()
         )
     }
 
     #[test]
-    fn value_basic_if_else() {
+    fn value_constructor() {
+        let global_arena = mem::Arena::new();
+        let ast = AstFactory::new(&global_arena);
+        let h = HirFactory::new(&global_arena);
+        let (i, p, v) = (h.item(), h.proto(), h.value());
+
+        let mut env = Env::new(b"Rec   Rec", &global_arena);
+
+        let rec = p.rec(i.id(6, 3), 0).build();
+        env.insert_record(rec, &[0]);
+
+        assert_eq!(
+            env.value_of(
+                &ast.expr().constructor(ast.type_().simple(0, 3)).build()
+            ),
+            v.constructor(hir::Type::Rec(rec, Default::default()), 0, 3)
+                .build_value()
+        );
+    }
+
+    #[test]
+    fn value_constructor_arguments() {
+        let global_arena = mem::Arena::new();
+        let ast = AstFactory::new(&global_arena);
+        let e = ast.expr();
+
+        let h = HirFactory::new(&global_arena);
+        let (i, p, v) = (h.item(), h.proto(), h.value());
+
+        let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
+
+        let rec = p.rec(i.id(9, 3), 0).build();
+        env.insert_record(rec, &[0]);
+
+        assert_eq!(
+            env.value_of(
+                &e.constructor(ast.type_().simple(0, 3))
+                    .parens(3, 5)
+                    .push(e.int(1, 4))
+                    .build()
+            ),
+            v.constructor(hir::Type::Rec(rec, Default::default()), 0, 6)
+                .push(v.int(1, 4))
+                .build_value()
+        );
+    }
+
+    #[test]
+    fn value_constructor_nested() {
+        let global_arena = mem::Arena::new();
+        let ast = AstFactory::new(&global_arena);
+        let e = ast.expr();
+
+        let h = HirFactory::new(&global_arena);
+        let (i, p, t, v) = (h.item(), h.proto(), h.type_(), h.value());
+
+        let mut env = Env::new(
+            b":enum Simple { Unit }         Simple::Unit",
+            &global_arena
+        );
+
+        let enum_ = p.enum_(i.id(6, 6)).build();
+        env.insert_enum(enum_, &[30]);
+
+        assert_eq!(
+            env.value_of(
+                &e.constructor(
+                    ast.type_().nested(38, 4).push(30, 6).build()
+                ).build()
+            ),
+            v.constructor(
+                t.unresolved(i.id(38, 4))
+                    .push(hir::Type::Enum(enum_, Default::default()))
+                    .build(),
+                30,
+                12,
+            ).build_value()
+        );
+    }
+
+    #[test]
+    fn value_if_else() {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
@@ -944,43 +757,10 @@ mod tests {
             )),
             v.if_(
                 v.bool_(true, 4),
-                v.block(v.int(1, 11)).build(),
-                v.block(v.int(0, 23)).build(),
+                v.block(v.int(1, 11)).build().without_type(),
+                v.block(v.int(0, 23)).build().without_type(),
             ).build()
         )
-    }
-
-    #[test]
-    fn value_basic_helloworld() {
-        let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new(&global_arena).value();
-
-        let env = Env::new(b"'Hello, World!'", &global_arena);
-
-        assert_eq!(
-            env.value_of(&e.literal(0, 15).push_text(1, 13).string(b"Hello, World!").build()),
-            v.string("Hello, World!", 0)
-        );
-    }
-
-    #[test]
-    fn value_block_empty() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{}", &global_arena);
-
-        let ast = {
-            let e = AstFactory::new(&global_arena).expr();
-            e.block_div().range(0, 2).build()
-        };
-
-        let hir = {
-            let v = HirFactory::new(&global_arena).value();
-            v.block_div().range(0, 2).build()
-        };
-
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
     #[test]
@@ -1002,6 +782,41 @@ mod tests {
     }
 
     #[test]
+    fn value_record_field_access() {
+        let global_arena = mem::Arena::new();
+        let ast = AstFactory::new(&global_arena);
+        let e = ast.expr();
+
+        let h = HirFactory::new(&global_arena);
+        let (i, p, v) = (h.item(), h.proto(), h.value());
+
+        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
+
+        let rec = p.rec(i.id(5, 3), 0).range(0, 14).build();
+        env.insert_record(rec, &[15]);
+
+        assert_eq!(
+            env.value_of(
+                &e.field_access(
+                    e.constructor(ast.type_().simple(15, 3))
+                        .parens(18, 21)
+                        .push(e.int(42, 19))
+                        .build(),
+                )
+                    .index(0)
+                    .build()
+            ),
+            v.field_access(
+                0,
+                v.constructor(hir::Type::Rec(rec, Default::default()), 15, 7)
+                    .push(v.int(42, 19))
+                    .build_value()
+            ).build()
+            .without_type()
+        );
+    }
+
+    #[test]
     fn value_return_basic() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{ :return 1; }", &global_arena);
@@ -1019,7 +834,7 @@ mod tests {
             let f = HirFactory::new(&global_arena);
             let (s, v) = (f.stmt(), f.value());
 
-            v.block_div().push(s.ret(v.int(1, 10))).build()
+            v.block_div().push(s.ret(v.int(1, 10))).build().without_type()
         };
 
         assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
@@ -1054,78 +869,8 @@ mod tests {
 
             v.if_(
                 v.bool_(true, 4),
-                v.block_div().push(s.ret(v.int(1, 19))).build(),
-                v.block_div().push(s.ret(v.int(2, 40))).build(),
-            ).build()
-        };
-
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
-    }
-
-    #[test]
-    fn value_return_else() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(
-            b":if true { 1 } :else { :return 2; }",
-            &global_arena
-        );
-
-        let ast = {
-            let f = AstFactory::new(&global_arena);
-            let (e, s) = (f.expr(), f.stmt());
-
-            e.if_else(
-                e.bool_(true, 4),
-                e.block(e.int(1, 11)).build(),
-                e.block_div()
-                    .push_stmt(s.ret().expr(e.int(2, 31)).build())
-                    .build(),
-            ).build()
-        };
-
-        let hir = {
-            let f = HirFactory::new(&global_arena);
-            let (s, v) = (f.stmt(), f.value());
-
-            v.if_(
-                v.bool_(true, 4),
-                v.block(v.int(1, 11)).build(),
-                v.block_div().push(s.ret(v.int(2, 31))).build(),
-            ).build()
-        };
-
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
-    }
-
-    #[test]
-    fn value_return_if() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(
-            b":if true { :return 1; } :else { 2 }",
-            &global_arena
-        );
-
-        let ast = {
-            let f = AstFactory::new(&global_arena);
-            let (e, s) = (f.expr(), f.stmt());
-
-            e.if_else(
-                e.bool_(true, 4),
-                e.block_div()
-                    .push_stmt(s.ret().expr(e.int(1, 19)).build())
-                    .build(),
-                e.block(e.int(2, 32)).build(),
-            ).build()
-        };
-
-        let hir = {
-            let f = HirFactory::new(&global_arena);
-            let (s, v) = (f.stmt(), f.value());
-
-            v.if_(
-                v.bool_(true, 4),
-                v.block_div().push(s.ret(v.int(1, 19))).build(),
-                v.block(v.int(2, 32)).build(),
+                v.block_div().push(s.ret(v.int(1, 19))).build().without_type(),
+                v.block_div().push(s.ret(v.int(2, 40))).build().without_type(),
             ).build()
         };
 
@@ -1153,10 +898,11 @@ mod tests {
 
             let a = v.id(7, 1);
 
-            v.block(v.int_ref(a, 28))
+            v.block(v.var_ref(a, 28))
                 .push(s.var(p.var(a), v.int(1, 12)))
-                .push(s.set(v.int_ref(a, 20), v.int(2, 25)))
+                .push(s.set(v.var_ref(a, 20), v.int(2, 25)))
                 .build()
+                .without_type()
         };
 
         assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
@@ -1191,12 +937,17 @@ mod tests {
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
-            let tup = v.tuple().push(v.int(1, 13)).build().with_range(12, 4);
+            let tup =
+                v.tuple()
+                    .push(v.int(1, 13))
+                    .build()
+                    .without_type()
+                    .with_range(12, 4);
 
-            v.block(v.var_ref(tup.type_, a, 33))
+            v.block(v.var_ref(a, 33))
                 .push(s.var(p.var(a), tup))
                 .push(s.set(
-                    v.field_access(0, v.var_ref(tup.type_, a, 23)).build(),
+                    v.field_access(0, v.var_ref(a, 23)).build(),
                     v.int(2, 30)
                 ))
                 .build()
@@ -1224,7 +975,7 @@ mod tests {
             ),
             v.field_access(
                 1,
-                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build()
+                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build().without_type()
             ).build()
         )
     }
@@ -1251,13 +1002,14 @@ mod tests {
                     .name(20, 2)
                     .build()
             ),
-            v.field_access(
-                1,
+            v.unresolved_field(
+                env.field_id(20, 2),
                 v.tuple()
                     .push(v.int(42, 7)).name(x)
                     .push(v.int(43, 17)).name(y)
                     .build()
-            ).build()
+                    .without_type()
+            )
         )
     }
 
@@ -1282,7 +1034,7 @@ mod tests {
 
             let (a, b) = (v.id(7, 1), v.id(20, 1));
             let add =
-                v.call().push(v.int_ref(a, 28)).push(v.int_ref(b, 32)).build();
+                v.call().push(v.var_ref(a, 28)).push(v.var_ref(b, 32)).build();
 
             v.block(add)
                 .push(s.var(p.var(a), v.int(1, 12)))
@@ -1314,7 +1066,7 @@ mod tests {
 
             let a = v.id(7, 1);
 
-            v.block(v.int_ref(a, 28))
+            v.block(v.var_ref(a, 28))
                 .push(s.var(p.var(a), v.int(1, 12)))
                 .push(s.var(p.ignored(20), v.int(2, 25)))
                 .build()
@@ -1346,25 +1098,23 @@ mod tests {
 
         let hir = {
             let f = HirFactory::new(&global_arena);
-            let (i, p, s, t, v) =
-                (f.item(), f.pat(), f.stmt(), f.type_(), f.value());
+            let (i, p, s, v) =
+                (f.item(), f.pat(), f.stmt(), f.value());
 
             let a = v.id(28, 1);
 
-            let rec =
-                i.rec(f.proto().rec(i.id(5, 4), 0).build())
-                    .push(t.int())
-                    .build();
+            let rec = f.proto().rec(i.id(5, 4), 0).build();
             env.insert_record(rec, &[23, 34]);
+            let rec = hir::Type::Rec(rec, Default::default());
 
-            v.block(v.int_ref(a, 43))
+            v.block(v.var_ref(a, 43))
                 .push(s.var(
-                    p.constructor(*rec.prototype, 23, 7)
+                    p.constructor(rec, 23, 7)
                         .push(p.var(a))
-                        .build(),
-                    v.constructor(*rec.prototype, 34, 7)
+                        .build_pattern(),
+                    v.constructor(rec, 34, 7)
                         .push(v.int(1, 39))
-                        .build(),
+                        .build_value(),
                 ))
                 .build()
         };
@@ -1398,26 +1148,25 @@ mod tests {
 
         let hir = {
             let f = HirFactory::new(&global_arena);
-            let (i, p, s, t, v) =
-                (f.item(), f.pat(), f.stmt(), f.type_(), f.value());
+            let (i, p, s, v) =
+                (f.item(), f.pat(), f.stmt(), f.value());
 
             let a = env.var_id(36, 1);
 
-            let rec =
-                i.rec(f.proto().rec(env.type_id(5, 4), 0).build())
-                    .push(t.int()).name(env.field_id(10, 2))
-                    .build();
+            let rec = f.proto().rec(i.id(5, 4), 0).build();
+            let rec = hir::Type::Rec(
+                env.insert_record(rec, &[27, 42]),
+                Default::default(),
+            );
 
-            env.insert_record(rec, &[27, 42]);
-
-            v.block(v.int_ref(a, 55))
+            v.block(v.var_ref(a, 55))
                 .push(s.var(
-                    p.constructor(*rec.prototype, 27, 11)
+                    p.constructor(rec, 27, 11)
                         .push(p.var(a)).name(env.field_id(32, 2))
-                        .build(),
-                    v.constructor(*rec.prototype, 42, 11)
+                        .build_pattern(),
+                    v.constructor(rec, 42, 11)
                         .push(v.int(1, 51)).name(env.field_id(47, 2))
-                        .build(),
+                        .build_value(),
                 ))
                 .build()
         };
@@ -1448,10 +1197,14 @@ mod tests {
 
             let (a, b) = (v.id(8, 1), v.id(11, 1));
 
-            v.block(v.int_ref(a, 25))
+            v.block(v.var_ref(a, 25))
                 .push(s.var(
                     p.tuple().push(p.var(a)).push(p.var(b)).build(),
-                    v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build(),
+                    v.tuple()
+                        .push(v.int(1, 18))
+                        .push(v.int(2, 21))
+                        .build()
+                        .without_type(),
                 ))
                 .build()
         };
@@ -1459,62 +1212,9 @@ mod tests {
         assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
     }
 
-    #[test]
-    fn value_implicit_cast_to_enum() {
-        let global_arena = mem::Arena::new();
-        let mut env = Env::new(
-            b":enum B { T, F } :if true { B::T } else { B::F }", 
-            &global_arena
-        );
-
-        let ast = {
-            let f = AstFactory::new(&global_arena);
-            let (e, t) = (f.expr(), f.type_());
-
-            e.if_else(
-                e.bool_(true, 21),
-                e.block(
-                    e.constructor(t.nested(31, 1).push(28, 1).build()).build(),
-                ).build(),
-                e.block(
-                    e.constructor(t.nested(45, 1).push(42, 1).build()).build(),
-                ).build(),
-            ).build()
-        };
-
-        let hir = {
-            let f = HirFactory::new(&global_arena);
-            let (i, p, v) = (f.item(), f.proto(), f.value());
-
-            let enum_ =
-                i.enum_(p.enum_(i.id(6, 1)).build())
-                    .push(i.unit(10, 1))
-                    .push(i.unit(13, 1))
-                    .build();
-
-            env.insert_enum(enum_, &[28, 42]);
-
-            let block = |index: usize, pos: usize| {
-                let rec = *enum_.variants[index].prototype;
-                v.block(
-                    v.implicit().enum_(
-                        *enum_.prototype,
-                        v.constructor(rec, pos, 4).build_value(),
-                    )
-                ).build()
-            };
-
-            v.if_(v.bool_(true, 21), block(0, 28), block(1, 42))
-                .type_((*enum_.prototype).into())
-                .build()
-        };
-
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
-    }
-
     struct Env<'g> {
         scope: MockScope<'g>,
-        registry: hir::mocks::MockRegistry<'g>,
+        context: Context<'g>,
         ast_resolver: ast::interning::Resolver<'g>,
         hir_resolver: hir::interning::Resolver<'g>,
         scrubber: hir::interning::Scrubber<'g>,
@@ -1526,7 +1226,7 @@ mod tests {
             let interner = rc::Rc::new(mem::Interner::new());
             Env {
                 scope: MockScope::new(arena),
-                registry: hir::mocks::MockRegistry::new(arena),
+                context: Context::default(),
                 ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner, arena),
                 scrubber: hir::interning::Scrubber::new(arena),
@@ -1534,25 +1234,18 @@ mod tests {
             }
         }
 
-        fn insert_enum(
-            &mut self,
-            enum_: hir::Enum<'g>,
-            positions: &[usize],
-        )
-        {
-            let enum_ = self.hir_resolver.resolve_enum(enum_);
-            let name = enum_.prototype.name;
+        fn insert_enum(&mut self, enum_: hir::EnumProto, positions: &[usize]) {
+            let enum_ = self.hir_resolver.resolve_enum_prototype(enum_);
+            let name = enum_.name;
             let len = name.span().length();
-            println!("Registered enum: {:?}", name);
 
             for p in positions {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
-                self.scope.types.insert(id, hir::Type::Enum(*enum_.prototype));
-            }
-            self.registry.enums.insert(name, enum_);
+                self.scope.types.insert(id, hir::Type::Enum(enum_, Default::default()));
+            } 
         }
 
-        fn insert_function_prototype(
+        fn insert_function(
             &mut self,
             proto: hir::FunctionProto<'g>,
             positions: &[usize],
@@ -1568,34 +1261,22 @@ mod tests {
             }
         }
 
-        fn insert_record(
-            &mut self,
-            record: hir::Record<'g>,
-            positions: &[usize],
-        )
+        fn insert_record(&mut self, rec: hir::RecordProto, positions: &[usize])
+            -> hir::RecordProto
         {
-            let record = self.hir_resolver.resolve_record(record);
-            self.insert_record_prototype(*record.prototype, positions);
-            self.registry.records.insert(record.prototype.name, record);
-        }
-
-        fn insert_record_prototype(
-            &mut self,
-            proto: hir::RecordProto,
-            positions: &[usize],
-        )
-        {
-            let proto = self.hir_resolver.resolve_record_prototype(proto);
-            let len = proto.name.span().length();
+            let rec = self.hir_resolver.resolve_record_prototype(rec);
+            let len = rec.name.span().length();
             println!(
                 "Registered record prototype: {:?} (of {:?})",
-                proto.name, proto.enum_
+                rec.name, rec.enum_
             );
 
             for p in positions {
-                let id = hir::ItemIdentifier(proto.name.id(), range(*p, len));
-                self.scope.types.insert(id, hir::Type::Rec(proto));
+                let id = hir::ItemIdentifier(rec.name.id(), range(*p, len));
+                self.scope.types.insert(id, hir::Type::Rec(rec, Default::default()));
             }
+
+            rec
         }
 
         fn field_id(&self, pos: usize, len: usize) -> hir::ValueIdentifier {
@@ -1609,17 +1290,12 @@ mod tests {
             hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
-        fn type_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
-            let range = range(pos, len);
-            hir::ItemIdentifier(self.hir_resolver.from_range(range), range)
-        }
-
         fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)
-            -> super::NameResolver<'a, 'g, 'local>
+            -> super::SymbolMapper<'a, 'g, 'local>
         {
-            super::NameResolver::new(
+            super::SymbolMapper::new(
                 &self.scope,
-                &self.registry, 
+                &self.context,
                 self.arena, 
                 local
             )

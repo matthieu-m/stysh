@@ -308,7 +308,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::New(hir::Type::Rec(cons.type_), arguments, range)
+            sir::Instruction::New(cons.type_, arguments, range)
         );
 
         current
@@ -755,7 +755,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn extract_fields_types(&self, type_: hir::Type<'g>) -> &'g [hir::Type<'g>]
     {
         match type_ {
-            hir::Type::Rec(proto) => {
+            hir::Type::Rec(proto, _) => {
                 if let Some(r) = self.registry.lookup_record(proto.name) {
                     return &r.definition.fields;
                 }
@@ -917,10 +917,11 @@ mod tests {
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
+        let rec = Type::Rec(r, Default::default());
 
         assert_eq!(
             env.valueit(
-                &v.constructor(r, 19, 8).push(v.int(42, 24)).build_value()
+                &v.constructor(rec, 19, 8).push(v.int(42, 24)).build_value()
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -1028,12 +1029,15 @@ mod tests {
         let a_v = v.tuple().push(v.int(1, 13)).push(a_1_v).build();
 
         let block =
-            v.block(v.var_ref(a_v.type_, a, 42))
+            v.block(v.var_ref(a, 42).with_type(a_v.type_))
                 .push(s.var_id(a, a_v))
                 .push(s.set(
                     v.field_access(
                         0,
-                        v.field_access(1, v.var_ref(a_v.type_, a, 30)).build(),
+                        v.field_access(
+                            1,
+                            v.var_ref(a, 30).with_type(a_v.type_)
+                        ).build(),
                     ).build(),
                     v.int(4, 39),
                 ))
@@ -1117,16 +1121,21 @@ mod tests {
         let r = po.rec(i.id(5, 1), 0).build();
         env.insert_record(i.rec(r).push(t.int()).push(t.int()).build());
 
+        let rec = Type::Rec(r, Default::default());
+
         let (a, b) = (v.id(29, 1), v.id(32, 1));
         let binding =
-            p.constructor(r, 27, 7).push(p.var(a)).push(p.var(b)).build();
+            p.constructor(rec, 27, 7)
+                .push(p.var(a))
+                .push(p.var(b))
+                .build_pattern();
         let value: Value =
-            v.constructor(r, 38, 7)
+            v.constructor(rec, 38, 7)
                 .push(v.int(1, 40))
                 .push(v.int(2, 43))
-                .build();
+                .build_value();
         let block =
-            v.block(v.var_ref(value.type_, a, 47))
+            v.block(v.var_ref(a, 47).with_type(value.type_))
                 .push(s.var(binding, value))
                 .build();
 
@@ -1176,7 +1185,7 @@ mod tests {
         let binding = p.tuple().push(p.var(a)).push(p.var(b)).build();
         let value = v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build();
         let block =
-            v.block(v.var_ref(value.type_, a, 25))
+            v.block(v.var_ref(a, 25).with_type(value.type_))
                 .push(s.var(binding, value))
                 .build();
 
@@ -1412,6 +1421,7 @@ mod tests {
                     .build(),
                 v.block(v.arg_ref(t.int(), current, 84))
                     .build()
+                    .with_type(t.int())
                     .with_range(74, 32),
                 v.block(
                     v.call()
@@ -1431,7 +1441,9 @@ mod tests {
                                 .build()
                         )
                         .build()
-                ).build()
+                )
+                    .build()
+                    .with_type(t.int())
                     .with_range(106, 50)
             ).build();
 
@@ -1495,7 +1507,7 @@ mod tests {
     fn loop_argument_forwarding() {
         let global_arena = mem::Arena::new();
         let env = Env::new(&global_arena);
-        let (_, _, _, s, _, v) = env.hir();
+        let (_, _, _, s, t, v) = env.hir();
 
         //  "{"                                               2
         //  "    :var n := 8;"                               19
@@ -1509,7 +1521,7 @@ mod tests {
         //  "        };"                                    201
         //  "    }"                                         206
         //  "}"                                             208
-        let (n, current) = (v.id(11, 1), v.id(27, 7));
+        let (n, current) = (v.id(11, 1), v.id(28, 7));
 
         let block = v.block(
             v.loop_()
@@ -1539,12 +1551,13 @@ mod tests {
                                     .build(),
                             ))
                             .build()
+                            .with_type(t.int())
                     ).build()
                 ))
                 .build()
         )
             .push(s.var_id(n, v.int(8, 16)))
-            .push(s.var_id(current, v.int(0, 38)))
+            .push(s.var_id(current, v.int(0, 39)))
             .build();
 
         assert_eq!(
@@ -1552,7 +1565,7 @@ mod tests {
             cat(&[
                 "0 ():",
                 "    $0 := load 8 ; 1@16",
-                "    $1 := load 0 ; 1@38",
+                "    $1 := load 0 ; 1@39",
                 "    jump <1> ($0, $1)",
                 "",
                 "1 (Int, Int):",
@@ -1604,7 +1617,7 @@ mod tests {
         }
 
         fn insert_record(&mut self, r: Record<'g>) {
-            self.registry.records.insert(r.prototype.name, r);
+            self.registry.insert_record(r);
         }
 
         fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {

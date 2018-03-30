@@ -10,7 +10,7 @@
 //! Memory once owned by an arena is never deallocated unless explicitly asked
 //! for; recycling is simply about wiping it out (in Debug mode) and reusing it.
 
-use std::{cell, mem, ptr, slice, usize};
+use std::{cell, fmt, mem, ptr, slice, usize};
 
 use basic::com::Range;
 use basic::mem::Array;
@@ -176,6 +176,19 @@ impl<'target, T> CloneInto<'target> for [T]
 
         array.into_slice()
     }
+}
+
+//
+//  Implementation of traits
+//
+impl fmt::Debug for Arena {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{{}}")
+    }
+}
+
+impl Default for Arena {
+    fn default() -> Self { Arena::new() }
 }
 
 //

@@ -206,6 +206,12 @@ impl<'a> Value<'a> {
         self
     }
 
+    /// Sets the expression of the value.
+    pub fn with_expr(mut self, expr: Expr<'a>) -> Value<'a> {
+        self.expr = expr;
+        self
+    }
+
     /// Sets the gvn of the value.
     pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
         self.gvn = gvn.into();
@@ -215,6 +221,18 @@ impl<'a> Value<'a> {
     /// Sets the range.
     pub fn with_range(mut self, pos: usize, len: usize) -> Value<'a> {
         self.range = com::Range::new(pos, len);
+        self
+    }
+
+    /// Sets the type.
+    pub fn with_type(mut self, t: Type<'a>) -> Value<'a> {
+        self.type_ = t;
+        self
+    }
+
+    /// Strips the type.
+    pub fn without_type(mut self) -> Value<'a> {
+        self.type_ = Type::unresolved();
         self
     }
 }
@@ -413,7 +431,7 @@ impl convert::From<u32> for Gvn {
 impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
     fn from(c: Constructor<'a, Value<'a>>) -> Self {
         Value {
-            type_: Type::Rec(c.type_),
+            type_: c.type_,
             range: c.span(),
             expr: Expr::Constructor(c),
             gvn: Default::default(),

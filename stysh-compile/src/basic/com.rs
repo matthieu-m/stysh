@@ -90,12 +90,17 @@ impl Range {
 
     /// Shifts range to the left.
     pub fn shift_left(self, n: usize) -> Range {
-        Range { offset: self.offset - (n as u32), ..self }
+        self.shift_to(self.offset() - n)
     }
 
     /// Shifts range to the right.
     pub fn shift_right(self, n: usize) -> Range {
-        Range { offset: self.offset + (n as u32), ..self }
+        self.shift_to(self.offset() + n)
+    }
+
+    /// Shifts range to specified offset.
+    pub fn shift_to(self, offset: usize) -> Range {
+        Range { offset: offset as u32, ..self }
     }
 
     /// Skips n from the left.

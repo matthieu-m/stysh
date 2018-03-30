@@ -110,10 +110,11 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     fn pattern_of_var(&self, var: ast::VariableIdentifier)
         -> hir::Pattern<'static>
     {
-        self.context.insert_binding(var.into(), hir::Type::unresolved());
+        let gvn =
+            self.context.insert_binding(var.into(), hir::Type::unresolved());
         self.context.mark_unfetched_value(var.into());
 
-        hir::Pattern::Var(var.into(), Default::default())
+        hir::Pattern::Var(var.into(), gvn)
     }
 
     fn stmt_of_return<'b>(&self,
@@ -210,7 +211,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 => self.value_of_prefix_operator(op, e, expr.span()),
             Tuple(t) => self.value_of_tuple(&t),
             Var(id) => self.value_of_variable(id),
-        }
+        }.with_gvn(self.context.gvn())
     }
 
     fn value_of_block(&self, block: &ast::Block) -> hir::Value<'g> {
@@ -230,7 +231,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::unresolved(),
             range: block.span(),
             expr: hir::Expr::Block(stmts, expr),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -273,7 +274,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 hir::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[left, right])
             ),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -291,7 +292,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 arguments: arguments,
                 range: c.span(),
             }),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -308,7 +309,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::unresolved(),
             range: fun.span(),
             expr: hir::Expr::Call(callable, values),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -332,7 +333,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::unresolved(),
             range: field.span(),
             expr: expr,
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -349,7 +350,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 self.global_arena.insert(true_branch),
                 self.global_arena.insert(false_branch),
             ),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -377,7 +378,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::Builtin(hir::BuiltinType::Bool),
             range: range,
             expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(value)),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -391,7 +392,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
             expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -402,7 +403,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::Builtin(hir::BuiltinType::Int),
             range: range,
             expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -415,7 +416,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
             expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -432,7 +433,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::Builtin(hir::BuiltinType::Void),
             range: loop_.span(),
             expr: hir::Expr::Loop(stmts),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -459,7 +460,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 hir::Callable::Builtin(op),
                 self.global_arena.insert_slice(&[expr])
             ),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
@@ -471,14 +472,28 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::unresolved(),
             range: tup.span(),
             expr: hir::Expr::Tuple(expr),
-            gvn: Default::default(),
+            gvn: self.context.gvn(),
         }
     }
 
     fn value_of_variable(&self, var: ast::VariableIdentifier)
         -> hir::Value<'g>
     {
-        self.scope.lookup_binding(var.into())
+        let expr =
+            self.scope
+                .lookup_binding(var.into())
+                .map(|name| {
+                    let gvn = self.context.get_binding(name).0;
+                    hir::Expr::Ref(name, gvn)
+                })
+                .unwrap_or(hir::Expr::UnresolvedRef(var.into()));
+
+        hir::Value {
+            type_: hir::Type::unresolved(),
+            range: var.span(),
+            expr: expr,
+            gvn: self.context.gvn(),
+        }
     }
 
     fn rescope<'b>(&self, scope: &'b Scope<'g>) -> SymbolMapper<'b, 'g, 'local>
@@ -900,9 +915,9 @@ mod tests {
 
             let a = v.id(7, 1);
 
-            v.block(v.var_ref(a, 28))
+            v.block(v.name_ref(a, 28))
                 .push(s.var(p.var(a), v.int(1, 12)))
-                .push(s.set(v.var_ref(a, 20), v.int(2, 25)))
+                .push(s.set(v.name_ref(a, 20), v.int(2, 25)))
                 .build()
                 .without_type()
         };
@@ -946,10 +961,10 @@ mod tests {
                     .without_type()
                     .with_range(12, 4);
 
-            v.block(v.var_ref(a, 33))
+            v.block(v.name_ref(a, 33))
                 .push(s.var(p.var(a), tup))
                 .push(s.set(
-                    v.field_access(0, v.var_ref(a, 23)).build(),
+                    v.field_access(0, v.name_ref(a, 23)).build(),
                     v.int(2, 30)
                 ))
                 .build()
@@ -1036,7 +1051,7 @@ mod tests {
 
             let (a, b) = (v.id(7, 1), v.id(20, 1));
             let add =
-                v.call().push(v.var_ref(a, 28)).push(v.var_ref(b, 32)).build();
+                v.call().push(v.name_ref(a, 28)).push(v.name_ref(b, 32)).build();
 
             v.block(add)
                 .push(s.var(p.var(a), v.int(1, 12)))
@@ -1068,7 +1083,7 @@ mod tests {
 
             let a = v.id(7, 1);
 
-            v.block(v.var_ref(a, 28))
+            v.block(v.name_ref(a, 28))
                 .push(s.var(p.var(a), v.int(1, 12)))
                 .push(s.var(p.ignored(20), v.int(2, 25)))
                 .build()
@@ -1109,7 +1124,7 @@ mod tests {
             env.insert_record(rec, &[23, 34]);
             let rec = hir::Type::Rec(rec, Default::default());
 
-            v.block(v.var_ref(a, 43))
+            v.block(v.name_ref(a, 43))
                 .push(s.var(
                     p.constructor(rec, 23, 7)
                         .push(p.var(a))
@@ -1161,7 +1176,7 @@ mod tests {
                 Default::default(),
             );
 
-            v.block(v.var_ref(a, 55))
+            v.block(v.name_ref(a, 55))
                 .push(s.var(
                     p.constructor(rec, 27, 11)
                         .push(p.var(a)).name(env.field_id(32, 2))
@@ -1199,7 +1214,7 @@ mod tests {
 
             let (a, b) = (v.id(8, 1), v.id(11, 1));
 
-            v.block(v.var_ref(a, 25))
+            v.block(v.name_ref(a, 25))
                 .push(s.var(
                     p.tuple().push(p.var(a)).push(p.var(b)).build(),
                     v.tuple()
@@ -1292,7 +1307,7 @@ mod tests {
             hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
-        fn resolver<'a, 'local>(&'a self, local: &'local mem::Arena)
+        fn mapper<'a, 'local>(&'a self, local: &'local mem::Arena)
             -> super::SymbolMapper<'a, 'g, 'local>
         {
             super::SymbolMapper::new(
@@ -1303,6 +1318,15 @@ mod tests {
             )
         }
 
+        fn unnumber_value(&self, v: hir::Value<'g>, local_arena: &mem::Arena)
+            -> hir::Value<'g>
+        {
+            use self::hir::gvn::GlobalValueNumberer;
+
+            let gvn = GlobalValueNumberer::new(self.arena, local_arena);
+            gvn.unnumber_value(&v)
+        }
+
         fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {
             self.scrubber.scrub_value(self.value_of_resolved(expr))
         }
@@ -1311,7 +1335,8 @@ mod tests {
             let expr = self.ast_resolver.resolve_expr(*expr);
 
             let mut local_arena = mem::Arena::new();
-            let result = self.resolver(&local_arena).value_of(&expr);
+            let result = self.mapper(&local_arena).value_of(&expr);
+            let result = self.unnumber_value(result, &local_arena);
             local_arena.recycle();
 
             result

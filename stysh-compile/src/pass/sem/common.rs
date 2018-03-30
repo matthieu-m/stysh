@@ -1,6 +1,6 @@
 //! Common Elements.
 
-use std::{cell, collections};
+use std::{cell, cmp, collections};
 
 use basic::com::{self, Span};
 
@@ -45,18 +45,29 @@ impl<'a> Context<'a> {
     //  Bindings
     //
 
+    /// Returns a GVN.
+    pub fn gvn(&self) -> Gvn { self.0.borrow_mut().gvn() }
+
     /// Returns the most up-to-date type associated with the binding.
     ///
     /// Panics: if the name is unknown.
-    pub fn get_binding(&self, name: ValueIdentifier) -> Type<'a> {
+    pub fn get_binding(&self, name: ValueIdentifier) -> (Gvn, Type<'a>) {
         self.0.borrow().get_binding(name)
+    }
+
+    /// Inserts a binding with its currently known GVN and type.
+    ///
+    /// Panics: In Debug, if the binding is already inserted.
+    pub fn insert_argument(&self, name: ValueIdentifier, gvn: Gvn, ty: Type<'a>) {
+        self.0.borrow_mut().insert_binding(name, gvn, ty);
     }
 
     /// Inserts a binding with its currently known type.
     ///
     /// Panics: In Debug, if the binding is already inserted.
-    pub fn insert_binding(&self, name: ValueIdentifier, ty: Type<'a>) {
-        self.0.borrow_mut().insert_binding(name, ty);
+    pub fn insert_binding(&self, name: ValueIdentifier, ty: Type<'a>) -> Gvn {
+        let gvn = self.gvn();
+        self.0.borrow_mut().insert_binding(name, gvn, ty)
     }
 
     /// Updates an existing binding with a more up-to-date type.
@@ -205,8 +216,10 @@ impl<T> Resolution<T> {
 
 #[derive(Clone, Debug, Default)]
 struct ContextImpl<'a> {
+    //  Global Value Number.
+    gvn: u32,
     //  Bindings of a particular function/value.
-    bindings: collections::HashMap<com::Range, Type<'a>>,
+    bindings: collections::HashMap<com::Range, (Gvn, Type<'a>)>,
     //  Names not yet resolved ("fetched").
     unfetched_items: collections::HashSet<com::Range>,
     unfetched_values: collections::HashSet<com::Range>,
@@ -225,7 +238,12 @@ impl<'a> ContextImpl<'a> {
     //
     //  Bindings
     //
-    fn get_binding(&self, name: ValueIdentifier) -> Type<'a> {
+    fn gvn(&mut self) -> Gvn {
+        self.gvn += 1;
+        Gvn(self.gvn)
+    }
+
+    fn get_binding(&self, name: ValueIdentifier) -> (Gvn, Type<'a>) {
         match self.bindings.get(&name.span()).cloned() {
             Some(t) => t,
             None => unreachable!(
@@ -235,20 +253,26 @@ impl<'a> ContextImpl<'a> {
         }
     }
 
-    fn insert_binding(&mut self, name: ValueIdentifier, ty: Type<'a>) {
+    fn insert_binding(&mut self, name: ValueIdentifier, gvn: Gvn, ty: Type<'a>)
+        -> Gvn
+    {
         debug_assert!(
             !self.bindings.contains_key(&name.span()),
             "{:?} already contained", name
         );
-        self.bindings.insert(name.span(), ty);
+
+        //  When a custom gvn is used, it could overtake the generator.
+        self.gvn = cmp::max(self.gvn, gvn.0);
+
+        self.bindings.insert(name.span(), (gvn, ty));
+        gvn
     }
 
     fn update_binding(&mut self, name: ValueIdentifier, ty: Type<'a>) {
-        debug_assert!(
-            self.bindings.contains_key(&name.span()),
-            "{:?} not already contained", name
-        );
-        self.bindings.insert(name.span(), ty);
+        let v = self.bindings.get_mut(&name.span());
+        debug_assert!(v.is_some(), "{:?} not already contained", name);
+
+        v.unwrap().1 = ty;
     }
 
     //

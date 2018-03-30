@@ -144,14 +144,16 @@ fn create_prototype<'a, 'g>(
         .prototype(item);
     local_arena.recycle();
 
+    println!("create_prototype => {:?}", result);
+
     result
 }
 
-fn create_item<'a, 'g>(
+fn create_item<'g>(
     item: &ast::Item,
     proto: &'g hir::Prototype<'g>,
-    scope: &'a scp::Scope<'g>,
-    registry: &'a hir::Registry<'g>,
+    scope: &scp::Scope<'g>,
+    registry: &hir::Registry<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena
 )
@@ -163,6 +165,8 @@ fn create_item<'a, 'g>(
     let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
         .item(proto, item);
     local_arena.recycle();
+
+    println!("create_item => {:?}", result);
 
     result
 }
@@ -183,6 +187,8 @@ fn create_value<'a, 'g>(
         .expression(expr);
     local_arena.recycle();
 
+    println!("create_value => {:?}", result);
+
     result
 }
 
@@ -194,17 +200,14 @@ fn create_cfg_from_value<'g>(
 )
     -> sir::ControlFlowGraph<'g>
 {
-    use stysh_compile::pass::sem::GlobalValueNumberer;
     use stysh_compile::pass::ssa::GraphBuilder;
-
-    let value =
-        GlobalValueNumberer::new(global_arena, local_arena)
-            .number_value(value);
 
     let result =
         GraphBuilder::new(global_arena, local_arena, registry)
             .from_value(&value);
     local_arena.recycle();
+
+    println!("create_cfg_from_value => {}", result);
 
     result
 }
@@ -217,17 +220,17 @@ fn create_cfg_from_function<'g>(
 )
     -> sir::ControlFlowGraph<'g>
 {
-    use stysh_compile::pass::sem::GlobalValueNumberer;
     use stysh_compile::pass::ssa::GraphBuilder;
-
-    let fun =
-        GlobalValueNumberer::new(global_arena, local_arena)
-            .number_function(fun);
 
     let result =
         GraphBuilder::new(global_arena, local_arena, registry)
             .from_function(&fun);
     local_arena.recycle();
+
+    println!(
+        "create_cfg_from_function {:?} =>\n{}",
+        fun.prototype.name, result
+    );
 
     result
 }

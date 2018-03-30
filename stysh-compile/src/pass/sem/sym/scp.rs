@@ -2,7 +2,6 @@
 
 use std::fmt;
 
-use basic::com::Span;
 use basic::mem;
 
 use model::hir::*;
@@ -10,23 +9,13 @@ use model::hir::*;
 /// A Lexical Scope trait.
 pub trait Scope<'g>: fmt::Debug {
     /// Find the definition of a binding, if known.
-    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g>;
+    fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier>;
 
     /// Find the definition of a function, if known.
     fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g>;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type<'g>;
-
-    /// Returns an unresolved reference.
-    fn unresolved_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        Value {
-            type_: Type::unresolved(),
-            range: name.span(),
-            expr: Expr::UnresolvedRef(name),
-            gvn: Default::default(),
-        }
-    }
 
     /// Returns an unresolved reference.
     fn unresolved_function(&self, name: ValueIdentifier) -> Callable<'g> {
@@ -139,8 +128,8 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 //  Implementations of Scope
 //
 impl<'g> Scope<'g> for BuiltinScope {
-    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        self.unresolved_binding(name)
+    fn lookup_binding(&self, _: ValueIdentifier) -> Option<ValueIdentifier> {
+        None
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
@@ -162,17 +151,11 @@ impl<'g> Scope<'g> for BuiltinScope {
 }
 
 impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
-    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        if let Some(&id) = self.arguments.get(&name.id()) {
-            return Value {
-                type_: Type::unresolved(),
-                range: name.span(),
-                expr: Expr::ArgumentRef(id, Default::default()),
-                gvn: Default::default(),
-            };
-        }
-
-        self.unresolved_binding(name)
+    fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
+        self.arguments
+            .get(&name.id())
+            .cloned()
+            .or_else(|| self.parent.lookup_binding(name))
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
@@ -185,17 +168,11 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
 }
 
 impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
-    fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-        if let Some(&id) = self.values.get(&name.id()) {
-            return Value {
-                type_: Type::unresolved(),
-                range: name.span(),
-                expr: Expr::VariableRef(id, Default::default()),
-                gvn: Default::default(),
-            };
-        }
-
-        self.parent.lookup_binding(name)
+    fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
+        self.values
+            .get(&name.id())
+            .cloned()
+            .or_else(|| self.parent.lookup_binding(name))
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
@@ -268,7 +245,7 @@ pub mod mocks {
     use basic::mem;
     use model::hir::*;
 
-    use super::{BuiltinScope, Scope};
+    use super::{BuiltinScope, IdMap, Scope};
 
     /// A mock for the Scope trait.
     #[derive(Debug)]
@@ -278,7 +255,7 @@ pub mod mocks {
         /// Map of types for lookup_type.
         pub types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
         /// Map of values for lookup_binding.
-        pub values: mem::ArrayMap<'g, ValueIdentifier, Value<'g>>,
+        values: IdMap<'g, ValueIdentifier>,
         /// Parent scope, automatically get all builtins.
         pub parent: BuiltinScope,
     }
@@ -293,15 +270,16 @@ pub mod mocks {
                 parent: BuiltinScope::new(),
             }
         }
+
+        /// Inserts Binding.
+        pub fn insert_binding(&mut self, name: ValueIdentifier) {
+            self.values.insert(name.id(), name);
+        }
     }
 
     impl<'g> Scope<'g> for MockScope<'g> {
-        fn lookup_binding(&self, name: ValueIdentifier) -> Value<'g> {
-            if let Some(&v) = self.values.get(&name) {
-                return v;
-            }
-
-            self.parent.lookup_binding(name)
+        fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
+            self.values.get(&name.id()).cloned()
         }
 
         fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
@@ -350,7 +328,7 @@ mod tests {
 
         assert_eq!(
             scope.lookup_binding(v.id(23, 1).with_id(a)),
-            v.unresolved_ref(v.id(23, 1).with_id(a))
+            None
         );
     }
 
@@ -366,7 +344,6 @@ mod tests {
         let arena = mem::Arena::new();
         let f = Factory::new(&arena);
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
-        let unresolved = t.unresolved(Default::default()).build();
 
         let prot =
             p.fun(i.id(5, 3), t.int())
@@ -379,17 +356,17 @@ mod tests {
 
         assert_eq!(
             scope.lookup_binding(v.id(42, 1).with_id(c)),
-            v.unresolved_ref(v.id(42, 1).with_id(c))
+            None
         );
 
         assert_eq!(
             scope.lookup_binding(v.id(34, 1).with_id(a)),
-            v.arg_ref(unresolved, v.id(9, 1).with_id(a), 34)
+            Some(v.id(9, 1).with_id(a))
         );
 
         assert_eq!(
             scope.lookup_binding(v.id(38, 1).with_id(b)),
-            v.arg_ref(unresolved, v.id(17, 1).with_id(b), 38)
+            Some(v.id(17, 1).with_id(b))
         );
     }
 }

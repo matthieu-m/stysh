@@ -670,14 +670,6 @@ impl<'a> ValueFactory<'a> {
         ValueIdentifier(Default::default(), range(pos, len))
     }
 
-    /// Creates an ArgumentRef Value.
-    pub fn arg_ref(&self, type_: Type<'a>, name: ValueIdentifier, pos: usize)
-        -> Value<'a>
-    {
-        value(type_, Expr::ArgumentRef(name, Default::default()))
-            .with_range(pos, name.span().length())
-    }
-
     /// Creates a BlockBuilder.
     pub fn block(&self, value: Value<'a>) -> BlockBuilder<'a> {
         BlockBuilder::new(self.arena, value)
@@ -747,6 +739,12 @@ impl<'a> ValueFactory<'a> {
     /// Creates a LoopBuilder.
     pub fn loop_(&self) -> LoopBuilder<'a> { LoopBuilder::new(self.arena) }
 
+    /// Creates an Ref Value.
+    pub fn name_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
+        value(Type::unresolved(), Expr::Ref(name, Default::default()))
+            .with_range(pos, name.span().length())
+    }
+
     /// Creates a ValueTupleBuilder.
     pub fn tuple(&self) -> ValueTupleBuilder<'a> {
         ValueTupleBuilder::new(self.arena)
@@ -769,27 +767,19 @@ impl<'a> ValueFactory<'a> {
             .with_range(name.span().offset(), name.span().length())
     }
 
-    /// Creates a variable ref Value.
-    pub fn var_ref(&self, name: ValueIdentifier, pos: usize)
-        -> Value<'a>
-    {
-        value(Type::unresolved(), Expr::VariableRef(name, Default::default()))
-            .with_range(pos, name.span().length())
-    }
-
     /// Shortcut: creates a Bool ref.
     pub fn bool_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::Bool))
+        self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::Bool))
     }
 
     /// Shortcut: creates a Int ref.
     pub fn int_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::Int))
+        self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::Int))
     }
 
     /// Shortcut: creates a String ref.
     pub fn string_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
-        self.var_ref(name, pos).with_type(Type::Builtin(BuiltinType::String))
+        self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::String))
     }
 }
 

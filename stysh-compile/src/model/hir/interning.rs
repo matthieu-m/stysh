@@ -344,7 +344,6 @@ impl<'g> Resolver<'g> {
         use self::Expr::*;
 
         match expr {
-            ArgumentRef(v, g) => ArgumentRef(self.resolve_value_id(v), g),
             Block(stmts, v) => self.resolve_block(stmts, v),
             BuiltinVal(v) => BuiltinVal(CloneInto::clone_into(&v, self.global_arena)),
             Call(c, a) => self.resolve_call(c, a),
@@ -358,13 +357,13 @@ impl<'g> Resolver<'g> {
             ),
             Implicit(i) => Implicit(self.resolve_implicit(i)),
             Loop(s) => Loop(self.resolve_statements(s)),
+            Ref(v, g) => Ref(self.resolve_value_id(v), g),
             Tuple(t) => Tuple(self.resolve_tuple_value(t)),
             UnresolvedField(v, id) => UnresolvedField(
                 self.insert(self.resolve_value(*v)),
                 self.resolve_value_id(id),
             ),
             UnresolvedRef(id) => UnresolvedRef(self.resolve_value_id(id)),
-            VariableRef(id, g) => VariableRef(self.resolve_value_id(id), g),
         }
     }
 
@@ -541,7 +540,6 @@ impl<'g> Scrubber<'g> {
         use self::Expr::*;
 
         match expr {
-            ArgumentRef(v, g) => ArgumentRef(self.scrub_value_id(v), g),
             Block(stmts, v) => self.scrub_block(stmts, v),
             BuiltinVal(v) => BuiltinVal(CloneInto::clone_into(&v, self.global_arena)),
             Call(c, a) => self.scrub_call(c, a),
@@ -555,13 +553,13 @@ impl<'g> Scrubber<'g> {
             ),
             Implicit(i) => Implicit(self.scrub_implicit(i)),
             Loop(s) => Loop(self.scrub_statements(s)),
+            Ref(v, g) => Ref(self.scrub_value_id(v), g),
             Tuple(t) => Tuple(self.scrub_tuple_value(t)),
             UnresolvedField(v, id) => UnresolvedField(
                 self.insert(self.scrub_value(*v)),
                 self.scrub_value_id(id),
             ),
             UnresolvedRef(id) => UnresolvedRef(self.scrub_value_id(id)),
-            VariableRef(id, g) => VariableRef(self.scrub_value_id(id), g),
         }
     }
 

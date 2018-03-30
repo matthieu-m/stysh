@@ -86,9 +86,8 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         use self::Expr::*;
 
         match e {
-            ArgumentRef(..) | BuiltinVal(..) | UnresolvedRef(..)
-                | VariableRef(..)
-                    => Resolution::forward(e),
+            BuiltinVal(..) | Ref(..) | UnresolvedRef(..)
+                => Resolution::forward(e),
             Block(stmts, v) => self.fetch_block(e, stmts, v),
             Call(c, args) => self.fetch_call(e, c, args),
             Constructor(c)

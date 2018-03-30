@@ -111,7 +111,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                 name: hir::ValueIdentifier(a.name.id(), a.name.span()),
                 type_: self.mapper(self.scope).type_of(&a.type_),
                 range: a.span(),
-                gvn: Default::default(),
+                gvn: self.context.gvn(),
             });
         }
 
@@ -169,7 +169,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         -> hir::Item<'g>
     {
         for a in p.arguments {
-            self.context.insert_binding(a.name, a.type_);
+            self.context.insert_argument(a.name, a.gvn, a.type_);
         }
 
         let scope = self.function_scope(self.scope, p);
@@ -249,6 +249,7 @@ mod tests {
     use model::ast::builder::Factory as SynFactory;
     use model::hir::builder::Factory as SemFactory;
     use model::hir::*;
+    use model::hir::gvn::GlobalValueNumberer;
     use model::hir::interning::Scrubber;
     use model::hir::mocks::MockRegistry;
     use super::Context;
@@ -388,6 +389,7 @@ mod tests {
                 .push(v.id(9, 1), t.int())
                 .push(v.id(17, 1), t.int())
                 .range(0, 31)
+                .with_gvn()
                 .build()
                 .into()
         );
@@ -417,8 +419,8 @@ mod tests {
 
         let body =
             v.call()
-                .push(v.arg_ref(t.int(), v.id(9, 1), 34))
-                .push(v.arg_ref(t.int(), v.id(17, 1), 38))
+                .push(v.name_ref(v.id(9, 1), 34).with_type(t.int()))
+                .push(v.name_ref(v.id(17, 1), 38).with_type(t.int()))
                 .build()
                 .with_type(t.int());
 
@@ -529,12 +531,24 @@ mod tests {
 
             let mut local_arena = mem::Arena::new();
             let result = self.builder(&local_arena).item(proto, &item);
+            let result = self.unnumber_item(result, &local_arena);
             local_arena.recycle();
             self.scrubber.scrub_item(result)
         }
 
         fn lookup(&self, raw: &[u8]) -> mem::InternId {
             self.resolver.interner().lookup(raw).expect("Known identifier")
+        }
+
+        fn unnumber_item(&self, item: Item<'g>, local_arena: &mem::Arena)
+            -> Item<'g>
+        {
+            let gvn = GlobalValueNumberer::new(self.arena, local_arena);
+
+            match item {
+                Item::Fun(f) => Item::Fun(gvn.unnumber_function(&f)),
+                i => i,
+            }
         }
     }
 }

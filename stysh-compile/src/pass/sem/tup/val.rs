@@ -96,17 +96,6 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         )
     }
 
-    fn unify_bound_ref(&self, name: ValueIdentifier) -> Result<'g> {
-        let (_, result) =
-            self.merge(self.core.context.get_binding(name), self.type_);
-
-        if let Action::Update(to) = result {
-            self.core.context.update_binding(name, to);
-        }
-
-        (Resolution::forward(self.expr), result)
-    }
-
     fn unify_call(&self, c: Callable<'g>, args: &'g [Value<'g>]) -> Result<'g> {
         use self::Callable::*;
 
@@ -207,8 +196,6 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         match self.expr {
             Implicit(..) | UnresolvedRef(..) | UnresolvedField(..)
                 => (Resolution::forward(self.expr), Action::Keep(self.type_)),
-            ArgumentRef(name, _) | VariableRef(name, _)
-                => self.unify_bound_ref(name),
             BuiltinVal(v) => {
                 let action = self.merge(v.result_type(), self.type_).1;
                 (Resolution::forward(self.expr), action)
@@ -219,6 +206,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             FieldAccess(v, i) => self.unify_field_access(v, i),
             If(c, t, f) => self.unify_if(c, t, f),
             Loop(stmts) => self.unify_loop(stmts),
+            Ref(name, _) => self.unify_variable_ref(name),
             Tuple(t) => self.unify_tuple(t),
         }
     }
@@ -273,6 +261,16 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             t.combine(self.expr, |t| Expr::Tuple(t)),
             ty,
         )
+    }
+
+    fn unify_variable_ref(&self, name: ValueIdentifier) -> Result<'g> {
+        let (_, result) = self.merge(self.core.type_of(name), self.type_);
+
+        if let Action::Update(to) = result {
+            self.core.context.update_binding(name, to);
+        }
+
+        (Resolution::forward(self.expr), result)
     }
 
     fn merge(&self, t0: Type<'g>, t1: Type<'g>) -> (Action<'g>, Action<'g>) {

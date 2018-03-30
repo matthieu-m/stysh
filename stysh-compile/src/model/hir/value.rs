@@ -26,8 +26,6 @@ pub struct Value<'a> {
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Expr<'a> {
-    /// A reference to an existing argument binding.
-    ArgumentRef(ValueIdentifier, Gvn),
     /// A block expression.
     Block(&'a [Stmt<'a>], Option<&'a Value<'a>>),
     /// A built-in value.
@@ -44,14 +42,14 @@ pub enum Expr<'a> {
     Implicit(Implicit<'a>),
     /// A loop.
     Loop(&'a [Stmt<'a>]),
+    /// A reference to an existing binding.
+    Ref(ValueIdentifier, Gvn),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
     /// An unresolved field access.
     UnresolvedField(&'a Value<'a>, ValueIdentifier),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
-    /// A reference to an existing variable binding.
-    VariableRef(ValueIdentifier, Gvn),
 }
 
 /// A built-in function.
@@ -198,8 +196,7 @@ impl<'a> Value<'a> {
         use self::Expr::*;
 
         self.expr = match self.expr {
-            ArgumentRef(id, _) => ArgumentRef(id, gvn.into()),
-            VariableRef(id, _) => VariableRef(id, gvn.into()),
+            Ref(id, _) => Ref(id, gvn.into()),
             _ => panic!("Cannot specify reference GVN in {:?}", self.expr),
         };
 
@@ -324,7 +321,6 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
         use self::Expr::*;
 
         match *self {
-            ArgumentRef(v, gvn) => ArgumentRef(v, gvn),
             Block(stmts, v) => Block(
                 CloneInto::clone_into(stmts, arena),
                 v.map(|v| arena.intern_ref(v)),
@@ -342,8 +338,8 @@ impl<'a, 'target> CloneInto<'target> for Expr<'a> {
             ),
             Implicit(i) => Implicit(arena.intern(&i)),
             Loop(stmts) => Loop(CloneInto::clone_into(stmts, arena)),
+            Ref(v, gvn) => Ref(v, gvn),
             Tuple(t) => Tuple(arena.intern(&t)),
-            VariableRef(v, gvn) => VariableRef(v, gvn),
             _ => panic!("not yet implement for {:?}", self),
         }
     }

@@ -29,7 +29,12 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 
     /// Number each and every value contained within.
     pub fn number_function(&self, function: &Function) -> Function<'g> {
-        let mut imp = Impl::new(self.global_arena, self.local_arena);
+        let mut counter = 0;
+        let mut imp = Impl::new(
+            || { counter += 1; Gvn(counter) },
+            self.global_arena,
+            self.local_arena
+        );
 
         Function {
             prototype: imp.function_proto_ref(function.prototype),
@@ -39,7 +44,38 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 
     /// Number each and every value contained within.
     pub fn number_value(&self, value: &Value) -> Value<'g> {
-        let mut imp = Impl::new(self.global_arena, self.local_arena);
+        let mut counter = 0;
+        let mut imp = Impl::new(
+            || { counter += 1; Gvn(counter) },
+            self.global_arena,
+            self.local_arena
+        );
+
+        imp.value(value)
+    }
+
+    /// Unnumber each and every value contained within.
+    pub fn unnumber_function(&self, function: &Function) -> Function<'g> {
+        let mut imp = Impl::new(
+            Gvn::default,
+            self.global_arena,
+            self.local_arena
+        );
+
+        Function {
+            prototype: imp.function_proto_ref(function.prototype),
+            body: imp.value(&function.body),
+        }
+    }
+
+    /// Unnumber each and every value contained within.
+    pub fn unnumber_value(&self, value: &Value) -> Value<'g> {
+        let mut imp = Impl::new(
+            Gvn::default,
+            self.global_arena,
+            self.local_arena
+        );
+
         imp.value(value)
     }
 }
@@ -47,20 +83,24 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 //
 //  Implementation Details
 //
-struct Impl<'g, 'local> {
+struct Impl<'g, 'local, G: FnMut() -> Gvn> {
+    generator: G,
     arena: &'g mem::Arena,
     bindings: mem::ArrayMap<'local, ValueIdentifier, Gvn>,
-    counter: u32,
 }
 
-impl<'g, 'local> Impl<'g, 'local> {
-    fn new(global_arena: &'g mem::Arena, local_arena: &'local mem::Arena)
+impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
+    fn new(
+        generator: G,
+        global_arena: &'g mem::Arena,
+        local_arena: &'local mem::Arena
+    )
         -> Self
     {
         Impl {
+            generator: generator,
             arena: global_arena,
             bindings: mem::ArrayMap::new(local_arena),
-            counter: 1,
         }
     }
 
@@ -119,7 +159,6 @@ impl<'g, 'local> Impl<'g, 'local> {
         use self::Expr::*;
 
         match *expr {
-            ArgumentRef(id, _) => ArgumentRef(id, self.lookup_identifier(id)),
             Block(ss, v) => Block(self.stmts(ss), v.map(|v| self.value_ref(v))),
             BuiltinVal(v) => BuiltinVal(self.intern(&v)),
             Call(c, vs) => Call(self.callable(&c), self.values(vs)),
@@ -129,10 +168,10 @@ impl<'g, 'local> Impl<'g, 'local> {
                 => If(self.value_ref(c), self.value_ref(t), self.value_ref(f)),
             Implicit(i) => Implicit(self.implicit(&i)),
             Loop(ss) => Loop(self.stmts(ss)),
+            Ref(id, _) => Ref(id, self.lookup_identifier(id)),
             Tuple(t) => Tuple(self.tuple_value(&t)),
             UnresolvedField(v, id) => UnresolvedField(self.value_ref(v), id),
             UnresolvedRef(id) => UnresolvedRef(id),
-            VariableRef(id, _) => VariableRef(id, self.lookup_identifier(id)),
         }
     }
 
@@ -276,11 +315,7 @@ impl<'g, 'local> Impl<'g, 'local> {
         self.bindings.get(&id).cloned().expect("Known identifier!")
     }
 
-    fn next(&mut self) -> Gvn {
-        let result = Gvn(self.counter);
-        self.counter += 1;
-        result
-    }
+    fn next(&mut self) -> Gvn { (self.generator)() }
 
     fn register_identifier(&mut self, id: ValueIdentifier) -> Gvn {
         let gvn = self.next();

@@ -67,7 +67,7 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
     }
 
     fn unify_variable(&self, name: ValueIdentifier, ty: Type<'g>) {
-        let known = self.core.context.get_binding(name);
+        let known = self.core.type_of(name);
         let ty = self.select(known, ty);
         self.core.context.update_binding(name, ty);
     }

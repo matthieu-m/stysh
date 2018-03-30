@@ -164,8 +164,6 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         let gvn = value.gvn;
 
         match value.expr {
-            hir::Expr::ArgumentRef(_, gvn)
-                => Some(self.convert_identifier(current, t, gvn)),
             hir::Expr::Block(stmts, v)
                 => self.convert_block(current, stmts, v),
             hir::Expr::BuiltinVal(val)
@@ -180,10 +178,10 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
             hir::Expr::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
+            hir::Expr::Ref(_, gvn)
+                => Some(self.convert_identifier(current, t, gvn)),
             hir::Expr::Tuple(tuple)
                 => Some(self.convert_tuple(current, value.type_, tuple, gvn, r)),
-            hir::Expr::VariableRef(_, gvn)
-                => Some(self.convert_identifier(current, t, gvn)),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
     }
@@ -579,14 +577,13 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         //
         //  The following bit of code captures this reversal.
         match left.expr {
-            hir::Expr::ArgumentRef(_, gvn) |
-                hir::Expr::VariableRef(_, gvn) => {
+            hir::Expr::FieldAccess(v, i)
+                => self.convert_rebind_recurse_field(current, v, i, left.gvn),
+            hir::Expr::Ref(_, gvn) => {
                 let id = current.last_value();
                 current.push_rebinding(gvn.into(), id, left.type_);
                 return current;
             },
-            hir::Expr::FieldAccess(v, i)
-                => self.convert_rebind_recurse_field(current, v, i, left.gvn),
             hir::Expr::Tuple(t)
                 => self.convert_rebind_recurse_tuple(current, &t),
             _ => unimplemented!("{:?}", left),
@@ -750,8 +747,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 
     fn binding_of(value: &hir::Value) -> BindingId {
         match value.expr {
-            hir::Expr::ArgumentRef(_, gvn) => gvn.into(),
-            hir::Expr::VariableRef(_, gvn) => gvn.into(),
+            hir::Expr::Ref(_, gvn) => gvn.into(),
             _ => value.gvn.into()
         }
     }
@@ -848,6 +844,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
 mod tests {
     use basic::mem;
     use model::hir::builder::*;
+    use model::hir::gvn::*;
     use model::hir::*;
     use model::sir::*;
 
@@ -1033,14 +1030,14 @@ mod tests {
         let a_v = v.tuple().push(v.int(1, 13)).push(a_1_v).build();
 
         let block =
-            v.block(v.var_ref(a, 42).with_type(a_v.type_))
+            v.block(v.name_ref(a, 42).with_type(a_v.type_))
                 .push(s.var_id(a, a_v))
                 .push(s.set(
                     v.field_access(
                         0,
                         v.field_access(
                             1,
-                            v.var_ref(a, 30).with_type(a_v.type_)
+                            v.name_ref(a, 30).with_type(a_v.type_)
                         ).build(),
                     ).build(),
                     v.int(4, 39),
@@ -1139,7 +1136,7 @@ mod tests {
                 .push(v.int(2, 43))
                 .build_value();
         let block =
-            v.block(v.var_ref(a, 47).with_type(value.type_))
+            v.block(v.name_ref(a, 47).with_type(value.type_))
                 .push(s.var(binding, value))
                 .build();
 
@@ -1189,7 +1186,7 @@ mod tests {
         let binding = p.tuple().push(p.var(a)).push(p.var(b)).build();
         let value = v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build();
         let block =
-            v.block(v.var_ref(a, 25).with_type(value.type_))
+            v.block(v.name_ref(a, 25).with_type(value.type_))
                 .push(s.var(binding, value))
                 .build();
 
@@ -1225,8 +1222,8 @@ mod tests {
 
         let body =
             v.call()
-                .push(v.arg_ref(t.int(), a, 34))
-                .push(v.arg_ref(t.int(), b, 38))
+                .push(v.name_ref(a, 34).with_type(t.int()))
+                .push(v.name_ref(b, 38).with_type(t.int()))
                 .build();
 
         let function = i.fun(f, v.block(body).build());
@@ -1294,15 +1291,15 @@ mod tests {
         let left = 
             v.call()
                 .builtin(LessThanOrEqual)
-                .push(v.arg_ref(t.int(), a, 42))
-                .push(v.arg_ref(t.int(), b, 47))
+                .push(v.name_ref(a, 42).with_type(t.int()))
+                .push(v.name_ref(b, 47).with_type(t.int()))
                 .build();
 
         let right =
             v.call()
                 .builtin(LessThan)
-                .push(v.arg_ref(t.int(), b, 54))
-                .push(v.arg_ref(t.int(), c, 58))
+                .push(v.name_ref(b, 54).with_type(t.int()))
+                .push(v.name_ref(c, 58).with_type(t.int()))
                 .build();
 
         let maker = |b| {
@@ -1420,27 +1417,27 @@ mod tests {
             v.if_(
                 v.call()
                     .builtin(Equal)
-                    .push(v.arg_ref(t.int(), count, 63))
+                    .push(v.name_ref(count, 63).with_type(t.int()))
                     .push(v.int(0, 72))
                     .build(),
-                v.block(v.arg_ref(t.int(), current, 84))
+                v.block(v.name_ref(current, 84).with_type(t.int()))
                     .build()
                     .with_type(t.int())
                     .with_range(74, 32),
                 v.block(
                     v.call()
                         .function(proto)
-                        .push(v.arg_ref(t.int(), next, 117))
+                        .push(v.name_ref(next, 117).with_type(t.int()))
                         .push(
                             v.call()
-                                .push(v.arg_ref(t.int(), current, 123))
-                                .push(v.arg_ref(t.int(), next, 133))
+                                .push(v.name_ref(current, 123).with_type(t.int()))
+                                .push(v.name_ref(next, 133).with_type(t.int()))
                                 .build()
                         )
                         .push(
                             v.call()
                                 .builtin(Substract)
-                                .push(v.arg_ref(t.int(), count, 139))
+                                .push(v.name_ref(count, 139).with_type(t.int()))
                                 .push(v.int(1, 147))
                                 .build()
                         )
@@ -1625,8 +1622,6 @@ mod tests {
         }
 
         fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {
-            use pass::sem::GlobalValueNumberer;
-
             let mut local_arena = mem::Arena::new();
 
             let fun =
@@ -1641,8 +1636,6 @@ mod tests {
         }
 
         fn valueit(&self, expr: &Value<'g>) -> ControlFlowGraph<'g> {
-            use pass::sem::GlobalValueNumberer;
-
             let mut local_arena = mem::Arena::new();
 
             let expr =

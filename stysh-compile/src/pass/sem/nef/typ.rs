@@ -122,7 +122,6 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
         if let Some(e) = self.core.registry.lookup_enum(e) {
             for rec in e.variants {
                 if v.id() == rec.prototype.name.id() {
-                    self.fetched_item(v);
                     let r = Type::UnresolvedRec(*rec.prototype, Path::default());
                     return Alteration::update(r);
                 }
@@ -130,10 +129,6 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
         }
 
         Alteration::forward(Type::Unresolved(v, Path::default()))
-    }
-
-    fn fetched_item(&self, i: ItemIdentifier) {
-        self.core.context.fetched_item(i);
     }
 }
 
@@ -150,7 +145,6 @@ mod tests {
         let (i, _, pro, _, t, _) = env.factories();
 
         let mut local = env.local(b":enum E { A, B };    E::B");
-        local.mark_unfetched_items(&[i.id(24, 1)]);
 
         let e =
             i.enum_(pro.enum_(i.id(6, 1)).build())

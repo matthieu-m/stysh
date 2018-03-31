@@ -200,7 +200,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             FieldAccess(v, i) => self.unify_field_access(v, i),
             If(c, t, f) => self.unify_if(c, t, f),
             Loop(stmts) => self.unify_loop(stmts),
-            Ref(name, _) => self.unify_variable_ref(name),
+            Ref(_, g) => self.unify_variable_ref(g),
             Tuple(t) => self.unify_tuple(t),
         }
     }
@@ -257,11 +257,11 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         )
     }
 
-    fn unify_variable_ref(&self, name: ValueIdentifier) -> Result<'g> {
-        let (_, result) = self.merge(self.core.type_of(name), self.type_);
+    fn unify_variable_ref(&self, gvn: Gvn) -> Result<'g> {
+        let (_, result) = self.merge(self.core.type_of(gvn), self.type_);
 
         if let Action::Update(to) = result {
-            self.core.context.update_binding(name, to);
+            self.core.context.set_type_of(gvn, to);
         }
 
         (Alteration::forward(self.expr), result)

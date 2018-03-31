@@ -39,18 +39,16 @@ impl<'a> Context<'a> {
     /// Clears an instance, readying it for reuse.
     pub fn clear(&mut self) { self.0.borrow_mut().clear() }
 
+    /// Returns a fresh GVN.
+    pub fn gvn(&self) -> Gvn { self.0.borrow_mut().gvn() }
+
     //
     //  Bindings
     //
 
-    /// Returns a GVN.
-    pub fn gvn(&self) -> Gvn { self.0.borrow_mut().gvn() }
-
-    /// Returns the most up-to-date type associated with the binding.
-    ///
-    /// Panics: if the name is unknown.
-    pub fn get_binding(&self, name: ValueIdentifier) -> (Gvn, Type<'a>) {
-        self.0.borrow().get_binding(name)
+    /// Returns the GVN associated with the binding.
+    pub fn lookup_binding(&self, name: ValueIdentifier) -> Option<Gvn> {
+        self.0.borrow().lookup_binding(name)
     }
 
     /// Inserts a binding with its currently known GVN and type.
@@ -68,47 +66,32 @@ impl<'a> Context<'a> {
         self.0.borrow_mut().insert_binding(name, gvn, ty)
     }
 
-    /// Updates an existing binding with a more up-to-date type.
-    ///
-    /// Panics: In Debug, if the binding is not already inserted.
-    pub fn update_binding(&self, name: ValueIdentifier, ty: Type<'a>) {
-        self.0.borrow_mut().update_binding(name, ty);
-    }
-
     //
-    //  Names not yet resolved by the Nested Entity Fetcher.
+    //  Nested Entities to Fetch.
     //
 
-    /// Returns the number of names to fetch.
-    pub fn unfetched(&self) -> usize { self.0.borrow().unfetched() }
+    //
+    //  Types to Unify and Propagate.
+    //
 
-    /// Mark an ItemIdentifier as unfetched.
+    //
+    //  HIR summary, in table format
+    //
+
+    /// Returns the type of an existing value.
     ///
-    /// Panics: In Debug, if already marked.
-    pub fn mark_unfetched_item(&self, name: ItemIdentifier) {
-        self.0.borrow_mut().mark_unfetched_item(name);
+    /// Panics: If the value does not exist.
+    pub fn type_of(&self, gvn: Gvn) -> Type<'a> {
+        self.0.borrow().type_of(gvn)
     }
 
-    /// Mark an ValueIdentifier as unfetched.
+    /// Sets the type of a GVN, existing or no.
     ///
-    /// Panics: In Debug, if already marked.
-    pub fn mark_unfetched_value(&self, name: ValueIdentifier) {
-        self.0.borrow_mut().mark_unfetched_value(name);
+    /// Note:   Automatically when inserting a binding.
+    pub fn set_type_of(&self, gvn: Gvn, ty: Type<'a>) {
+        self.0.borrow_mut().set_type_of(gvn, ty);
     }
 
-    /// Mark the ItemIdentifier as fetched.
-    ///
-    /// Panics: In Debug, if unmarked.
-    pub fn fetched_item(&self, name: ItemIdentifier) {
-        self.0.borrow_mut().fetched_item(name);
-    }
-
-    /// Mark the ValueIdentifier as fetched.
-    ///
-    /// Panics: In Debug, if unmarked.
-    pub fn fetched_value(&self, name: ValueIdentifier) {
-        self.0.borrow_mut().fetched_value(name);
-    }
 }
 
 //
@@ -207,38 +190,35 @@ struct ContextImpl<'a> {
     //  Global Value Number.
     gvn: u32,
     //  Bindings of a particular function/value.
-    bindings: collections::HashMap<com::Range, (Gvn, Type<'a>)>,
-    //  Names not yet resolved ("fetched").
-    unfetched_items: collections::HashSet<com::Range>,
-    unfetched_values: collections::HashSet<com::Range>,
+    bindings: collections::HashMap<com::Range, Gvn>,
+    //  Nested Entities to Fetch.
+    //  Types to Unify and Propagate.
+    //  HIR summary, in table format.
+    types: Vec<Type<'a>>,
 }
 
 impl<'a> ContextImpl<'a> {
     //
     //  General
     //
+
     fn clear(&mut self) {
+        self.gvn = 0;
         self.bindings.clear();
-        self.unfetched_items.clear();
-        self.unfetched_values.clear();
+        self.types.clear();
     }
 
-    //
-    //  Bindings
-    //
     fn gvn(&mut self) -> Gvn {
         self.gvn += 1;
         Gvn(self.gvn)
     }
 
-    fn get_binding(&self, name: ValueIdentifier) -> (Gvn, Type<'a>) {
-        match self.bindings.get(&name.span()).cloned() {
-            Some(t) => t,
-            None => unreachable!(
-                "Unknown identifier {:?} in {:?}",
-                name, self.bindings
-            ),
-        }
+    //
+    //  Bindings
+    //
+
+    fn lookup_binding(&self, name: ValueIdentifier) -> Option<Gvn> {
+        self.bindings.get(&name.span()).cloned()
     }
 
     fn insert_binding(&mut self, name: ValueIdentifier, gvn: Gvn, ty: Type<'a>)
@@ -252,54 +232,34 @@ impl<'a> ContextImpl<'a> {
         //  When a custom gvn is used, it could overtake the generator.
         self.gvn = cmp::max(self.gvn, gvn.0);
 
-        self.bindings.insert(name.span(), (gvn, ty));
+        self.bindings.insert(name.span(), gvn);
+        self.set_type_of(gvn, ty);
         gvn
     }
 
-    fn update_binding(&mut self, name: ValueIdentifier, ty: Type<'a>) {
-        let v = self.bindings.get_mut(&name.span());
-        debug_assert!(v.is_some(), "{:?} not already contained", name);
-
-        v.unwrap().1 = ty;
-    }
-
     //
-    //  Names not yet resolved by the Nested Entity Fetcher.
+    //  Nested Entities to Fetch.
     //
 
-    fn unfetched(&self) -> usize {
-        self.unfetched_items.len() + self.unfetched_values.len()
+    //
+    //  Types to Unify and Propagate.
+    //
+
+    //
+    //  HIR summary, in table format
+    //
+
+    fn type_of(&self, gvn: Gvn) -> Type<'a> { self.types[self.index_of(gvn)] }
+
+    fn set_type_of(&mut self, gvn: Gvn, ty: Type<'a>) {
+        let index = self.index_of(gvn);
+
+        if index >= self.types.len() {
+            self.types.resize(index + 1, Type::unresolved());
+        }
+
+        self.types[index] = ty;
     }
 
-    fn mark_unfetched_item(&mut self, name: ItemIdentifier) {
-        debug_assert!(
-            !self.unfetched_items.contains(&name.span()),
-            "{:?} is already marked as unfetched!", name
-        );
-        self.unfetched_items.insert(name.span());
-    }
-
-    fn mark_unfetched_value(&mut self, name: ValueIdentifier) {
-        debug_assert!(
-            !self.unfetched_values.contains(&name.span()),
-            "{:?} is already marked as unfetched!", name
-        );
-        self.unfetched_values.insert(name.span());
-    }
-
-    fn fetched_item(&mut self, name: ItemIdentifier) {
-        debug_assert!(
-            self.unfetched_items.contains(&name.span()),
-            "{:?} is not marked as unfetched!", name
-        );
-        self.unfetched_items.remove(&name.span());
-    }
-
-    fn fetched_value(&mut self, name: ValueIdentifier) {
-        debug_assert!(
-            self.unfetched_values.contains(&name.span()),
-            "{:?} is not marked as unfetched!", name
-        );
-        self.unfetched_values.remove(&name.span());
-    }
+    fn index_of(&self, gvn: Gvn) -> usize { gvn.0 as usize }
 }

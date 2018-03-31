@@ -75,7 +75,6 @@ mod tests {
         let (i, pat, pro, _, t, _) = env.factories();
 
         let mut local = env.local(b":enum E { A, B };    E::B");
-        local.mark_unfetched_items(&[i.id(24, 1)]);
 
         let e =
             i.enum_(pro.enum_(i.id(6, 1)).build())

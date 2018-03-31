@@ -170,10 +170,6 @@ pub mod tests {
             CoreFetcher::new(&self.registry, &self.context, self.global_arena)
         }
 
-        pub fn mark_unfetched_items(&self, items: &[ItemIdentifier]) {
-            for i in items { self.context.mark_unfetched_item(*i); }
-        }
-
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }
 
         pub fn scrubber(&self) -> Scrubber<'g> {

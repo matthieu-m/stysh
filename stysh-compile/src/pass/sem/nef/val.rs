@@ -185,17 +185,9 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
             _ => None,
         };
 
-        let result = tuple.and_then(|t|
+        tuple.and_then(|t|
             t.names.iter().position(|n| n.id() == name.id()).map(|u| u as u16)
-        );
-
-        if result.is_some() { self.fetched_value(name); }
-
-        result
-    }
-
-    fn fetched_value(&self, v: ValueIdentifier) {
-        self.core.context.fetched_value(v);
+        )
     }
 }
 
@@ -212,7 +204,6 @@ mod tests {
         let (i, _, p, _, t, v) = env.factories();
 
         let mut local = env.local(b":enum E { A, B };    E::B");
-        local.mark_unfetched_items(&[i.id(24, 1)]);
 
         let e =
             i.enum_(p.enum_(i.id(6, 1)).build())

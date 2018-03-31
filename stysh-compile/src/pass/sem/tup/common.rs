@@ -51,12 +51,10 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
     /// Inserts into the global_arena.
     pub fn insert<T: 'g>(&self, t: T) -> &'g T { self.global_arena.insert(t) }
 
-    /// Returns the type of a known binding.
+    /// Returns the type of a known GVN.
     ///
-    /// Panics: If the binding is unknown.
-    pub fn type_of(&self, name: ValueIdentifier) -> Type<'g> {
-        self.context.get_binding(name).1
-    }
+    /// Panics: If the GVN is unknown.
+    pub fn type_of(&self, gvn: Gvn) -> Type<'g> { self.context.type_of(gvn) }
 
     /// Unifies an option.
     pub fn unify_option<T, U, F>(&self, o: Option<T>, f: F)

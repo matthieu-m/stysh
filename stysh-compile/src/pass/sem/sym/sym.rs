@@ -116,7 +116,6 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     {
         let gvn =
             self.context.insert_binding(var.into(), hir::Type::unresolved());
-        self.context.mark_unfetched_value(var.into());
 
         hir::Pattern::Var(var.into(), gvn)
     }
@@ -180,7 +179,6 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         let mut path = self.array(p.components.len());
         path.push(type_);
         for &c in &p.components[1..] {
-            self.context.mark_unfetched_item(c.into());
             path.push(hir::Type::Unresolved(c.into(), Default::default()));
         }
 
@@ -325,7 +323,6 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         let expr = match field.field {
             Index(index, _) => hir::Expr::FieldAccess(accessed, index),
             Name(n, r) => {
-                self.context.mark_unfetched_value(hir::ValueIdentifier(n, r));
                 hir::Expr::UnresolvedField(
                     accessed,
                     hir::ValueIdentifier(n, r)
@@ -487,7 +484,10 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             self.scope
                 .lookup_binding(var.into())
                 .map(|name| {
-                    let gvn = self.context.get_binding(name).0;
+                    let gvn =
+                        self.context
+                            .lookup_binding(name)
+                            .unwrap_or_default();
                     hir::Expr::Ref(name, gvn)
                 })
                 .unwrap_or(hir::Expr::UnresolvedRef(var.into()));

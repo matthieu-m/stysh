@@ -35,8 +35,8 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
                 => self.unify_constructor(c, ty).combine(p, |c| Constructor(c, g)),
             Tuple(t, r, g)
                 => self.unify_tuple(t, ty).combine(p, |t| Tuple(t, r, g)),
-            Var(v, _) => {
-                self.unify_variable(v, ty);
+            Var(_, g) => {
+                self.unify_variable(g, ty);
                 Alteration::forward(p)
             },
         }
@@ -68,10 +68,10 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
         self.core.unify_tuple(t, ty, |p, ty| self.unify(p, ty))
     }
 
-    fn unify_variable(&self, name: ValueIdentifier, ty: Type<'g>) {
-        let known = self.core.type_of(name);
+    fn unify_variable(&self, gvn: Gvn, ty: Type<'g>) {
+        let known = self.core.type_of(gvn);
         let ty = self.select(known, ty);
-        self.core.context.update_binding(name, ty);
+        self.core.context.set_type_of(gvn, ty);
     }
 
     fn select(&self, t0: Type<'g>, t1: Type<'g>) -> Type<'g> {

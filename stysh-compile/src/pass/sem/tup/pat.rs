@@ -1,7 +1,7 @@
 //! Pattern Unifier & Propagator.
 
 use model::hir::*;
-use super::{common, typ, Resolution};
+use super::{common, typ, Alteration};
 
 /// Pattern Unifier.
 #[derive(Clone, Debug)]
@@ -25,19 +25,19 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
 
     /// Unifies the inner entities (of p), recursively.
     pub fn unify(&self, p: Pattern<'g>, ty: Type<'g>)
-        -> Resolution<Pattern<'g>>
+        -> Alteration<Pattern<'g>>
     {
         use self::Pattern::*;
 
         match p {
-            Ignored(_) => Resolution::forward(p),
+            Ignored(_) => Alteration::forward(p),
             Constructor(c, g)
                 => self.unify_constructor(c, ty).combine(p, |c| Constructor(c, g)),
             Tuple(t, r, g)
                 => self.unify_tuple(t, ty).combine(p, |t| Tuple(t, r, g)),
             Var(v, _) => {
                 self.unify_variable(v, ty);
-                Resolution::forward(p)
+                Alteration::forward(p)
             },
         }
     }
@@ -51,7 +51,7 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
     where 'g: 'a
 {
     fn unify_constructor(&self, c: Constructor<'g, Pattern<'g>>, ty: Type<'g>)
-        -> Resolution<Constructor<'g, Pattern<'g>>>
+        -> Alteration<Constructor<'g, Pattern<'g>>>
     {
         let type_ = self.select(c.type_, ty);
         let arguments = self.unify_tuple(c.arguments, type_);
@@ -63,7 +63,7 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
     }
 
     fn unify_tuple(&self, t: Tuple<'g, Pattern<'g>>, ty: Type<'g>)
-        -> Resolution<Tuple<'g, Pattern<'g>>>
+        -> Alteration<Tuple<'g, Pattern<'g>>>
     {
         self.core.unify_tuple(t, ty, |p, ty| self.unify(p, ty))
     }
@@ -96,7 +96,7 @@ mod tests {
         local.core().context.insert_binding(a, Type::unresolved());
 
         assert_eq!(
-            unify(&local, 0, 0, p.var(a), t.int()),
+            unify(&local, 0, p.var(a), t.int()),
             p.var(a)
         );
     }
@@ -104,7 +104,6 @@ mod tests {
     fn unify<'g>(
         local: &LocalEnv<'g>,
         altered: u32,
-        introduced: u32,
         pat: Pattern<'g>,
         ty: Type<'g>,
     )
@@ -119,7 +118,6 @@ mod tests {
                 .map(|p| local.scrubber().scrub_pattern(p));
 
         assert_eq!(resolution.altered, altered);
-        assert_eq!(resolution.introduced, introduced);
 
         resolution.entity
     }

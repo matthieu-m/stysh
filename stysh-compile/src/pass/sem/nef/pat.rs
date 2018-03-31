@@ -1,7 +1,7 @@
 //! Pattern Fetcher.
 
 use model::hir::*;
-use super::{common, typ, Resolution};
+use super::{common, typ, Alteration};
 
 /// Pattern Fetcher.
 #[derive(Clone, Debug)]
@@ -24,14 +24,14 @@ impl<'a, 'g> PatternFetcher<'a, 'g>
     }
 
     /// Fetches the inner entities, recursively.
-    pub fn fetch(&self, p: Pattern<'g>) -> Resolution<Pattern<'g>> {
+    pub fn fetch(&self, p: Pattern<'g>) -> Alteration<Pattern<'g>> {
         use self::Pattern::*;
 
         match p {
             Constructor(c, g)
                 => self.fetch_constructor(c).combine(p, |c| Constructor(c, g)),
             Tuple(t, r, g) => self.fetch_tuple(t).combine(p, |t| Tuple(t, r, g)),
-            _ => Resolution::forward(p),
+            _ => Alteration::forward(p),
         }
     }
 }
@@ -44,7 +44,7 @@ impl<'a, 'g> PatternFetcher<'a, 'g>
     where 'g: 'a
 {
     fn fetch_constructor(&self, c: Constructor<'g, Pattern<'g>>)
-        -> Resolution<Constructor<'g, Pattern<'g>>>
+        -> Alteration<Constructor<'g, Pattern<'g>>>
     {
         let type_ = typ::TypeFetcher::new(self.core).fetch(c.type_);
         let arguments = self.fetch_tuple(c.arguments);
@@ -56,7 +56,7 @@ impl<'a, 'g> PatternFetcher<'a, 'g>
     }
 
     fn fetch_tuple(&self, t: Tuple<'g, Pattern<'g>>)
-        -> Resolution<Tuple<'g, Pattern<'g>>>
+        -> Alteration<Tuple<'g, Pattern<'g>>>
     {
         self.core.fetch_tuple(t, |p| self.fetch(p))
     }
@@ -109,7 +109,6 @@ mod tests {
                 .map(|p| local.scrubber().scrub_pattern(p));
 
         assert_eq!(resolution.altered, altered);
-        assert_eq!(resolution.introduced, 0);
 
         resolution.entity
     }

@@ -3,7 +3,7 @@
 use basic::mem;
 
 use model::hir::*;
-use super::{common, stmt, Resolution};
+use super::{common, stmt, Alteration};
 use super::typ::{self, Action};
 
 /// Value Unifier.
@@ -27,7 +27,7 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
     }
 
     /// Unifies the inner entities, recursively.
-    pub fn unify(&self, v: Value<'g>, ty: Type<'g>) -> Resolution<Value<'g>> {
+    pub fn unify(&self, v: Value<'g>, ty: Type<'g>) -> Alteration<Value<'g>> {
         use self::Action::*;
 
         let e = ExprUnifier { core: self.core, expr: v.expr, type_: ty };
@@ -40,7 +40,7 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
                 } else {
                     self.core.insert(v.with_expr(expr.entity).with_type(v.type_))
                 };
-                Resolution::update(Value {
+                Alteration::update(Value {
                     type_: Type::Enum(e, p),
                     range: v.range,
                     expr: Expr::Implicit(Implicit::ToEnum(*e.prototype, value)),
@@ -49,14 +49,14 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
             },
             Cast(t) => unreachable!("Inappropriate Cast target {:?}", t),
             Keep(type_) => {
-                let type_ = Resolution::forward(type_)
+                let type_ = Alteration::forward(type_)
                     .with_altered(if type_ != v.type_ { 1 } else { 0 });
                 expr.combine2(v, type_, |expr, type_| {
                     v.with_expr(expr).with_type(type_)
                 })
             },
             Update(type_) => {
-                let type_ = Resolution::update(type_);
+                let type_ = Alteration::update(type_);
                 expr.combine2(v, type_, |expr, type_| {
                     v.with_expr(expr).with_type(type_)
                 })
@@ -77,7 +77,7 @@ struct ExprUnifier<'a, 'g>
     type_: Type<'g>,
 }
 
-type Result<'g> = (Resolution<Expr<'g>>, Action<'g>);
+type Result<'g> = (Alteration<Expr<'g>>, Action<'g>);
 
 impl<'a, 'g> ExprUnifier<'a, 'g>
     where 'g: 'a
@@ -103,7 +103,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             Builtin(f) => self.unify_call_builtin(f, args),
             Function(f) => self.unify_call_function(f, args),
             Unknown(..) | Unresolved(..)
-                => (Resolution::forward(self.expr), Action::Keep(self.type_)),
+                => (Alteration::forward(self.expr), Action::Keep(self.type_)),
         }
     }
 
@@ -163,7 +163,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         use self::Type::*;
 
         let forward =
-            (Resolution::forward(self.expr), Action::Keep(self.type_));
+            (Alteration::forward(self.expr), Action::Keep(self.type_));
 
         let (record, path) = match c.type_ {
             Rec(r, p) => (r, p),
@@ -184,15 +184,15 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         )
     }
 
-    fn unify(&self) -> (Resolution<Expr<'g>>, Action<'g>) {
+    fn unify(&self) -> (Alteration<Expr<'g>>, Action<'g>) {
         use self::Expr::*;
 
         match self.expr {
             Implicit(..) | UnresolvedRef(..) | UnresolvedField(..)
-                => (Resolution::forward(self.expr), Action::Keep(self.type_)),
+                => (Alteration::forward(self.expr), Action::Keep(self.type_)),
             BuiltinVal(v) => {
                 let action = self.merge(v.result_type(), self.type_).1;
-                (Resolution::forward(self.expr), action)
+                (Alteration::forward(self.expr), action)
             },
             Block(stmts, v) => self.unify_block(stmts, v),
             Call(c, args) => self.unify_call(c, args),
@@ -240,7 +240,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         &self,
         stmts: &'g [Stmt<'g>],
     )
-        -> (Resolution<Expr<'g>>, Action<'g>)
+        -> (Alteration<Expr<'g>>, Action<'g>)
     {
         let stmts = self.core.unify_slice(stmts, |_, s| self.unify_statement(s));
         (
@@ -264,7 +264,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             self.core.context.update_binding(name, to);
         }
 
-        (Resolution::forward(self.expr), result)
+        (Alteration::forward(self.expr), result)
     }
 
     fn merge(&self, t0: Type<'g>, t1: Type<'g>) -> (Action<'g>, Action<'g>) {
@@ -280,17 +280,17 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
     }
 
     fn unify_ref(&self, v: &'g Value<'g>, ty: Type<'g>)
-        -> Resolution<&'g Value<'g>>
+        -> Alteration<&'g Value<'g>>
     {
         self.unify_value(*v, ty).map(|v| self.core.insert(v))
     }
 
-    fn unify_statement(&self, s: Stmt<'g>) -> Resolution<Stmt<'g>> {
+    fn unify_statement(&self, s: Stmt<'g>) -> Alteration<Stmt<'g>> {
         stmt::StatementUnifier::new(self.core).unify(s)
     }
 
     fn unify_tuple_impl(&self, t: Tuple<'g, Value<'g>>, ty: Type<'g>)
-        -> (Resolution<Tuple<'g, Value<'g>>>, Action<'g>)
+        -> (Alteration<Tuple<'g, Value<'g>>>, Action<'g>)
     {
         let v = self.core.unify_tuple(t, ty, |v, ty| self.unify_value(v, ty));
         let action = self.unify_tuple_type(v.entity, ty);
@@ -334,7 +334,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         })
     }
 
-    fn unify_value(&self, v: Value<'g>, ty: Type<'g>) -> Resolution<Value<'g>> {
+    fn unify_value(&self, v: Value<'g>, ty: Type<'g>) -> Alteration<Value<'g>> {
         ValueUnifier::new(self.core).unify(v, ty)
     }
 }
@@ -355,7 +355,7 @@ mod tests {
 
         assert_eq!(
             unify(
-                &local, 3, 0,
+                &local, 3,
                 v.tuple()
                     .push(v.int(0, 1))
                     .push(v.int(1, 3))
@@ -370,7 +370,6 @@ mod tests {
     fn unify<'g>(
         local: &LocalEnv<'g>,
         altered: u32,
-        introduced: u32,
         v: Value<'g>,
         ty: Type<'g>,
     )
@@ -385,7 +384,6 @@ mod tests {
                 .map(|v| local.scrubber().scrub_value(v));
 
         assert_eq!(resolution.altered, altered);
-        assert_eq!(resolution.introduced, introduced);
 
         resolution.entity
     }

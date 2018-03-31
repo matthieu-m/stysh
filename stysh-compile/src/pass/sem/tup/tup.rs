@@ -8,7 +8,7 @@
 use basic::mem;
 
 use model::hir::*;
-use super::{common, pat, stmt, val, Context, Resolution};
+use super::{common, pat, stmt, val, Alteration, Context};
 
 /// The Type Unifier.
 ///
@@ -42,19 +42,19 @@ impl<'a, 'g> TypeUnifier<'a, 'g>
 
     /// Unifies the inner entities, recursively.
     pub fn unify_pattern(&self, p: Pattern<'g>, ty: Type<'g>)
-        -> Resolution<Pattern<'g>>
+        -> Alteration<Pattern<'g>>
     {
         pat::PatternUnifier::new(self.core).unify(p, ty)
     }
 
     /// Unifies the inner entities, recursively.
-    pub fn unify_statement(&self, s: Stmt<'g>) -> Resolution<Stmt<'g>> {
+    pub fn unify_statement(&self, s: Stmt<'g>) -> Alteration<Stmt<'g>> {
         stmt::StatementUnifier::new(self.core).unify(s)
     }
 
     /// Unifies the inner entities, recursively.
     pub fn unify_value(&self, v: Value<'g>, ty: Type<'g>)
-        -> Resolution<Value<'g>>
+        -> Alteration<Value<'g>>
     {
         val::ValueUnifier::new(self.core).unify(v, ty)
     }

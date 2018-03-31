@@ -13,7 +13,7 @@ mod stmt;
 mod typ;
 mod val;
 
-use super::{Context, Resolution};
+use super::{Alteration, Context};
 pub use self::tup::TypeUnifier;
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use basic::mem;
 
 use model::hir::*;
 
-use super::{Context, Resolution};
+use super::{Alteration, Context};
 
 /// Core Unifier
 #[derive(Clone, Copy, Debug)]
@@ -60,25 +60,24 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
 
     /// Unifies an option.
     pub fn unify_option<T, U, F>(&self, o: Option<T>, f: F)
-        -> Resolution<Option<U>>
+        -> Alteration<Option<U>>
         where
-            F: FnOnce(T) -> Resolution<U>,
+            F: FnOnce(T) -> Alteration<U>,
     {
         match o {
-            None => Resolution::forward(None),
+            None => Alteration::forward(None),
             Some(t) => f(t).map(Some),
         }
     }
 
     /// Unifies a slice.
     pub fn unify_slice<T, F>(&self, slice: &'g [T], mut f: F)
-        -> Resolution<&'g [T]>
+        -> Alteration<&'g [T]>
         where
             T: Copy + 'g,
-            F: FnMut(usize, T) -> Resolution<T>,
+            F: FnMut(usize, T) -> Alteration<T>,
     {
         let mut found = None;
-        let mut introduced = 0;
 
         for (i, e) in slice.iter().enumerate() {
             let r = f(i, *e);
@@ -90,7 +89,7 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
         }
 
         if found.is_none() {
-            return Resolution::forward(slice);
+            return Alteration::forward(slice);
         }
 
         let found = found.unwrap();
@@ -110,27 +109,26 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
                 let r = f(i + found.0 as usize, *e);
 
                 altered += r.altered;
-                introduced += r.introduced;
 
                 result.push(r.entity);
             }
         }
 
         let entity = result.into_slice();
-        Resolution { entity, altered, introduced }
+        Alteration { entity, altered }
     }
 
     /// Unifies a tuple.
     pub fn unify_tuple<T, F>(&self, t: Tuple<'g, T>, ty: Type<'g>, mut f: F)
-        -> Resolution<Tuple<'g, T>>
+        -> Alteration<Tuple<'g, T>>
         where
             T: Copy + 'g,
-            F: FnMut(T, Type<'g>) -> Resolution<T>,
+            F: FnMut(T, Type<'g>) -> Alteration<T>,
     {
         let fields = if let Type::Tuple(ty) = ty {
             self.unify_slice(t.fields, |i, e| {
                 ty.fields.get(i).map(|ty| f(e, *ty))
-                    .unwrap_or(Resolution::forward(e))
+                    .unwrap_or(Alteration::forward(e))
             })
         } else {
             self.unify_slice(t.fields, |_, e| f(e, Type::unresolved()))

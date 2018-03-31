@@ -12,7 +12,7 @@ mod stmt;
 mod typ;
 mod val;
 
-use super::{Context, Resolution};
+use super::{Alteration, Context};
 pub use self::nef::NestedEntityFetcher;
 
 #[cfg(test)]

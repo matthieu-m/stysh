@@ -14,17 +14,15 @@ use model::hir::*;
 #[derive(Clone, Debug, Default)]
 pub struct Context<'a>(cell::RefCell<ContextImpl<'a>>);
 
-/// Resolution.
+/// Alteration.
 ///
-/// A Resolution represents the outcome of a transformation pass.
+/// An Alteration represents the outcome of a transformation pass.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct Resolution<T> {
-    /// Entity transformed.
+pub struct Alteration<T> {
+    /// Entity altered (or not).
     pub entity: T,
-    /// Number of entities altered in this pass.
+    /// Number of entities altered, including the entity itself, if any.
     pub altered: u32,
-    /// Number of entities introduced in this pass.
-    pub introduced: u32,
 }
 
 //
@@ -114,17 +112,15 @@ impl<'a> Context<'a> {
 }
 
 //
-//  Public interface of Resolution
+//  Public interface of Alteration
 //
 
-impl<T> Resolution<T> {
-    /// Creates a Resolution with both altered and introduced set to 0.
-    pub fn forward(e: T) -> Self {
-        Resolution { entity: e, altered: 0, introduced: 0 }
-    }
+impl<T> Alteration<T> {
+    /// Creates an Alteration with altered set to 0.
+    pub fn forward(e: T) -> Self { Alteration { entity: e, altered: 0 } }
 
-    /// Creates a Resolution with altered set to 1.
-    pub fn update(e: T) -> Self { Resolution::forward(e).with_altered(1) }
+    /// Creates an Alteration with altered set to 1.
+    pub fn update(e: T) -> Self { Alteration::forward(e).with_altered(1) }
 
     /// Sets the number of altered entities.
     pub fn with_altered(mut self, n: u32) -> Self {
@@ -132,84 +128,73 @@ impl<T> Resolution<T> {
         self
     }
 
-    /// Sets the number of introduced entities.
-    pub fn with_introduced(mut self, n: u32) -> Self {
-        self.introduced = n;
-        self
-    }
-
     /// Transforms the entity.
-    pub fn map<R, F>(self, f: F) -> Resolution<R>
+    pub fn map<R, F>(self, f: F) -> Alteration<R>
         where
             F: FnOnce(T) -> R
     {
-        let (altered, introduced) = (self.altered, self.introduced);
+        let altered = self.altered;
         let entity = f(self.entity);
 
-        Resolution { entity, altered, introduced }
+        Alteration { entity, altered }
     }
 
-    /// Transforms into another resolution.
+    /// Transforms into another Alteration.
     ///
     /// The resulting combination contains:
     /// -   entity: `r`, if nothing was altered, or the result of `f`,
-    /// -   altered: the sum of altered references,
-    /// -   introduced: the sum of introduced references.
-    pub fn combine<R, F>(self, r: R, f: F) -> Resolution<R>
+    /// -   altered: the sum of altered references.
+    pub fn combine<R, F>(self, r: R, f: F) -> Alteration<R>
         where
             F: FnOnce(T) -> R
     {
-        let (altered, introduced) = (self.altered, self.introduced);
+        let altered = self.altered;
         let entity = if altered == 0 { r } else { f(self.entity) };
 
-        Resolution { entity, altered, introduced }
+        Alteration { entity, altered }
     }
 
-    /// Combines with another resolution.
+    /// Combines with another Alteration.
     ///
     /// The resulting combination contains:
     /// -   entity: `r`, if nothing was altered, or the result of `f`,
-    /// -   altered: the sum of altered references,
-    /// -   introduced: the sum of introduced references.
-    pub fn combine2<T1, R, F>(self, r: R, t1: Resolution<T1>, f: F)
-        -> Resolution<R>
+    /// -   altered: the sum of altered references.
+    pub fn combine2<T1, R, F>(self, r: R, t1: Alteration<T1>, f: F)
+        -> Alteration<R>
         where
             F: FnOnce(T, T1) -> R
     {
         let altered = self.altered + t1.altered;
-        let introduced = self.introduced + t1.introduced;
         let entity =
             if altered == 0 { r } else { f(self.entity, t1.entity) };
 
-        Resolution { entity, altered, introduced }
+        Alteration { entity, altered }
     }
 
     /// Combines with two other resolutions.
     ///
     /// The resulting combination contains:
     /// -   entity: `r`, if nothing was altered, or the result of `f`,
-    /// -   altered: the sum of altered references,
-    /// -   introduced: the sum of introduced references.
+    /// -   altered: the sum of altered references.
     pub fn combine3<T1, T2, R, F>(
         self,
         r: R,
-        t1: Resolution<T1>,
-        t2: Resolution<T2>,
+        t1: Alteration<T1>,
+        t2: Alteration<T2>,
         f: F,
     )
-        -> Resolution<R>
+        -> Alteration<R>
         where
             F: FnOnce(T, T1, T2) -> R
     {
         let altered = self.altered + t1.altered + t2.altered;
-        let introduced = self.introduced + t1.introduced + t2.introduced;
         let entity = if altered == 0 {
             r
         } else {
             f(self.entity, t1.entity, t2.entity)
         };
 
-        Resolution { entity, altered, introduced }
+        Alteration { entity, altered }
     }
 }
 

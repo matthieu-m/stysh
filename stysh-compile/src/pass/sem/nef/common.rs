@@ -4,7 +4,7 @@ use basic::mem;
 
 use model::hir::*;
 
-use super::{Context, Resolution};
+use super::{Alteration, Context};
 
 /// Core Fetcher
 #[derive(Clone, Copy, Debug)]
@@ -42,22 +42,22 @@ impl<'a, 'g> CoreFetcher<'a, 'g>
 
     /// Fetches an option.
     pub fn fetch_option<T, F>(&self, o: Option<T>, f: F)
-        -> Resolution<Option<T>>
+        -> Alteration<Option<T>>
         where
-            F: FnOnce(T) -> Resolution<T>,
+            F: FnOnce(T) -> Alteration<T>,
     {
         match o {
-            None => Resolution::forward(None),
+            None => Alteration::forward(None),
             Some(t) => f(t).map(Some),
         }
     }
 
     /// Fetches a slice.
     pub fn fetch_slice<T, F>(&self, slice: &'g [T], mut f: F)
-        -> Resolution<&'g [T]>
+        -> Alteration<&'g [T]>
         where
             T: Copy + 'g,
-            F: FnMut(T) -> Resolution<T>,
+            F: FnMut(T) -> Alteration<T>,
     {
         let mut found = None;
 
@@ -71,7 +71,7 @@ impl<'a, 'g> CoreFetcher<'a, 'g>
         }
 
         if found.is_none() {
-            return Resolution::forward(slice);
+            return Alteration::forward(slice);
         }
 
         let found = found.unwrap();
@@ -96,17 +96,17 @@ impl<'a, 'g> CoreFetcher<'a, 'g>
             }
         }
 
-        let (entity, introduced) = (result.into_slice(), 0);
-        Resolution { entity, altered, introduced }
+        let entity = result.into_slice();
+        Alteration { entity, altered }
     }
     
 
     /// Fetches a tuple.
     pub fn fetch_tuple<T, F>(&self, t: Tuple<'g, T>, f: F)
-        -> Resolution<Tuple<'g, T>>
+        -> Alteration<Tuple<'g, T>>
         where
             T: Copy + 'g,
-            F: FnMut(T) -> Resolution<T>,
+            F: FnMut(T) -> Alteration<T>,
     {
         let fields = self.fetch_slice(t.fields, f);
         fields.combine(t, |f| Tuple { fields: f, names: t.names })

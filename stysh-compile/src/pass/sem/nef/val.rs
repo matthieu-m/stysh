@@ -1,7 +1,7 @@
 //! Value Fetcher.
 
 use model::hir::*;
-use super::{common, stmt, typ, Resolution};
+use super::{common, stmt, typ, Alteration};
 
 /// Value Fetcher.
 #[derive(Clone, Debug)]
@@ -24,7 +24,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
     }
 
     /// Fetches the inner entities, recursively.
-    pub fn fetch(&self, v: Value<'g>) -> Resolution<Value<'g>> {
+    pub fn fetch(&self, v: Value<'g>) -> Alteration<Value<'g>> {
         let type_ = self.fetch_type(v.type_);
         let expr = self.fetch_expression(v.expr);
         let (range, gvn) = (v.range, v.gvn);
@@ -48,7 +48,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         stmts: &'g [Stmt<'g>],
         v: Option<&'g Value<'g>>
     )
-        -> Resolution<Expr<'g>>
+        -> Alteration<Expr<'g>>
     {
         let stmts = self.core.fetch_slice(stmts, |s| self.fetch_statement(s));
         let v = self.core.fetch_option(v, |v| {
@@ -64,14 +64,14 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         c: Callable<'g>,
         v: &'g [Value<'g>],
     )
-        -> Resolution<Expr<'g>>
+        -> Alteration<Expr<'g>>
     {
         let v = self.core.fetch_slice(v, |v| self.fetch(v));
         v.combine(e, |v| Expr::Call(c, v))
     }
 
     fn fetch_constructor(&self, c: Constructor<'g, Value<'g>>)
-        -> Resolution<Constructor<'g, Value<'g>>>
+        -> Alteration<Constructor<'g, Value<'g>>>
     {
         let type_ = self.fetch_type(c.type_);
         let arguments = self.fetch_tuple(c.arguments);
@@ -82,12 +82,12 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         })
     }
 
-    fn fetch_expression(&self, e: Expr<'g>) -> Resolution<Expr<'g>> {
+    fn fetch_expression(&self, e: Expr<'g>) -> Alteration<Expr<'g>> {
         use self::Expr::*;
 
         match e {
             BuiltinVal(..) | Ref(..) | UnresolvedRef(..)
-                => Resolution::forward(e),
+                => Alteration::forward(e),
             Block(stmts, v) => self.fetch_block(e, stmts, v),
             Call(c, args) => self.fetch_call(e, c, args),
             Constructor(c)
@@ -109,7 +109,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         t: &'g Value<'g>,
         f: &'g Value<'g>,
     )
-        -> Resolution<Expr<'g>>
+        -> Alteration<Expr<'g>>
     {
         let c = self.fetch_ref(c);
         let t = self.fetch_ref(t);
@@ -118,7 +118,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         c.combine3(e, t, f, |c, t, f| Expr::If(c, t, f))
     }
 
-    fn fetch_implicit(&self, i: Implicit<'g>) -> Resolution<Implicit<'g>> {
+    fn fetch_implicit(&self, i: Implicit<'g>) -> Alteration<Implicit<'g>> {
         use self::Implicit::*;
 
         match i {
@@ -127,7 +127,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
     }
 
     fn fetch_loop(&self, e: Expr<'g>, stmts: &'g [Stmt<'g>])
-        -> Resolution<Expr<'g>>
+        -> Alteration<Expr<'g>>
     {
         let stmts = self.core.fetch_slice(stmts, |s| self.fetch_statement(s));
 
@@ -135,7 +135,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
     }
 
     fn fetch_tuple(&self, t: Tuple<'g, Value<'g>>)
-        -> Resolution<Tuple<'g, Value<'g>>>
+        -> Alteration<Tuple<'g, Value<'g>>>
     {
         self.core.fetch_tuple(t, |v| self.fetch(v))
     }
@@ -146,7 +146,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         v: &'g Value<'g>,
         name: ValueIdentifier,
     )
-        -> Resolution<Expr<'g>>
+        -> Alteration<Expr<'g>>
     {
         use self::Type::*;
 
@@ -163,15 +163,15 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         }
     }
 
-    fn fetch_ref(&self, v: &'g Value<'g>) -> Resolution<&'g Value<'g>> {
+    fn fetch_ref(&self, v: &'g Value<'g>) -> Alteration<&'g Value<'g>> {
         self.fetch(*v).map(|v| self.core.insert(v))
     }
 
-    fn fetch_statement(&self, s: Stmt<'g>) -> Resolution<Stmt<'g>> {
+    fn fetch_statement(&self, s: Stmt<'g>) -> Alteration<Stmt<'g>> {
         stmt::StatementFetcher::new(self.core).fetch(s)
     }
 
-    fn fetch_type(&self, t: Type<'g>) -> Resolution<Type<'g>> {
+    fn fetch_type(&self, t: Type<'g>) -> Alteration<Type<'g>> {
         typ::TypeFetcher::new(self.core).fetch(t)
     }
 
@@ -244,7 +244,6 @@ mod tests {
                 .map(|v| local.scrubber().scrub_value(v));
 
         assert_eq!(resolution.altered, altered);
-        assert_eq!(resolution.introduced, 0);
 
         resolution.entity
     }

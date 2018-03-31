@@ -1,7 +1,7 @@
 //! Statement Fetcher.
 
 use model::hir::*;
-use super::{common, pat, val, Resolution};
+use super::{common, pat, val, Alteration};
 
 /// Statement Fetcher.
 #[derive(Clone, Debug)]
@@ -24,7 +24,7 @@ impl<'a, 'g> StatementFetcher<'a, 'g>
     }
 
     /// Fetches the inner entities, recursively.
-    pub fn fetch(&self, s: Stmt<'g>) -> Resolution<Stmt<'g>> {
+    pub fn fetch(&self, s: Stmt<'g>) -> Alteration<Stmt<'g>> {
         use self::Stmt::*;
 
         match s {
@@ -42,7 +42,7 @@ impl<'a, 'g> StatementFetcher<'a, 'g>
 impl<'a, 'g> StatementFetcher<'a, 'g>
     where 'g: 'a
 {
-    fn fetch_binding(&self, b: Binding<'g>) -> Resolution<Binding<'g>> {
+    fn fetch_binding(&self, b: Binding<'g>) -> Alteration<Binding<'g>> {
         let left = self.fetch_pattern(b.left);
         let right = self.fetch_value(b.right);
         let range = b.range;
@@ -50,7 +50,7 @@ impl<'a, 'g> StatementFetcher<'a, 'g>
         left.combine2(b, right, |left, right| Binding { left, right, range })
     }
 
-    fn fetch_rebinding(&self, r: ReBinding<'g>) -> Resolution<ReBinding<'g>> {
+    fn fetch_rebinding(&self, r: ReBinding<'g>) -> Alteration<ReBinding<'g>> {
         let left = self.fetch_value(r.left);
         let right = self.fetch_value(r.right);
         let range = r.range;
@@ -58,18 +58,18 @@ impl<'a, 'g> StatementFetcher<'a, 'g>
         left.combine2(r, right, |left, right| ReBinding { left, right, range })
     }
 
-    fn fetch_return(&self, r: Return<'g>) -> Resolution<Return<'g>> {
+    fn fetch_return(&self, r: Return<'g>) -> Alteration<Return<'g>> {
         let value = self.fetch_value(r.value);
         let range = r.range;
 
         value.combine(r, |value| Return { value, range })
     }
 
-    fn fetch_pattern(&self, p: Pattern<'g>) -> Resolution<Pattern<'g>> {
+    fn fetch_pattern(&self, p: Pattern<'g>) -> Alteration<Pattern<'g>> {
         pat::PatternFetcher::new(self.core).fetch(p)
     }
 
-    fn fetch_value(&self, v: Value<'g>) -> Resolution<Value<'g>> {
+    fn fetch_value(&self, v: Value<'g>) -> Alteration<Value<'g>> {
         val::ValueFetcher::new(self.core).fetch(v)
     }
 }
@@ -126,7 +126,6 @@ mod tests {
                 .map(|s| local.scrubber().scrub_statement(s));
 
         assert_eq!(resolution.altered, altered);
-        assert_eq!(resolution.introduced, 0);
 
         resolution.entity
     }

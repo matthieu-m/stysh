@@ -34,18 +34,18 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
         let (expr, type_) = e.unify();
 
         match type_ {
-            Cast(Type::UnresolvedEnum(e, p)) => {
+            Cast(Type::Enum(e, p)) => {
                 let value = if expr.altered > 0 {
                     self.core.insert(v)
                 } else {
                     self.core.insert(v.with_expr(expr.entity).with_type(v.type_))
                 };
-                Resolution::forward(Value {
-                    type_: Type::UnresolvedEnum(e, p),
+                Resolution::update(Value {
+                    type_: Type::Enum(e, p),
                     range: v.range,
-                    expr: Expr::Implicit(Implicit::ToEnum(e, value)),
-                    gvn: Default::default(),
-                }).with_altered(1)
+                    expr: Expr::Implicit(Implicit::ToEnum(*e.prototype, value)),
+                    gvn: self.core.context.gvn(),
+                })
             },
             Cast(t) => unreachable!("Inappropriate Cast target {:?}", t),
             Keep(type_) => {
@@ -56,7 +56,7 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
                 })
             },
             Update(type_) => {
-                let type_ = Resolution::forward(type_).with_altered(1);
+                let type_ = Resolution::update(type_);
                 expr.combine2(v, type_, |expr, type_| {
                     v.with_expr(expr).with_type(type_)
                 })
@@ -160,26 +160,20 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
     fn unify_constructor(&self, c: Constructor<'g, Value<'g>>)
         -> Result<'g>
     {
+        use self::Type::*;
+
         let forward =
             (Resolution::forward(self.expr), Action::Keep(self.type_));
 
-        let (r, p) = match c.type_ {
-            Type::UnresolvedRec(r, p) => (r, p),
-            Type::Unresolved(..) => return forward,
-            Type::Builtin(..) | Type::UnresolvedEnum(..) | Type::Tuple(..)
-                => unimplemented!("Constructor type {:?}", c.type_),
+        let (record, path) = match c.type_ {
+            Rec(r, p) => (r, p),
+            Unresolved(..) | UnresolvedRec(..) => return forward,
+            _ => unimplemented!("Constructor type {:?}", c.type_),
         };
-
-        let record =
-            if let Some(record) = self.core.registry.lookup_record(r.name) {
-                record
-            } else {
-                return forward;
-            };
 
         let (arguments, _) =
             self.unify_tuple_impl(c.arguments, Type::Tuple(record.definition));
-        let type_ = Type::UnresolvedRec(r, p);
+        let type_ = Type::Rec(record, path);
         let range = c.range;
 
         (

@@ -15,16 +15,15 @@ use super::proto::*;
 /// Stysh CFG builder.
 ///
 /// Builds the Control-Flow Graph.
-pub struct GraphBuilder<'a, 'g, 'local>
-    where 'g: 'a + 'local
+pub struct GraphBuilder<'g, 'local>
+    where 'g: 'local
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    registry: &'a hir::Registry<'g>,
 }
 
-impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
-    where 'g: 'a + 'local
+impl<'g, 'local> GraphBuilder<'g, 'local>
+    where 'g: 'local
 {
     /// Creates a new instance of a GraphBuilder.
     ///
@@ -33,11 +32,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     pub fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
-        registry: &'a hir::Registry<'g>,
     )
-        -> GraphBuilder<'a, 'g, 'local>
+        -> GraphBuilder<'g, 'local>
     {
-        GraphBuilder { global_arena, local_arena, registry }
+        GraphBuilder { global_arena, local_arena }
     }
 
     /// Translates a semantic expression into its control-flow graph.
@@ -47,7 +45,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         let mut imp = GraphBuilderImpl::new(
             self.global_arena,
             self.local_arena,
-            self.registry,
         );
 
         imp.from_value(
@@ -80,7 +77,6 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         let mut imp = GraphBuilderImpl::new(
             self.global_arena,
             self.local_arena,
-            self.registry,
         );
 
         imp.from_value(first, &fun.body);
@@ -92,17 +88,16 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 //
 //  Implementation Details
 //
-struct GraphBuilderImpl<'a, 'g, 'local>
-    where 'g: 'a + 'local
+struct GraphBuilderImpl<'g, 'local>
+    where 'g: 'local
 {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
-    registry: &'a hir::Registry<'g>,
     blocks: mem::Array<'local, RefCell<ProtoBlock<'g, 'local>>>,
 }
 
-impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
-    where 'g: 'a + 'local
+impl<'g, 'local> GraphBuilderImpl<'g, 'local>
+    where 'g: 'local
 {
     //
     //  High-level methods
@@ -110,14 +105,12 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn new(
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena,
-        registry: &'a hir::Registry<'g>,
     )
-        -> GraphBuilderImpl<'a, 'g, 'local>
+        -> GraphBuilderImpl<'g, 'local>
     {
         GraphBuilderImpl {
             global_arena: global_arena,
             local_arena: local_arena,
-            registry: registry,
             blocks: mem::Array::with_capacity(1, local_arena),
         }
     }
@@ -386,8 +379,8 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn create_branch<'a, 'g, 'local>(
-            imp: &mut GraphBuilderImpl<'a, 'g, 'local>,
+        fn create_branch<'g, 'local>(
+            imp: &mut GraphBuilderImpl<'g, 'local>,
             pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
@@ -599,15 +592,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn extract_fields<'a, 'g>(v: &'a hir::Value<'g>)
-            -> &'a [hir::Type<'g>]
+        fn extract_fields<'g>(v: &hir::Value<'g>)
+            -> &'g [hir::Type<'g>]
         {
-            //  TODO(matthieum): support Rec, which requires a Registry.
-            if let hir::Type::Tuple(t) = v.type_ {
-                return &t.fields;
-            }
+            use self::hir::Type::*;
 
-            unimplemented!("Can only access tuple fields!");
+            match v.type_ {
+                Rec(r, _) => &r.definition.fields,
+                Tuple(t) => &t.fields,
+                _ => unimplemented!("Can only access record or tuple fields!"),
+            }
         }
 
         let id = current.last_value();
@@ -755,12 +749,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn extract_fields_types(&self, type_: hir::Type<'g>) -> &'g [hir::Type<'g>]
     {
         match type_ {
-            hir::Type::UnresolvedRec(proto, _) => {
-                if let Some(r) = self.registry.lookup_record(proto.name) {
-                    return &r.definition.fields;
-                }
-                unimplemented!("Unknown record {:?}", proto.name);
-            },
+            hir::Type::Rec(r, _) => &r.definition.fields,
             hir::Type::Tuple(t) => &t.fields,
             _ => unimplemented!("Expected record or tuple, got {:?}", type_),
         }
@@ -1115,14 +1104,14 @@ mod tests {
     #[test]
     fn block_constructor_binding() {
         let global_arena = mem::Arena::new();
-        let mut env = Env::new(&global_arena);
+        let env = Env::new(&global_arena);
         let (i, p, po, s, t, v) = env.hir();
 
         //  :rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }
         let r = po.rec(i.id(5, 1), 0).build();
-        env.insert_record(i.rec(r).push(t.int()).push(t.int()).build());
+        let r = env.insert(i.rec(r).push(t.int()).push(t.int()).build());
 
-        let rec = Type::UnresolvedRec(r, Default::default());
+        let rec = Type::Rec(r, Default::default());
 
         let (a, b) = (v.id(29, 1), v.id(32, 1));
         let binding =
@@ -1593,15 +1582,11 @@ mod tests {
 
     struct Env<'g> {
         global_arena: &'g mem::Arena,
-        registry: mocks::MockRegistry<'g>,
     }
 
     impl<'g> Env<'g> {
         fn new(global_arena: &'g mem::Arena) -> Env<'g> {
-            Env {
-                global_arena: global_arena,
-                registry: mocks::MockRegistry::new(global_arena),
-            }
+            Env { global_arena }
         }
 
         fn hir(&self) -> (
@@ -1617,9 +1602,7 @@ mod tests {
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
         }
 
-        fn insert_record(&mut self, r: Record<'g>) {
-            self.registry.insert_record(r);
-        }
+        fn insert<T: 'g>(&self, e: T) -> &'g T { self.global_arena.insert(e) }
 
         fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {
             let mut local_arena = mem::Arena::new();
@@ -1649,13 +1632,12 @@ mod tests {
             result
         }
 
-        fn builder<'a, 'local>(&'a self, local_arena: &'local mem::Arena)
-            -> super::GraphBuilder<'a, 'g, 'local>
+        fn builder<'local>(&self, local_arena: &'local mem::Arena)
+            -> super::GraphBuilder<'g, 'local>
         {
             super::GraphBuilder::new(
                 self.global_arena,
                 local_arena,
-                &self.registry,
             )
         }
     }

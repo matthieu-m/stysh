@@ -90,7 +90,6 @@ where
                     fun,
                     arena,
                     &mut local_arena,
-                    def_registry
                 );
                 cfg_registry.insert(fun.prototype.name, c);
             },
@@ -107,8 +106,7 @@ where
         &mut local_arena
     );
 
-    let cfg =
-        create_cfg_from_value(&value, arena, &mut local_arena, def_registry);
+    let cfg = create_cfg_from_value(&value, arena, &mut local_arena);
     evaluate(&cfg, cfg_registry, arena, &mut local_arena)
 }
 
@@ -196,15 +194,13 @@ fn create_cfg_from_value<'g>(
     value: &hir::Value<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena,
-    registry: &hir::Registry<'g>,
 )
     -> sir::ControlFlowGraph<'g>
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
     let result =
-        GraphBuilder::new(global_arena, local_arena, registry)
-            .from_value(&value);
+        GraphBuilder::new(global_arena, local_arena).from_value(&value);
     local_arena.recycle();
 
     println!("create_cfg_from_value => {}", result);
@@ -216,15 +212,13 @@ fn create_cfg_from_function<'g>(
     fun: &hir::Function<'g>,
     global_arena: &'g mem::Arena,
     local_arena: &mut mem::Arena,
-    registry: &hir::Registry<'g>,
 )
     -> sir::ControlFlowGraph<'g>
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
     let result =
-        GraphBuilder::new(global_arena, local_arena, registry)
-            .from_function(&fun);
+        GraphBuilder::new(global_arena, local_arena).from_function(&fun);
     local_arena.recycle();
 
     println!(

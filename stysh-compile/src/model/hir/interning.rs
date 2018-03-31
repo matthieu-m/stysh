@@ -144,6 +144,10 @@ impl<'g> Resolver<'g> {
 
         match t {
             Builtin(b) => Builtin(b),
+            Enum(e, p)
+                => Enum(self.insert(self.resolve_enum(*e)), self.resolve_path(p)),
+            Rec(r, p)
+                => Rec(self.insert(self.resolve_record(*r)), self.resolve_path(p)),
             Tuple(t) => Tuple(self.resolve_tuple_type(t)),
             Unresolved(i, p)
                 => Unresolved(self.resolve_item_id(i), self.resolve_path(p)),
@@ -261,6 +265,10 @@ impl<'g> Scrubber<'g> {
 
         match t {
             Builtin(t) => Builtin(t),
+            Enum(e, p)
+                => Enum(self.insert(self.scrub_enum(*e)), self.scrub_path(p)),
+            Rec(r, p)
+                => Rec(self.insert(self.scrub_record(*r)), self.scrub_path(p)),
             Tuple(t) => Tuple(self.scrub_tuple_type(t)),
             Unresolved(id, p)
                 => Unresolved(self.scrub_item_id(id), self.scrub_path(p)),

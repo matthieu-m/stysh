@@ -138,13 +138,17 @@ pub struct RecordProto {
 pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
+    /// An enum type, possibly nested.
+    Enum(&'a Enum<'a>, Path<'a>),
+    /// A record type, possibly nested.
+    Rec(&'a Record<'a>, Path<'a>),
     /// A tuple type.
     Tuple(Tuple<'a, Type<'a>>),
     /// An unresolved type, possibly nested.
     Unresolved(ItemIdentifier, Path<'a>),
-    /// An unresolved enum type.
+    /// An unresolved enum type, possibly nested.
     UnresolvedEnum(EnumProto, Path<'a>),
-    /// A unresolved record type.
+    /// An unresolved record type, possibly nested.
     UnresolvedRec(RecordProto, Path<'a>),
 }
 
@@ -212,6 +216,8 @@ impl<'a> Type<'a> {
         use self::Type::*;
 
         match self {
+            Enum(e, _) => Enum(e, p),
+            Rec(r, _) => Rec(r, p),
             Unresolved(i, _) => Unresolved(i, p),
             UnresolvedEnum(e, _) => UnresolvedEnum(e, p),
             UnresolvedRec(r, _) => UnresolvedRec(r, p),
@@ -331,6 +337,8 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
         match *self {
             Builtin(t) => Builtin(t),
+            Enum(e, p) => Enum(arena.intern_ref(e), arena.intern(&p)),
+            Rec(r, p) => Rec(arena.intern_ref(r), arena.intern(&p)),
             Tuple(t) => Tuple(arena.intern(&t)),
             Unresolved(n, p) => Unresolved(n, arena.intern(&p)),
             UnresolvedEnum(e, p) => UnresolvedEnum(e, arena.intern(&p)),
@@ -388,6 +396,8 @@ impl<'a> Span for Type<'a> {
             Builtin(Int) => 3,
             Builtin(String) => 6,
             Builtin(Void) => 4,
+            Enum(e, p) => len(e.prototype.name, p),
+            Rec(r, p) => len(r.prototype.name, p),
             Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
             Unresolved(i, p) => len(i, p),
             UnresolvedEnum(e, p) => len(e.name, p),
@@ -480,12 +490,16 @@ impl<'a> fmt::Display for Path<'a> {
 
 impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use self::Type::*;
+
         match *self {
-            Type::Builtin(t) => write!(f, "{}", t),
-            Type::Tuple(t) => write!(f, "{}", t),
-            Type::Unresolved(i, p) => write!(f, "{}{}", p, i),
-            Type::UnresolvedEnum(e, p) => write!(f, "{}{}", p, e.name),
-            Type::UnresolvedRec(r, p) => write!(f, "{}{}", p, r.name),
+            Builtin(t) => write!(f, "{}", t),
+            Enum(e, p) => write!(f, "{}{}", p, e.prototype.name),
+            Rec(r, p) => write!(f, "{}{}", p, r.prototype.name),
+            Tuple(t) => write!(f, "{}", t),
+            Unresolved(i, p) => write!(f, "{}{}", p, i),
+            UnresolvedEnum(e, p) => write!(f, "{}{}", p, e.name),
+            UnresolvedRec(r, p) => write!(f, "{}{}", p, r.name),
         }
     }
 }

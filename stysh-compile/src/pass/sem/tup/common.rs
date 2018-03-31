@@ -42,9 +42,9 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
         use self::Type::*;
 
         match c {
-            Builtin(_) | UnresolvedEnum(..) | Unresolved(..) => None,
-            UnresolvedRec(r, _) => self.registry.lookup_record(r.name).map(|r| r.definition),
+            Rec(r, _) => Some(r.definition),
             Tuple(t) => Some(t),
+            _ => None,
         }
     }
 

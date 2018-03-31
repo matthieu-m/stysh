@@ -30,6 +30,8 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
         match ty {
             Tuple(t) => self.fetch_tuple(t).combine(ty, |t| Tuple(t)),
             Unresolved(u, p) => self.fetch_unresolved(ty, u, p),
+            UnresolvedEnum(e, p) => self.fetch_unresolved_enum(ty, e, p),
+            UnresolvedRec(r, p) => self.fetch_unresolved_record(ty, r, p),
             _ => Resolution::forward(ty),
         }
     }
@@ -81,6 +83,24 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
         }
     }
 
+    fn fetch_unresolved_enum(&self, ty: Type<'g>, e: EnumProto, p: Path<'g>)
+        -> Resolution<Type<'g>>
+    {
+        self.core.registry
+            .lookup_enum(e.name)
+            .map(|e| Resolution::update(Type::Enum(self.core.insert(e), p)))
+            .unwrap_or(Resolution::forward(ty))
+    }
+
+    fn fetch_unresolved_record(&self, ty: Type<'g>, r: RecordProto, p: Path<'g>)
+        -> Resolution<Type<'g>>
+    {
+        self.core.registry
+            .lookup_record(r.name)
+            .map(|r| Resolution::update(Type::Rec(self.core.insert(r), p)))
+            .unwrap_or(Resolution::forward(ty))
+    }
+
     fn fetch_nested(&self, t: Type<'g>, parent: Type<'g>)
         -> Resolution<Type<'g>>
     {
@@ -104,7 +124,7 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
                 if v.id() == rec.prototype.name.id() {
                     self.fetched_item(v);
                     let r = Type::UnresolvedRec(*rec.prototype, Path::default());
-                    return Resolution::forward(r).with_altered(1);
+                    return Resolution::update(r);
                 }
             }
         }

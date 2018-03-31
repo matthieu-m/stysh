@@ -96,6 +96,18 @@ pub struct FunctionProtoBuilder<'a> {
 pub struct BuiltinTypeBuilder;
 
 #[derive(Clone, Debug)]
+pub struct TypeEnumBuilder<'a> {
+    enum_: &'a Enum<'a>,
+    path: PathBuilder<'a>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeRecordBuilder<'a> {
+    record: &'a Record<'a>,
+    path: PathBuilder<'a>,
+}
+
+#[derive(Clone, Debug)]
 pub struct TypeUnresolvedBuilder<'a> {
     name: ItemIdentifier,
     path: PathBuilder<'a>,
@@ -532,6 +544,16 @@ impl<'a> TypeFactory<'a> {
     /// Shortcut: creates a Void Type.
     pub fn void(&self) -> Type<'a> { Type::Builtin(self.builtin().void()) }
 
+    /// Creates a TypeEnumBuilder.
+    pub fn enum_(&self, e: Enum<'a>) -> TypeEnumBuilder<'a> {
+        TypeEnumBuilder::new(e, self.arena)
+    }
+
+    /// Creates a TypeRecordBuilder.
+    pub fn record(&self, r: Record<'a>) -> TypeRecordBuilder<'a> {
+        TypeRecordBuilder::new(r, self.arena)
+    }
+
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Type<'a>> {
         TupleBuilder::new(self.arena)
@@ -572,6 +594,48 @@ impl BuiltinTypeBuilder {
 
     /// Creates a Void BuiltinType.
     pub fn void(&self) -> BuiltinType { BuiltinType::Void }
+}
+
+impl<'a> TypeEnumBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(enum_: Enum<'a>, arena: &'a mem::Arena) -> Self {
+        TypeEnumBuilder {
+            enum_: arena.intern_ref(&enum_),
+            path: PathBuilder::new(arena),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        self.path.push(component);
+        self
+    }
+
+    /// Creates a Enum Type.
+    pub fn build(&self) -> Type<'a> {
+        Type::Enum(self.enum_, self.path.build())
+    }
+}
+
+impl<'a> TypeRecordBuilder<'a> {
+    /// Creates an instance.
+    pub fn new(record: Record, arena: &'a mem::Arena) -> Self {
+        TypeRecordBuilder {
+            record: arena.intern_ref(&record),
+            path: PathBuilder::new(arena),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+        self.path.push(component);
+        self
+    }
+
+    /// Creates a Record Type.
+    pub fn build(&self) -> Type<'a> {
+        Type::Rec(self.record, self.path.build())
+    }
 }
 
 impl<'a> TypeUnresolvedBuilder<'a> {
@@ -616,7 +680,7 @@ impl<'a> TypeUnresolvedEnumBuilder<'a> {
         self
     }
 
-    /// Creates a Enum Type.
+    /// Creates an UnresolvedEnum Type.
     pub fn build(&self) -> Type<'a> {
         Type::UnresolvedEnum(self.proto.build(), self.path.build())
     }
@@ -652,7 +716,7 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
         self
     }
 
-    /// Creates a Record Type.
+    /// Creates an UnresolvedRecord Type.
     pub fn build(&self) -> Type<'a> {
         Type::UnresolvedRec(self.proto.build(), self.path.build())
     }

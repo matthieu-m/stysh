@@ -78,9 +78,9 @@ impl<'a, 'g> TypeUnifier<'a, 'g>
             //  From then on, deal with concrete types.
             //  Update is NOT a valid action with concrete types; Cast is.
 
-            (UnresolvedEnum(e, _), UnresolvedRec(r, _)) if r.enum_ == e.name
+            (Enum(e, _), Rec(r, _)) if r.prototype.enum_ == e.prototype.name
                 => (Action::Keep(t0), Action::Cast(t0)),
-            (UnresolvedRec(r, _), UnresolvedEnum(e, _)) if r.enum_ == e.name
+            (Rec(r, _), Enum(e, _)) if r.prototype.enum_ == e.prototype.name
                 => (Action::Cast(t1), Action::Keep(t1)),
 
             (Tuple(t0), Tuple(t1)) => self.merge_tuple(t0, t1),

@@ -123,6 +123,9 @@ impl<T> Resolution<T> {
         Resolution { entity: e, altered: 0, introduced: 0 }
     }
 
+    /// Creates a Resolution with altered set to 1.
+    pub fn update(e: T) -> Self { Resolution::forward(e).with_altered(1) }
+
     /// Sets the number of altered entities.
     pub fn with_altered(mut self, n: u32) -> Self {
         self.altered = n;

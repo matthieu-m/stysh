@@ -153,9 +153,8 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         let v = self.fetch_ref(v);
 
         let index = match v.entity.type_ {
-            Builtin(_) | UnresolvedEnum(..) | Unresolved(..)
-                => return v.combine(e, |v| Expr::UnresolvedField(v, name)),
-            UnresolvedRec(..) | Tuple(..) => self.field_of(v.entity.type_, name),
+            Rec(..) | Tuple(..) => self.field_of(v.entity.type_, name),
+            _ => return v.combine(e, |v| Expr::UnresolvedField(v, name)),
         };
 
         match index {

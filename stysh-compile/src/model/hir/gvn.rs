@@ -204,9 +204,10 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         use self::Pattern::*;
 
         match *pattern {
-            Constructor(c) => Constructor(self.constructor_pattern(&c)),
+            Constructor(c, _)
+                => Constructor(self.constructor_pattern(&c), self.next()),
             Ignored(r) => Ignored(r),
-            Tuple(t, r) => Tuple(self.tuple_pattern(&t), r),
+            Tuple(t, r, _) => Tuple(self.tuple_pattern(&t), r, self.next()),
             Var(id, _) => Var(id, self.register_identifier(id)),
         }
     }

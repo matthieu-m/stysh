@@ -31,8 +31,10 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
 
         match p {
             Ignored(_) => Resolution::forward(p),
-            Constructor(c) => self.unify_constructor(c, ty).combine(p, |c| Constructor(c)),
-            Tuple(t, r) => self.unify_tuple(t, ty).combine(p, |t| Tuple(t, r)),
+            Constructor(c, g)
+                => self.unify_constructor(c, ty).combine(p, |c| Constructor(c, g)),
+            Tuple(t, r, g)
+                => self.unify_tuple(t, ty).combine(p, |t| Tuple(t, r, g)),
             Var(v, _) => {
                 self.unify_variable(v, ty);
                 Resolution::forward(p)

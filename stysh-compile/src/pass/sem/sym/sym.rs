@@ -85,11 +85,14 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     )
         -> hir::Pattern<'g>
     {
-        hir::Pattern::Constructor(hir::Constructor {
-            type_: self.type_of(&c.type_),
-            arguments: self.tuple_of(&c.arguments, |p| self.pattern_of(p)),
-            range: c.span(),
-        })
+        hir::Pattern::Constructor(
+            hir::Constructor {
+                type_: self.type_of(&c.type_),
+                arguments: self.tuple_of(&c.arguments, |p| self.pattern_of(p)),
+                range: c.span(),
+            },
+            self.context.gvn(),
+        )
     }
 
     fn pattern_of_ignored(&self, underscore: com::Range)
@@ -104,6 +107,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         hir::Pattern::Tuple(
             self.tuple_of(t, |p| self.pattern_of(p)),
             t.span(),
+            self.context.gvn(),
         )
     }
 

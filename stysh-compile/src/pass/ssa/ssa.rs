@@ -503,16 +503,16 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
         use self::hir::Pattern::*;
 
         let (patterns, types) = match pattern {
-            Ignored(_) => { return current; },
-            Var(_, gvn) => {
+            Ignored(..) => { return current; },
+            Var(.., gvn) => {
                 current.push_binding(gvn.into(), matched, type_);
                 return current;
             },
-            Constructor(pattern) => (
+            Constructor(pattern, ..) => (
                 pattern.arguments.fields,
                 self.extract_fields_types(type_),
             ),
-            Tuple(pattern, _) => (
+            Tuple(pattern, ..) => (
                 pattern.fields,
                 self.extract_fields_types(type_),
             ),

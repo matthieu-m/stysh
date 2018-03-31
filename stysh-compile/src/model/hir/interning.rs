@@ -91,9 +91,10 @@ impl<'g> Resolver<'g> {
         use self::Pattern::*;
 
         match p {
-            Constructor(c) => Constructor(self.resolve_constructor_pattern(c)),
+            Constructor(c, g)
+                => Constructor(self.resolve_constructor_pattern(c), g),
             Ignored(r) => Ignored(r),
-            Tuple(t, r) => Tuple(self.resolve_tuple_pattern(t), r),
+            Tuple(t, r, g) => Tuple(self.resolve_tuple_pattern(t), r, g),
             Var(v, g) => Var(self.resolve_value_id(v), g),
         }
     }
@@ -216,9 +217,10 @@ impl<'g> Scrubber<'g> {
         use self::Pattern::*;
 
         match p {
-            Constructor(c) => Constructor(self.scrub_constructor_pattern(c)),
+            Constructor(c, g)
+                => Constructor(self.scrub_constructor_pattern(c), g),
             Ignored(r) => Ignored(r),
-            Tuple(t, r) => Tuple(self.scrub_tuple_pattern(t), r),
+            Tuple(t, r, g) => Tuple(self.scrub_tuple_pattern(t), r, g),
             Var(v, g) => Var(self.scrub_value_id(v), g),
         }
     }

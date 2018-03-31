@@ -107,13 +107,13 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     /// Adds a new pattern to the scope.
     pub fn add_pattern(&mut self, pat: Pattern<'g>) {
         let tuple = match pat {
-            Pattern::Ignored(_) => return,
-            Pattern::Var(id, _) => {
+            Pattern::Ignored(..) => return,
+            Pattern::Var(id, ..) => {
                 self.add_value(id);
                 return;
             },
-            Pattern::Constructor(c) => c.arguments,
-            Pattern::Tuple(tuple, _) => tuple,
+            Pattern::Constructor(c, ..) => c.arguments,
+            Pattern::Tuple(tuple, ..) => tuple,
         };
         for p in tuple.fields { self.add_pattern(*p); }
     }

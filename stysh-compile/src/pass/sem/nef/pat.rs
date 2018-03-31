@@ -28,9 +28,9 @@ impl<'a, 'g> PatternFetcher<'a, 'g>
         use self::Pattern::*;
 
         match p {
-            Constructor(c)
-                => self.fetch_constructor(c).combine(p, |c| Constructor(c)),
-            Tuple(t, r) => self.fetch_tuple(t).combine(p, |t| Tuple(t, r)),
+            Constructor(c, g)
+                => self.fetch_constructor(c).combine(p, |c| Constructor(c, g)),
+            Tuple(t, r, g) => self.fetch_tuple(t).combine(p, |t| Tuple(t, r, g)),
             _ => Resolution::forward(p),
         }
     }

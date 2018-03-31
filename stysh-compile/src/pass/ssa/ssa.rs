@@ -755,7 +755,7 @@ impl<'a, 'g, 'local> GraphBuilderImpl<'a, 'g, 'local>
     fn extract_fields_types(&self, type_: hir::Type<'g>) -> &'g [hir::Type<'g>]
     {
         match type_ {
-            hir::Type::Rec(proto, _) => {
+            hir::Type::UnresolvedRec(proto, _) => {
                 if let Some(r) = self.registry.lookup_record(proto.name) {
                     return &r.definition.fields;
                 }
@@ -918,7 +918,7 @@ mod tests {
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
-        let rec = Type::Rec(r, Default::default());
+        let rec = Type::UnresolvedRec(r, Default::default());
 
         assert_eq!(
             env.valueit(
@@ -1122,7 +1122,7 @@ mod tests {
         let r = po.rec(i.id(5, 1), 0).build();
         env.insert_record(i.rec(r).push(t.int()).push(t.int()).build());
 
-        let rec = Type::Rec(r, Default::default());
+        let rec = Type::UnresolvedRec(r, Default::default());
 
         let (a, b) = (v.id(29, 1), v.id(32, 1));
         let binding =

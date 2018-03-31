@@ -561,7 +561,7 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
-        let rec = hir::Type::Rec(hir::RecordProto {
+        let rec = hir::Type::UnresolvedRec(hir::RecordProto {
             name: hir::ItemIdentifier(Default::default(), range(5, 4)),
             range: range(0, 20),
             enum_: hir::ItemIdentifier::unresolved(),

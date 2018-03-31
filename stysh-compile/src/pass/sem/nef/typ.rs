@@ -87,11 +87,11 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
         use self::Type::*;
 
         match (t, parent) {
-            (Unresolved(id, _), Enum(e, _))
+            (Unresolved(id, _), UnresolvedEnum(e, _))
                 => self.fetch_enum_variant(id, e.name),
             (Unresolved(..), Unresolved(..)) => Resolution::forward(t),
             (Unresolved(..), _) => panic!("{:?} cannot be a parent!", parent),
-            (Enum(..), _) | (Rec(..), _) => Resolution::forward(t),
+            (UnresolvedEnum(..), _) | (UnresolvedRec(..), _) => Resolution::forward(t),
             _ => panic!("{:?} cannot be nested!", t),
         }
     }
@@ -103,7 +103,7 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
             for rec in e.variants {
                 if v.id() == rec.prototype.name.id() {
                     self.fetched_item(v);
-                    let r = Type::Rec(*rec.prototype, Path::default());
+                    let r = Type::UnresolvedRec(*rec.prototype, Path::default());
                     return Resolution::forward(r).with_altered(1);
                 }
             }
@@ -139,10 +139,10 @@ mod tests {
                 .build();
         local.insert_enum(e);
 
-        let parent = Type::Enum(*e.prototype, Default::default());
+        let parent = Type::UnresolvedEnum(*e.prototype, Default::default());
 
         let unresolved = t.unresolved(i.id(24, 1)).push(parent).build();
-        let fetched = t.record(i.id(13, 1), 13).push(parent).build();
+        let fetched = t.unresolved_record(i.id(13, 1), 13).push(parent).build();
 
         assert_eq!(fetch(&local, 1, unresolved), fetched);
     }

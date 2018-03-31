@@ -694,7 +694,7 @@ mod tests {
             env.value_of(
                 &ast.expr().constructor(ast.type_().simple(0, 3)).build()
             ),
-            v.constructor(hir::Type::Rec(rec, Default::default()), 0, 3)
+            v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 0, 3)
                 .build_value()
         );
     }
@@ -720,7 +720,7 @@ mod tests {
                     .push(e.int(1, 4))
                     .build()
             ),
-            v.constructor(hir::Type::Rec(rec, Default::default()), 0, 6)
+            v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 0, 6)
                 .push(v.int(1, 4))
                 .build_value()
         );
@@ -751,7 +751,7 @@ mod tests {
             ),
             v.constructor(
                 t.unresolved(i.id(38, 4))
-                    .push(hir::Type::Enum(enum_, Default::default()))
+                    .push(hir::Type::UnresolvedEnum(enum_, Default::default()))
                     .build(),
                 30,
                 12,
@@ -829,7 +829,7 @@ mod tests {
             ),
             v.field_access(
                 0,
-                v.constructor(hir::Type::Rec(rec, Default::default()), 15, 7)
+                v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 15, 7)
                     .push(v.int(42, 19))
                     .build_value()
             ).build()
@@ -1126,7 +1126,7 @@ mod tests {
 
             let rec = f.proto().rec(i.id(5, 4), 0).build();
             env.insert_record(rec, &[23, 34]);
-            let rec = hir::Type::Rec(rec, Default::default());
+            let rec = hir::Type::UnresolvedRec(rec, Default::default());
 
             v.block(v.name_ref(a, 43))
                 .push(s.var(
@@ -1175,7 +1175,7 @@ mod tests {
             let a = env.var_id(36, 1);
 
             let rec = f.proto().rec(i.id(5, 4), 0).build();
-            let rec = hir::Type::Rec(
+            let rec = hir::Type::UnresolvedRec(
                 env.insert_record(rec, &[27, 42]),
                 Default::default(),
             );
@@ -1262,7 +1262,10 @@ mod tests {
 
             for p in positions {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
-                self.scope.types.insert(id, hir::Type::Enum(enum_, Default::default()));
+                self.scope.types.insert(
+                    id,
+                    hir::Type::UnresolvedEnum(enum_, Default::default()),
+                );
             } 
         }
 
@@ -1294,7 +1297,10 @@ mod tests {
 
             for p in positions {
                 let id = hir::ItemIdentifier(rec.name.id(), range(*p, len));
-                self.scope.types.insert(id, hir::Type::Rec(rec, Default::default()));
+                self.scope.types.insert(
+                    id,
+                    hir::Type::UnresolvedRec(rec, Default::default()),
+                );
             }
 
             rec

@@ -34,14 +34,14 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
         let (expr, type_) = e.unify();
 
         match type_ {
-            Cast(Type::Enum(e, p)) => {
+            Cast(Type::UnresolvedEnum(e, p)) => {
                 let value = if expr.altered > 0 {
                     self.core.insert(v)
                 } else {
                     self.core.insert(v.with_expr(expr.entity).with_type(v.type_))
                 };
                 Resolution::forward(Value {
-                    type_: Type::Enum(e, p),
+                    type_: Type::UnresolvedEnum(e, p),
                     range: v.range,
                     expr: Expr::Implicit(Implicit::ToEnum(e, value)),
                     gvn: Default::default(),
@@ -164,9 +164,9 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             (Resolution::forward(self.expr), Action::Keep(self.type_));
 
         let (r, p) = match c.type_ {
-            Type::Rec(r, p) => (r, p),
+            Type::UnresolvedRec(r, p) => (r, p),
             Type::Unresolved(..) => return forward,
-            Type::Builtin(..) | Type::Enum(..) | Type::Tuple(..)
+            Type::Builtin(..) | Type::UnresolvedEnum(..) | Type::Tuple(..)
                 => unimplemented!("Constructor type {:?}", c.type_),
         };
 
@@ -179,7 +179,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
 
         let (arguments, _) =
             self.unify_tuple_impl(c.arguments, Type::Tuple(record.definition));
-        let type_ = Type::Rec(r, p);
+        let type_ = Type::UnresolvedRec(r, p);
         let range = c.range;
 
         (

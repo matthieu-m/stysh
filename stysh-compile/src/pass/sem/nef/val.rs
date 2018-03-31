@@ -153,9 +153,9 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         let v = self.fetch_ref(v);
 
         let index = match v.entity.type_ {
-            Builtin(_) | Enum(..) | Unresolved(..)
+            Builtin(_) | UnresolvedEnum(..) | Unresolved(..)
                 => return v.combine(e, |v| Expr::UnresolvedField(v, name)),
-            Rec(..) | Tuple(..) => self.field_of(v.entity.type_, name),
+            UnresolvedRec(..) | Tuple(..) => self.field_of(v.entity.type_, name),
         };
 
         match index {
@@ -180,7 +180,7 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         use self::Type::*;
 
         let tuple = match t {
-            Rec(r, _)
+            UnresolvedRec(r, _)
                 => self.core.registry.lookup_record(r.name).map(|r| r.definition),
             Tuple(t) => Some(t),
             _ => None,
@@ -222,10 +222,10 @@ mod tests {
                 .build();
         local.insert_enum(e);
 
-        let parent = Type::Enum(*e.prototype, Default::default());
+        let parent = Type::UnresolvedEnum(*e.prototype, Default::default());
 
         let unresolved = t.unresolved(i.id(24, 1)).push(parent).build();
-        let fetched = t.record(i.id(13, 1), 13).push(parent).build();
+        let fetched = t.unresolved_record(i.id(13, 1), 13).push(parent).build();
 
         assert_eq!(
             fetch(

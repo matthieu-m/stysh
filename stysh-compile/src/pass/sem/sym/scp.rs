@@ -96,7 +96,10 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 
     /// Adds a new enum to the scope.
     pub fn add_enum(&mut self, proto: EnumProto) {
-        self.types.insert(proto.name.id(), Type::Enum(proto, Path::default()));
+        self.types.insert(
+            proto.name.id(),
+            Type::UnresolvedEnum(proto, Path::default()),
+        );
     }
 
     /// Adds a new function identifier to the scope.

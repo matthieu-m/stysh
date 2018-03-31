@@ -138,14 +138,14 @@ pub struct RecordProto {
 pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
-    /// An enum type.
-    Enum(EnumProto, Path<'a>),
-    /// A record type.
-    Rec(RecordProto, Path<'a>),
     /// A tuple type.
     Tuple(Tuple<'a, Type<'a>>),
     /// An unresolved type, possibly nested.
     Unresolved(ItemIdentifier, Path<'a>),
+    /// An unresolved enum type.
+    UnresolvedEnum(EnumProto, Path<'a>),
+    /// A unresolved record type.
+    UnresolvedRec(RecordProto, Path<'a>),
 }
 
 /// An item identifier.
@@ -212,9 +212,9 @@ impl<'a> Type<'a> {
         use self::Type::*;
 
         match self {
-            Enum(e, _) => Enum(e, p),
-            Rec(r, _) => Rec(r, p),
             Unresolved(i, _) => Unresolved(i, p),
+            UnresolvedEnum(e, _) => UnresolvedEnum(e, p),
+            UnresolvedRec(r, _) => UnresolvedRec(r, p),
             _ => panic!("{} has no path!", self),
         }
     }
@@ -331,10 +331,10 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
         match *self {
             Builtin(t) => Builtin(t),
-            Enum(e, p) => Enum(e, CloneInto::clone_into(&p, arena)),
-            Rec(r, p) => Rec(r, CloneInto::clone_into(&p, arena)),
             Tuple(t) => Tuple(arena.intern(&t)),
-            Unresolved(n, p) => Unresolved(n, CloneInto::clone_into(&p, arena)),
+            Unresolved(n, p) => Unresolved(n, arena.intern(&p)),
+            UnresolvedEnum(e, p) => UnresolvedEnum(e, arena.intern(&p)),
+            UnresolvedRec(r, p) => UnresolvedRec(r, arena.intern(&p)),
         }
     }
 }
@@ -388,10 +388,10 @@ impl<'a> Span for Type<'a> {
             Builtin(Int) => 3,
             Builtin(String) => 6,
             Builtin(Void) => 4,
-            Enum(e, p) => len(e.name, p),
-            Rec(r, p) => len(r.name, p),
             Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
             Unresolved(i, p) => len(i, p),
+            UnresolvedEnum(e, p) => len(e.name, p),
+            UnresolvedRec(r, p) => len(r.name, p),
         };
 
         com::Range::new(0, len)
@@ -433,11 +433,11 @@ impl convert::From<RecordProto> for Prototype<'static> {
 }
 
 impl convert::From<EnumProto> for Type<'static> {
-    fn from(e: EnumProto) -> Self { Type::Enum(e, Path::default()) }
+    fn from(e: EnumProto) -> Self { Type::UnresolvedEnum(e, Path::default()) }
 }
 
 impl convert::From<RecordProto> for Type<'static> {
-    fn from(r: RecordProto) -> Self { Type::Rec(r, Path::default()) }
+    fn from(r: RecordProto) -> Self { Type::UnresolvedRec(r, Path::default()) }
 }
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
@@ -482,10 +482,10 @@ impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             Type::Builtin(t) => write!(f, "{}", t),
-            Type::Enum(e, p) => write!(f, "{}{}", p, e.name),
-            Type::Rec(r, p) => write!(f, "{}{}", p, r.name),
             Type::Tuple(t) => write!(f, "{}", t),
             Type::Unresolved(i, p) => write!(f, "{}{}", p, i),
+            Type::UnresolvedEnum(e, p) => write!(f, "{}{}", p, e.name),
+            Type::UnresolvedRec(r, p) => write!(f, "{}{}", p, r.name),
         }
     }
 }

@@ -84,10 +84,10 @@ mod tests {
                 .build();
         local.insert_enum(e);
 
-        let parent = Type::Enum(*e.prototype, Default::default());
+        let parent = Type::UnresolvedEnum(*e.prototype, Default::default());
 
         let unresolved = t.unresolved(i.id(24, 1)).push(parent).build();
-        let fetched = t.record(i.id(13, 1), 13).push(parent).build();
+        let fetched = t.unresolved_record(i.id(13, 1), 13).push(parent).build();
 
         assert_eq!(
             fetch(

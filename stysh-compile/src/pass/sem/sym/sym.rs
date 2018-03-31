@@ -320,20 +320,15 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
 
         let accessed = self.global_arena.insert(self.value_of(field.accessed));
 
-        let expr = match field.field {
-            Index(index, _) => hir::Expr::FieldAccess(accessed, index),
-            Name(n, r) => {
-                hir::Expr::UnresolvedField(
-                    accessed,
-                    hir::ValueIdentifier(n, r)
-                )
-            },
+        let f = match field.field {
+            Index(i, r) => hir::Field::Index(i, r),
+            Name(n, r) => hir::Field::Unresolved(hir::ValueIdentifier(n, r)),
         };
 
         hir::Value {
             type_: hir::Type::unresolved(),
             range: field.span(),
-            expr: expr,
+            expr: hir::Expr::FieldAccess(accessed, f),
             gvn: self.context.gvn(),
         }
     }
@@ -828,7 +823,6 @@ mod tests {
                     .build()
             ),
             v.field_access(
-                0,
                 v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 15, 7)
                     .push(v.int(42, 19))
                     .build_value()
@@ -968,7 +962,7 @@ mod tests {
             v.block(v.name_ref(a, 33))
                 .push(s.var(p.var(a), tup))
                 .push(s.set(
-                    v.field_access(0, v.name_ref(a, 23)).build(),
+                    v.field_access(v.name_ref(a, 23)).build(),
                     v.int(2, 30)
                 ))
                 .build()
@@ -995,9 +989,8 @@ mod tests {
                     .build()
             ),
             v.field_access(
-                1,
                 v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build().without_type()
-            ).build()
+            ).index(1).build()
         )
     }
 
@@ -1023,14 +1016,15 @@ mod tests {
                     .name(20, 2)
                     .build()
             ),
-            v.unresolved_field(
-                env.field_id(20, 2),
+            v.field_access(
                 v.tuple()
                     .push(v.int(42, 7)).name(x)
                     .push(v.int(43, 17)).name(y)
                     .build()
                     .without_type()
             )
+                .unresolved(env.field_id(20, 2))
+                .build()
         )
     }
 

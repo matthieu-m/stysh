@@ -188,7 +188,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         use self::Expr::*;
 
         match self.expr {
-            Implicit(..) | UnresolvedRef(..) | UnresolvedField(..)
+            Implicit(..) | UnresolvedRef(..)
                 => (Alteration::forward(self.expr), Action::Keep(self.type_)),
             BuiltinVal(v) => {
                 let action = self.merge(v.result_type(), self.type_).1;
@@ -197,7 +197,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
             Block(stmts, v) => self.unify_block(stmts, v),
             Call(c, args) => self.unify_call(c, args),
             Constructor(c) => self.unify_constructor(c),
-            FieldAccess(v, i) => self.unify_field_access(v, i),
+            FieldAccess(v, f) => self.unify_field_access(v, f),
             If(c, t, f) => self.unify_if(c, t, f),
             Loop(stmts) => self.unify_loop(stmts),
             Ref(_, g) => self.unify_variable_ref(g),
@@ -205,16 +205,13 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         }
     }
 
-    fn unify_field_access(&self, v: &'g Value<'g>, i: u16) -> Result<'g> {
+    fn unify_field_access(&self, v: &'g Value<'g>, f: Field) -> Result<'g> {
         let value = self.unify_ref(v, Type::unresolved());
 
-        let result_type =
-            self.core.fields_of(value.entity.type_)
-                .and_then(|t| t.fields.get(i as usize).cloned())
-                .unwrap_or(Type::unresolved());
+        let result_type = value.entity.type_.field(f);
 
         (
-            value.combine(self.expr, |v| Expr::FieldAccess(v, i)),
+            value.combine(self.expr, |v| Expr::FieldAccess(v, f)),
             self.transform_into(result_type, self.type_),
         )
     }

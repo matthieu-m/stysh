@@ -35,7 +35,7 @@ pub enum Expr<'a> {
     /// A constructor call.
     Constructor(Constructor<'a , Value<'a>>),
     /// A field access.
-    FieldAccess(&'a Value<'a>, u16),
+    FieldAccess(&'a Value<'a>, Field),
     /// A if expression (condition, true-branch, false-branch).
     If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
     /// An implicit cast (variant to enum, anonymous to named, ...).
@@ -46,8 +46,6 @@ pub enum Expr<'a> {
     Ref(ValueIdentifier, Gvn),
     /// A tuple.
     Tuple(Tuple<'a, Value<'a>>),
-    /// An unresolved field access.
-    UnresolvedField(&'a Value<'a>, ValueIdentifier),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
 }

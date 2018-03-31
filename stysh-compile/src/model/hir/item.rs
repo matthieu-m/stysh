@@ -209,6 +209,22 @@ impl Type<'static> {
 }
 
 impl<'a> Type<'a> {
+    /// Returns the type of the field, or Unresolved if unknown.
+    pub fn field(&self, field: Field) -> Type<'a> {
+        self.fields().field(field).unwrap_or(Type::unresolved())
+    }
+
+    /// Returns the fields of the type, as a Tuple.
+    ///
+    /// Note:   unless the type is a Rec or Tuple, the Tuple will be empty.
+    pub fn fields(&self) -> Tuple<'a, Type<'a>> {
+        match *self {
+            Type::Rec(r, _) => r.definition,
+            Type::Tuple(t) => t,
+            _ => Tuple::unit(),
+        }
+    }
+
     /// Switches the path of the type.
     ///
     /// Panics: If this variant has no path.

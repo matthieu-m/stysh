@@ -19,6 +19,15 @@ pub struct Constructor<'a, T: 'a> {
     pub range: com::Range,
 }
 
+/// A field.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Field {
+    /// Index of the field.
+    Index(u16, com::Range),
+    /// Unresolved name of the field.
+    Unresolved(ValueIdentifier),
+}
+
 /// A tuple.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Tuple<'a, T: 'a> {
@@ -32,6 +41,20 @@ pub struct Tuple<'a, T: 'a> {
 //  Public interface
 //
 
+impl Field {
+    /// Returns the index.
+    ///
+    /// Panics: If the field is Unresolved.
+    pub fn index(&self) -> u16 {
+        use self::Field::*;
+
+        match *self {
+            Index(i, ..) => i,
+            Unresolved(name) => panic!("Unresolved {:?}", name),
+        }
+    }
+}
+
 impl<T: 'static> Tuple<'static, T> {
     /// Returns a unit tuple.
     pub fn unit() -> Self { Tuple { fields: &[], names: &[] } }
@@ -40,6 +63,19 @@ impl<T: 'static> Tuple<'static, T> {
 impl<'a, T: 'a> Tuple<'a, T> {
     /// Returns the number of fields.
     pub fn len(&self) -> usize { self.fields.len() }
+}
+
+impl<'a, T: Clone + 'a> Tuple<'a, T> {
+    /// Returns the field of the tuple by index.
+    ///
+    /// Returns None if the field is Unresolved or the index too large.
+    pub fn field(&self, field: Field) -> Option<T> {
+        if let Field::Index(i, ..) = field {
+            self.fields.get(i as usize).cloned()
+        } else {
+            None
+        }
+    }
 }
 
 //
@@ -82,9 +118,32 @@ impl<'a, T: 'a> Span for Constructor<'a, T> {
     fn span(&self) -> com::Range { self.range }
 }
 
+impl Span for Field {
+    /// Returns the range spanned by the field.
+    fn span(&self) -> com::Range {
+        use self::Field::*;
+
+        match *self {
+            Index(_, r) => r,
+            Unresolved(n) => n.span(),
+        }
+    }
+}
+
 //
 //  Implementation Details
 //
+
+impl fmt::Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use self::Field::*;
+
+        match *self {
+            Index(i, ..) => write!(f, "{}", i),
+            Unresolved(name) => write!(f, "{:?}", name),
+        }
+    }
+}
 
 impl<'a, T> fmt::Display for Tuple<'a, T>
     where

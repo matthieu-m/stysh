@@ -165,8 +165,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 => Some(self.convert_call(current, callable, args, gvn, r)),
             hir::Expr::Constructor(c)
                 => Some(self.convert_constructor(current, c, gvn, r)),
-            hir::Expr::FieldAccess(v, i)
-                => Some(self.convert_field_access(current, value.type_, v, i, r)),
+            hir::Expr::FieldAccess(v, f)
+                => Some(self.convert_field_access(current, value.type_, v, f, r)),
             hir::Expr::If(cond, true_, false_)
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
             hir::Expr::Loop(stmts)
@@ -319,7 +319,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         current: ProtoBlock<'g, 'local>,
         type_: hir::Type<'g>,
         value: &'g hir::Value<'g>,
-        field: u16,
+        field: hir::Field,
         range: com::Range,
     )
         -> ProtoBlock<'g, 'local>
@@ -329,7 +329,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         current.push_instr(
             value.gvn.into(),
-            sir::Instruction::Field(type_, value_id, field, range)
+            sir::Instruction::Field(type_, value_id, field.index(), range)
         );
 
         current
@@ -503,11 +503,11 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             },
             Constructor(pattern, ..) => (
                 pattern.arguments.fields,
-                self.extract_fields_types(type_),
+                type_.fields().fields,
             ),
             Tuple(pattern, ..) => (
                 pattern.fields,
-                self.extract_fields_types(type_),
+                type_.fields().fields,
             ),
         };
 
@@ -570,8 +570,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         //
         //  The following bit of code captures this reversal.
         match left.expr {
-            hir::Expr::FieldAccess(v, i)
-                => self.convert_rebind_recurse_field(current, v, i, left.gvn),
+            hir::Expr::FieldAccess(v, f)
+                => self.convert_rebind_recurse_field(current, v, f, left.gvn),
             hir::Expr::Ref(_, gvn) => {
                 let id = current.last_value();
                 current.push_rebinding(gvn.into(), id, left.type_);
@@ -587,31 +587,22 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         &mut self,
         mut current: ProtoBlock<'g, 'local>,
         value: &hir::Value<'g>,
-        index: u16,
+        field: hir::Field,
         gvn: hir::Gvn,
     )
         -> ProtoBlock<'g, 'local>
     {
-        fn extract_fields<'g>(v: &hir::Value<'g>)
-            -> &'g [hir::Type<'g>]
-        {
-            use self::hir::Type::*;
-
-            match v.type_ {
-                Rec(r, _) => &r.definition.fields,
-                Tuple(t) => &t.fields,
-                _ => unimplemented!("Can only access record or tuple fields!"),
-            }
-        }
-
         let id = current.last_value();
+        let index = field.index();
 
         //  Load tuple
         current = self.convert_value(current, value).expect("!Void");
         let tuple_id = current.last_value();
 
         //  Load other fields
-        let fields = extract_fields(&value);
+        let fields = &value.type_.fields().fields;
+        assert!(fields.len() > index as usize, "{} > {}", fields.len(), index);
+
         let mut args =
             mem::Array::with_capacity(fields.len(), self.global_arena);
 
@@ -743,15 +734,6 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         match value.expr {
             hir::Expr::Ref(_, gvn) => gvn.into(),
             _ => value.gvn.into()
-        }
-    }
-
-    fn extract_fields_types(&self, type_: hir::Type<'g>) -> &'g [hir::Type<'g>]
-    {
-        match type_ {
-            hir::Type::Rec(r, _) => &r.definition.fields,
-            hir::Type::Tuple(t) => &t.fields,
-            _ => unimplemented!("Expected record or tuple, got {:?}", type_),
         }
     }
 
@@ -938,7 +920,7 @@ mod tests {
                 .build_value();
 
         assert_eq!(
-            env.valueit(&v.field_access(1, c).build()).to_string(),
+            env.valueit(&v.field_access(c).index(1).build()).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 4 ; 1@28",
@@ -1023,11 +1005,9 @@ mod tests {
                 .push(s.var_id(a, a_v))
                 .push(s.set(
                     v.field_access(
-                        0,
-                        v.field_access(
-                            1,
-                            v.name_ref(a, 30).with_type(a_v.type_)
-                        ).build(),
+                        v.field_access(v.name_ref(a, 30).with_type(a_v.type_))
+                            .index(1)
+                            .build(),
                     ).build(),
                     v.int(4, 39),
                 ))

@@ -163,14 +163,13 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
             BuiltinVal(v) => BuiltinVal(self.intern(&v)),
             Call(c, vs) => Call(self.callable(&c), self.values(vs)),
             Constructor(c) => Constructor(self.constructor_value(&c)),
-            FieldAccess(v, i) => FieldAccess(self.value_ref(v), i),
+            FieldAccess(v, f) => FieldAccess(self.value_ref(v), f),
             If(c, t, f)
                 => If(self.value_ref(c), self.value_ref(t), self.value_ref(f)),
             Implicit(i) => Implicit(self.implicit(&i)),
             Loop(ss) => Loop(self.stmts(ss)),
             Ref(id, _) => Ref(id, self.lookup_identifier(id)),
             Tuple(t) => Tuple(self.tuple_value(&t)),
-            UnresolvedField(v, id) => UnresolvedField(self.value_ref(v), id),
             UnresolvedRef(id) => UnresolvedRef(id),
         }
     }

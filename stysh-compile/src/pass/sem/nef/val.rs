@@ -1,5 +1,7 @@
 //! Value Fetcher.
 
+use basic::com::Span;
+
 use model::hir::*;
 use super::{common, stmt, typ, Alteration};
 
@@ -92,14 +94,27 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
             Call(c, args) => self.fetch_call(e, c, args),
             Constructor(c)
                 => self.fetch_constructor(c).combine(e, |c| Constructor(c)),
-            FieldAccess(v, i) => self.fetch_ref(v).combine(e, |v| FieldAccess(v, i)),
+            FieldAccess(v, f) => self.fetch_field_access(e, v, f),
             If(c, t, f) => self.fetch_if(e, c, t, f),
             Implicit(i) => self.fetch_implicit(i).combine(e, |i| Implicit(i)),
             Loop(stmts) => self.fetch_loop(e, stmts),
             Tuple(t) => self.fetch_tuple(t).combine(e, |t| Tuple(t)),
-            UnresolvedField(v, id) => self.fetch_unresolved_field(e, v, id),
         }
 
+    }
+
+    fn fetch_field_access(
+        &self,
+        e: Expr<'g>,
+        v: &'g Value<'g>,
+        f: Field,
+    )
+        -> Alteration<Expr<'g>>
+    {
+        let v = self.fetch_ref(v);
+        let f = self.field_of(v.entity.type_, f);
+
+        v.combine2(e, f, |v, f| Expr::FieldAccess(v, f))
     }
 
     fn fetch_if(
@@ -140,29 +155,6 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         self.core.fetch_tuple(t, |v| self.fetch(v))
     }
 
-    fn fetch_unresolved_field(
-        &self,
-        e: Expr<'g>,
-        v: &'g Value<'g>,
-        name: ValueIdentifier,
-    )
-        -> Alteration<Expr<'g>>
-    {
-        use self::Type::*;
-
-        let v = self.fetch_ref(v);
-
-        let index = match v.entity.type_ {
-            Rec(..) | Tuple(..) => self.field_of(v.entity.type_, name),
-            _ => return v.combine(e, |v| Expr::UnresolvedField(v, name)),
-        };
-
-        match index {
-            None => v.combine(e, |v| Expr::UnresolvedField(v, name)),
-            Some(index) => v.map(|v| Expr::FieldAccess(v, index)),
-        }
-    }
-
     fn fetch_ref(&self, v: &'g Value<'g>) -> Alteration<&'g Value<'g>> {
         self.fetch(*v).map(|v| self.core.insert(v))
     }
@@ -175,19 +167,24 @@ impl<'a, 'g> ValueFetcher<'a, 'g>
         typ::TypeFetcher::new(self.core).fetch(t)
     }
 
-    fn field_of(&self, t: Type<'g>, name: ValueIdentifier) -> Option<u16> {
+    fn field_of(&self, t: Type<'g>, field: Field) -> Alteration<Field> {
         use self::Type::*;
 
-        let tuple = match t {
-            UnresolvedRec(r, _)
-                => self.core.registry.lookup_record(r.name).map(|r| r.definition),
-            Tuple(t) => Some(t),
-            _ => None,
+        let name = match field {
+            Field::Index(..) => return Alteration::forward(field),
+            Field::Unresolved(n) => n,
         };
 
-        tuple.and_then(|t|
-            t.names.iter().position(|n| n.id() == name.id()).map(|u| u as u16)
-        )
+        let tuple = match t {
+            Rec(r, _) => r.definition,
+            Tuple(t) => t,
+            _ => return Alteration::forward(field),
+        };
+
+        tuple.names.iter()
+            .position(|n| n.id() == name.id())
+            .map(|u| Alteration::update(Field::Index(u as u16, field.span())))
+            .unwrap_or(Alteration::forward(field))
     }
 }
 

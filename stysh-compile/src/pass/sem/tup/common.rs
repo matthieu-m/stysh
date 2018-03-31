@@ -37,17 +37,6 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
         CoreUnifier { registry, context, global_arena }
     }
 
-    /// Returns the fields associated with the type, if any.
-    pub fn fields_of(&self, c: Type<'g>) -> Option<Tuple<'g, Type<'g>>> {
-        use self::Type::*;
-
-        match c {
-            Rec(r, _) => Some(r.definition),
-            Tuple(t) => Some(t),
-            _ => None,
-        }
-    }
-
     /// Inserts into the global_arena.
     pub fn insert<T: 'g>(&self, t: T) -> &'g T { self.global_arena.insert(t) }
 

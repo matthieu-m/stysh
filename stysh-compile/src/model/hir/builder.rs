@@ -147,7 +147,7 @@ pub struct CallBuilder<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct FieldAccessBuilder<'a> {
-    index: u16,
+    field: Field,
     type_: Option<Type<'a>>,
     value: &'a Value<'a>,
 }
@@ -782,10 +782,10 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Creates a FieldAccessBuilder.
-    pub fn field_access(&self, index: u16, accessed: Value<'a>)
+    pub fn field_access(&self, accessed: Value<'a>)
         -> FieldAccessBuilder<'a>
     {
-        FieldAccessBuilder::new(self.arena, index, accessed)
+        FieldAccessBuilder::new(self.arena, accessed)
     }
 
     /// Creates an IfBuilder.
@@ -812,17 +812,6 @@ impl<'a> ValueFactory<'a> {
     /// Creates a ValueTupleBuilder.
     pub fn tuple(&self) -> ValueTupleBuilder<'a> {
         ValueTupleBuilder::new(self.arena)
-    }
-
-    /// Creates an unresolved field Value.
-    pub fn unresolved_field(&self, id: ValueIdentifier, v: Value<'a>)
-        -> Value<'a>
-    {
-        let r = v.span().extend(id.span());
-        value(
-            Type::unresolved(),
-            Expr::UnresolvedField(self.arena.insert(v), id),
-        ).with_range(r.offset(), r.length())
     }
 
     /// Creates an unresolved ref Value.
@@ -1016,12 +1005,24 @@ impl<'a> CallBuilder<'a> {
 
 impl<'a> FieldAccessBuilder<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, index: u16, value: Value<'a>) -> Self {
+    pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
         FieldAccessBuilder {
-            index: index,
+            field: Field::Index(0, Default::default()),
             type_: None,
             value: arena.insert(value),
         }
+    }
+
+    /// Sets the index.
+    pub fn index(&mut self, index: u16) -> &mut Self {
+        self.field = Field::Index(index, Default::default());
+        self
+    }
+
+    /// Sets the unresolved name.
+    pub fn unresolved(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.field = Field::Unresolved(name);
+        self
     }
 
     /// Sets the type.
@@ -1032,22 +1033,26 @@ impl<'a> FieldAccessBuilder<'a> {
 
     /// Creates a field access Value.
     pub fn build(&self) -> Value<'a> {
-        let i = self.index as i64;
-        let len = self.value.range.length() + 1 + count_characters(i);
+        let field = if let Field::Index(i, r) = self.field {
+            let range = if r == Default::default() {
+                range(self.value.span().end_offset(), 1 + count_characters(i as i64))
+            } else {
+                r
+            };
+            Field::Index(i, range)
+        } else {
+            self.field
+        };
 
         let type_ = self.type_.unwrap_or_else(|| {
-            let fields = if let Type::Tuple(t) = self.value.type_ {
-                t.fields
-            } else {
-                &[]
-            };
-            fields.get(i as usize)
-                .cloned()
-                .unwrap_or(Type::unresolved())
+            self.value.type_.field(self.field)
         });
 
-        value(type_, Expr::FieldAccess(self.value, self.index))
-            .with_range(self.value.range.offset(), len)
+        let offset = self.value.range.offset();
+        let length = self.value.range.extend(field.span()).length();
+
+        value(type_, Expr::FieldAccess(self.value, field))
+            .with_range(offset, length)
     }
 }
 

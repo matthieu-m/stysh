@@ -358,8 +358,10 @@ impl<'g> Resolver<'g> {
             BuiltinVal(v) => BuiltinVal(CloneInto::clone_into(&v, self.global_arena)),
             Call(c, a) => self.resolve_call(c, a),
             Constructor(c) => Constructor(self.resolve_constructor_value(c)),
-            FieldAccess(v, i)
-                => FieldAccess(self.insert(self.resolve_value(*v)), i),
+            FieldAccess(v, f) => FieldAccess(
+                self.insert(self.resolve_value(*v)),
+                self.resolve_field(f),
+            ),
             If(condition, if_, else_) => If(
                 self.insert(self.resolve_value(*condition)),
                 self.insert(self.resolve_value(*if_)),
@@ -369,11 +371,14 @@ impl<'g> Resolver<'g> {
             Loop(s) => Loop(self.resolve_statements(s)),
             Ref(v, g) => Ref(self.resolve_value_id(v), g),
             Tuple(t) => Tuple(self.resolve_tuple_value(t)),
-            UnresolvedField(v, id) => UnresolvedField(
-                self.insert(self.resolve_value(*v)),
-                self.resolve_value_id(id),
-            ),
             UnresolvedRef(id) => UnresolvedRef(self.resolve_value_id(id)),
+        }
+    }
+
+    fn resolve_field(&self, f: Field) -> Field {
+        match f {
+            Field::Index(..) => f,
+            Field::Unresolved(n) => Field::Unresolved(self.resolve_value_id(n)),
         }
     }
 
@@ -554,8 +559,10 @@ impl<'g> Scrubber<'g> {
             BuiltinVal(v) => BuiltinVal(CloneInto::clone_into(&v, self.global_arena)),
             Call(c, a) => self.scrub_call(c, a),
             Constructor(c) => Constructor(self.scrub_constructor_value(c)),
-            FieldAccess(v, i)
-                => FieldAccess(self.insert(self.scrub_value(*v)), i),
+            FieldAccess(v, f) => FieldAccess(
+                self.insert(self.scrub_value(*v)),
+                self.scrub_field(f),
+            ),
             If(condition, if_, else_) => If(
                 self.insert(self.scrub_value(*condition)),
                 self.insert(self.scrub_value(*if_)),
@@ -565,11 +572,14 @@ impl<'g> Scrubber<'g> {
             Loop(s) => Loop(self.scrub_statements(s)),
             Ref(v, g) => Ref(self.scrub_value_id(v), g),
             Tuple(t) => Tuple(self.scrub_tuple_value(t)),
-            UnresolvedField(v, id) => UnresolvedField(
-                self.insert(self.scrub_value(*v)),
-                self.scrub_value_id(id),
-            ),
             UnresolvedRef(id) => UnresolvedRef(self.scrub_value_id(id)),
+        }
+    }
+
+    fn scrub_field(&self, f: Field) -> Field {
+        match f {
+            Field::Index(..) => f,
+            Field::Unresolved(n) => Field::Unresolved(self.scrub_value_id(n)),
         }
     }
 

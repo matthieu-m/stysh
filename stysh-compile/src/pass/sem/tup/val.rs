@@ -258,7 +258,7 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         let (_, result) = self.merge(self.core.type_of(gvn), self.type_);
 
         if let Action::Update(to) = result {
-            self.core.context.set_type_of(gvn, to);
+            self.core.context.value(gvn).set_type(to);
         }
 
         (Alteration::forward(self.expr), result)

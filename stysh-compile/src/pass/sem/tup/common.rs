@@ -43,7 +43,9 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
     /// Returns the type of a known GVN.
     ///
     /// Panics: If the GVN is unknown.
-    pub fn type_of(&self, gvn: Gvn) -> Type<'g> { self.context.type_of(gvn) }
+    pub fn type_of(&self, gvn: Gvn) -> Type<'g> {
+        self.context.value(gvn).type_()
+    }
 
     /// Unifies an option.
     pub fn unify_option<T, U, F>(&self, o: Option<T>, f: F)
@@ -131,6 +133,7 @@ pub mod tests {
     use basic::mem;
 
     use model::hir::*;
+    use model::hir::gvn::GlobalValueNumberer;
     use model::hir::builder::{
         Factory, ItemFactory, PatternFactory, PrototypeFactory, StmtFactory,
         TypeFactory, ValueFactory,
@@ -146,6 +149,7 @@ pub mod tests {
 
     pub struct LocalEnv<'g> {
         global_arena: &'g mem::Arena,
+        local_arena: mem::Arena,
         registry: mocks::MockRegistry<'g>,
         context: Context<'g>,
         resolver: Resolver<'g>,
@@ -156,6 +160,7 @@ pub mod tests {
             let interner = rc::Rc::new(mem::Interner::new());
             LocalEnv {
                 global_arena: &self.global_arena,
+                local_arena: Default::default(),
                 registry: mocks::MockRegistry::new(&self.global_arena),
                 context: Context::default(),
                 resolver: Resolver::new(raw, interner, &self.global_arena),
@@ -179,6 +184,10 @@ pub mod tests {
     impl<'g> LocalEnv<'g> {
         pub fn core<'a>(&'a self) -> CoreUnifier<'a, 'g> {
             CoreUnifier::new(&self.registry, &self.context, self.global_arena)
+        }
+
+        pub fn numberer<'a>(&'a self) -> GlobalValueNumberer<'g, 'a> {
+            GlobalValueNumberer::new(self.global_arena, &self.local_arena)
         }
 
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }

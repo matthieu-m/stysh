@@ -5,15 +5,11 @@
 //! For each entity `a` which is access through an entity `b`, it will lookup
 //! the definition of `b` and fetch `a`.
 
-mod common;
+mod com;
+mod fld;
 mod nef;
-mod pat;
-mod stmt;
 mod typ;
-mod val;
 
-use super::{Alteration, Context};
+use super::com::*;
+
 pub use self::nef::NestedEntityFetcher;
-
-#[cfg(test)]
-use self::common::tests;

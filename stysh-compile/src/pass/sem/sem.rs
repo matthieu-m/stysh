@@ -7,7 +7,7 @@ use basic::com::Span;
 
 use model::{ast, hir};
 
-use super::{nef, tup, Context};
+use super::{fin, nef, tup, Context};
 use super::sym::{self, scp};
 
 /// The Stysh ASG builder.
@@ -168,8 +168,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     fn fun_item(&mut self, fun: ast::Function, p: &'g hir::FunctionProto<'g>)
         -> hir::Item<'g>
     {
-        for a in p.arguments {
-            self.context.insert_argument(a.name, a.gvn, a.type_);
+        for a in p.arguments{
+            self.context.insert_binding(a.name, a.type_);
         }
 
         let scope = self.function_scope(self.scope, p);
@@ -178,17 +178,16 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                 .value_of(&ast::Expression::Block(&fun.body));
 
         for _ in 0..3 {
-            let mut altered = 0;
+            self.context.next_iteration();
 
-            let res = self.nested().fetch_value(body);
-            body = res.entity;
-            altered += res.altered;
+            self.nested().fetch_all();
+
+            body = self.finalizer().finalize_value(body).entity;
 
             let res = self.unifier().unify_value(body, p.result);
             body = res.entity;
-            altered += res.altered;
 
-            if altered == 0 { break; }
+            if res.altered == 0 && self.context.unfetched() == 0 { break; }
         }
 
         hir::Item::Fun(hir::Function { prototype: p, body: body })
@@ -229,8 +228,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         sym::SymbolMapper::new(scope, self.context, self.global_arena, self.local_arena)
     }
 
+    fn finalizer(&self) -> fin::GraphFinalizer<'a, 'g> {
+        fin::GraphFinalizer::new(self.context, self.global_arena)
+    }
+
     fn nested(&self) -> nef::NestedEntityFetcher<'a, 'g> {
-        nef::NestedEntityFetcher::new(self.registry, self.context, self.global_arena)
+        nef::NestedEntityFetcher::new(self.context, self.registry, self.global_arena)
     }
 
     fn unifier(&self) -> tup::TypeUnifier<'a, 'g> {

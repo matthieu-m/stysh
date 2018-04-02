@@ -71,7 +71,7 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
     fn unify_variable(&self, gvn: Gvn, ty: Type<'g>) {
         let known = self.core.type_of(gvn);
         let ty = self.select(known, ty);
-        self.core.context.set_type_of(gvn, ty);
+        self.core.context.value(gvn).set_type(ty);
     }
 
     fn select(&self, t0: Type<'g>, t1: Type<'g>) -> Type<'g> {
@@ -110,12 +110,14 @@ mod tests {
         -> Pattern<'g>
     {
         let pat = local.resolver().resolve_pattern(pat);
+        let pat = local.numberer().number_pattern(pat);
         let ty = local.resolver().resolve_type(ty);
 
         let resolution =
             PatternUnifier::new(local.core())
                 .unify(pat, ty)
-                .map(|p| local.scrubber().scrub_pattern(p));
+                .map(|p| local.scrubber().scrub_pattern(p))
+                .map(|p| local.numberer().unnumber_pattern(p));
 
         assert_eq!(resolution.altered, altered);
 

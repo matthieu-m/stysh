@@ -1,39 +1,37 @@
 //! Type Fetcher
 
+use basic::mem;
+
 use model::hir::*;
-use super::{common, Alteration};
+
+use super::Alteration;
+use super::com::*;
+use super::flat::ValueHandle;
 
 /// Type Fetcher.
 #[derive(Clone, Debug)]
-pub struct TypeFetcher<'a, 'g>
-    where 'g: 'a
-{
-    core: common::CoreFetcher<'a, 'g>,
+pub struct TypeFetcher<'a, 'g: 'a> {
+    core: CoreFetcher<'a, 'g>,
+    handle: ValueHandle<'a, 'g>,
 }
 
 //
 //  Public interface of TypeFetcher
 //
 
-impl<'a, 'g> TypeFetcher<'a, 'g>
-    where 'g: 'a
-{
+impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
     /// Creates a new instance.
-    pub fn new(core: common::CoreFetcher<'a, 'g>) -> Self {
-        TypeFetcher { core }
+    pub fn new(core: CoreFetcher<'a, 'g>, handle: ValueHandle<'a, 'g>)
+        -> Self
+    {
+        TypeFetcher { core, handle }
     }
 
     /// Fetches the inner entities, recursively.
-    pub fn fetch(&self, ty: Type<'g>) -> Alteration<Type<'g>> {
-        use self::Type::*;
-
-        match ty {
-            Tuple(t) => self.fetch_tuple(t).combine(ty, |t| Tuple(t)),
-            Unresolved(u, p) => self.fetch_unresolved(ty, u, p),
-            UnresolvedEnum(e, p) => self.fetch_unresolved_enum(ty, e, p),
-            UnresolvedRec(r, p) => self.fetch_unresolved_record(ty, r, p),
-            _ => Alteration::forward(ty),
-        }
+    pub fn fetch(&self) -> Status {
+        let (ty, status) = self.fetch_type(self.handle.type_());
+        self.handle.set_type(ty.entity);
+        status
     }
 }
 
@@ -41,137 +39,163 @@ impl<'a, 'g> TypeFetcher<'a, 'g>
 //  Implementation Details
 //
 
-impl<'a, 'g> TypeFetcher<'a, 'g>
-    where 'g: 'a
-{
-    fn fetch_tuple(&self, t: Tuple<'g, Type<'g>>)
-        -> Alteration<Tuple<'g, Type<'g>>>
-    {
-        self.core.fetch_tuple(t, |t| self.fetch(t))
+type Result<'g> = (Alteration<Type<'g>>, Status);
+
+impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
+    fn fetch_tuple(&self, t: Tuple<'g, Type<'g>>) -> Result<'g> {
+        let (fields, status) =
+            self.fetch_slice(t.fields, |t| self.fetch_type(t));
+        let fields = fields.combine(t, |f| Tuple { fields: f, names: t.names });
+
+        (fields.map(|f| Type::Tuple(f)), status)
+    }
+
+    fn fetch_type(&self, ty: Type<'g>) -> Result<'g> {
+        use self::Type::*;
+
+        match self.handle.type_() {
+            Tuple(t) => self.fetch_tuple(t),
+            Unresolved(u, p) => self.fetch_unresolved(ty, u, p),
+            UnresolvedEnum(e, p) => self.fetch_unresolved_enum(ty, e, p),
+            UnresolvedRec(r, p) => self.fetch_unresolved_record(ty, r, p),
+            _ => (Alteration::forward(ty), Status::Fetched),
+        }
     }
 
     fn fetch_unresolved(&self, ty: Type<'g>, i: ItemIdentifier, p: Path<'g>)
-        -> Alteration<Type<'g>>
+        -> Result<'g>
     {
         //  Cannot fetch anything without a root.
         if let Some(&Type::Unresolved(..)) = p.components.first() {
-            return Alteration::forward(ty);
+            return (Alteration::forward(ty), Status::Unfetched);
         }
 
         let mut last = None;
-        let path =
-            self.core
-                .fetch_slice(p.components, |c| {
-                    let result = if let Some(parent) = last {
+        let (path, status) = 
+            self.fetch_slice(p.components, |c| {
+                    let (result, status) = if let Some(parent) = last {
                         self.fetch_nested(c, parent)
                     } else {
-                        Alteration::forward(c)
+                        (Alteration::forward(c), Status::Fetched)
                     };
                     last = Some(result.entity);
-                    result
-                })
-                .map(|components| Path { components });
+                    (result, status)
+                });
+        let path = path.map(|components| Path { components });
 
         if let Some(parent) = last {
-            let type_ = self.fetch_nested(
+            let (type_, s) = self.fetch_nested(
                 Type::Unresolved(i, Path::default()),
                 parent
             );
-            type_.combine2(ty, path, |t, p| t.with_path(p))
+            (type_.combine2(ty, path, |t, p| t.with_path(p)), status.combine(s))
         } else {
-            path.combine(ty, |p| Type::Unresolved(i, p))
+            (path.combine(ty, |p| Type::Unresolved(i, p)), Status::Unfetched)
         }
     }
 
     fn fetch_unresolved_enum(&self, ty: Type<'g>, e: EnumProto, p: Path<'g>)
-        -> Alteration<Type<'g>>
+        -> Result<'g>
     {
         self.core.registry
             .lookup_enum(e.name)
-            .map(|e| Alteration::update(Type::Enum(self.core.insert(e), p)))
-            .unwrap_or(Alteration::forward(ty))
+            .map(|e| (
+                Alteration::update(Type::Enum(self.core.global_arena.insert(e), p)),
+                Status::Fetched,
+            ))
+            .unwrap_or((Alteration::forward(ty), Status::Unfetched))
     }
 
     fn fetch_unresolved_record(&self, ty: Type<'g>, r: RecordProto, p: Path<'g>)
-        -> Alteration<Type<'g>>
+        -> Result<'g>
     {
         self.core.registry
             .lookup_record(r.name)
-            .map(|r| Alteration::update(Type::Rec(self.core.insert(r), p)))
-            .unwrap_or(Alteration::forward(ty))
-    }
-
-    fn fetch_nested(&self, t: Type<'g>, parent: Type<'g>)
-        -> Alteration<Type<'g>>
-    {
-        use self::Type::*;
-
-        match (t, parent) {
-            (Unresolved(id, _), UnresolvedEnum(e, _))
-                => self.fetch_enum_variant(id, e.name),
-            (Unresolved(..), Unresolved(..)) => Alteration::forward(t),
-            (Unresolved(..), _) => panic!("{:?} cannot be a parent!", parent),
-            (UnresolvedEnum(..), _) | (UnresolvedRec(..), _) => Alteration::forward(t),
-            _ => panic!("{:?} cannot be nested!", t),
-        }
+            .map(|r| (
+                Alteration::update(Type::Rec(self.core.global_arena.insert(r), p)),
+                Status::Fetched,
+            ))
+            .unwrap_or((Alteration::forward(ty), Status::Unfetched))
     }
 
     fn fetch_enum_variant(&self, v: ItemIdentifier, e: ItemIdentifier)
-        -> Alteration<Type<'g>>
+        -> Result<'g>
     {
         if let Some(e) = self.core.registry.lookup_enum(e) {
             for rec in e.variants {
                 if v.id() == rec.prototype.name.id() {
                     let r = Type::UnresolvedRec(*rec.prototype, Path::default());
-                    return Alteration::update(r);
+                    return (Alteration::update(r), Status::Fetched);
                 }
             }
         }
 
-        Alteration::forward(Type::Unresolved(v, Path::default()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use model::hir::*;
-
-    use super::TypeFetcher;
-    use super::super::tests::{Env, LocalEnv};
-
-    #[test]
-    fn record_nested() {
-        let env = Env::default();
-        let (i, _, pro, _, t, _) = env.factories();
-
-        let mut local = env.local(b":enum E { A, B };    E::B");
-
-        let e =
-            i.enum_(pro.enum_(i.id(6, 1)).build())
-                .push(i.unit(10, 1))
-                .push(i.unit(13, 1))
-                .build();
-        local.insert_enum(e);
-
-        let parent = Type::UnresolvedEnum(*e.prototype, Default::default());
-
-        let unresolved = t.unresolved(i.id(24, 1)).push(parent).build();
-        let fetched = t.unresolved_record(i.id(13, 1), 13).push(parent).build();
-
-        assert_eq!(fetch(&local, 1, unresolved), fetched);
+        (Alteration::forward(Type::Unresolved(v, Path::default())),
+            Status::Unfetched)
     }
 
-    fn fetch<'g>(local: &LocalEnv<'g>, altered: u32, ty: Type<'g>) -> Type<'g> {
-        let ty = local.resolver().resolve_type(ty);
+    fn fetch_nested(&self, t: Type<'g>, parent: Type<'g>)
+        -> Result<'g>
+    {
+        use self::Type::*;
 
-        let resolution =
-            TypeFetcher::new(local.core())
-                .fetch(ty)
-                .map(|t| local.scrubber().scrub_type(t));
+        let unfetched = (Alteration::forward(t), Status::Unfetched);
 
-        assert_eq!(resolution.altered, altered);
-
-        resolution.entity
+        match (t, parent) {
+            (Unresolved(id, _), UnresolvedEnum(e, _))
+                => self.fetch_enum_variant(id, e.name),
+            (Unresolved(..), Unresolved(..)) => unfetched,
+            (Unresolved(..), _) => panic!("{:?} cannot be a parent!", parent),
+            (UnresolvedEnum(..), _) | (UnresolvedRec(..), _) => unfetched,
+            _ => panic!("{:?} cannot be nested!", t),
+        }
     }
 
+    fn fetch_slice<T, F>(&self, slice: &'g [T], mut f: F)
+        -> (Alteration<&'g [T]>, Status)
+        where
+            T: Copy + 'g,
+            F: FnMut(T) -> (Alteration<T>, Status),
+    {
+        let mut found = None;
+
+        for (i, e) in slice.iter().enumerate() {
+            let (a, s) = f(*e);
+
+            if a.altered > 0 {
+                found = Some((i, a, s));
+                break;
+            }
+        }
+
+        if found.is_none() {
+            return (Alteration::forward(slice), Status::Unfetched);
+        }
+
+        let (index, alteration, mut status) = found.unwrap();
+
+        let length = slice.len();
+        let mut result = mem::Array::with_capacity(length, self.core.global_arena);
+
+        for e in &slice[..(index as usize)] {
+            result.push(*e);
+        }
+
+        let mut altered = alteration.altered;
+        result.push(alteration.entity);
+
+        if index as usize + 1 < length {
+            for e in &slice[(index as usize + 1)..] {
+                let (a, s) = f(*e);
+
+                altered += a.altered;
+                status = status.combine(s);
+
+                result.push(a.entity);
+            }
+        }
+
+        let entity = result.into_slice();
+        (Alteration { entity, altered }, status)
+    }
 }

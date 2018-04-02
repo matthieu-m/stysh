@@ -30,11 +30,7 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
     /// Number each and every value contained within.
     pub fn number_function(&self, function: &Function) -> Function<'g> {
         let mut counter = 0;
-        let mut imp = Impl::new(
-            || { counter += 1; Gvn(counter) },
-            self.global_arena,
-            self.local_arena
-        );
+        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
 
         Function {
             prototype: imp.function_proto_ref(function.prototype),
@@ -42,25 +38,25 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
         }
     }
 
+    /// Number each and every pattern contained within.
+    pub fn number_pattern(&self, pattern: Pattern) -> Pattern<'g> {
+        let mut counter = 0;
+        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
+
+        imp.pattern(&pattern)
+    }
+
     /// Number each and every value contained within.
     pub fn number_value(&self, value: &Value) -> Value<'g> {
         let mut counter = 0;
-        let mut imp = Impl::new(
-            || { counter += 1; Gvn(counter) },
-            self.global_arena,
-            self.local_arena
-        );
+        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
 
         imp.value(value)
     }
 
     /// Unnumber each and every value contained within.
     pub fn unnumber_function(&self, function: &Function) -> Function<'g> {
-        let mut imp = Impl::new(
-            Gvn::default,
-            self.global_arena,
-            self.local_arena
-        );
+        let mut imp = self.imp(Gvn::default);
 
         Function {
             prototype: imp.function_proto_ref(function.prototype),
@@ -68,13 +64,16 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
         }
     }
 
+    /// Unnumber each and every pattern contained within.
+    pub fn unnumber_pattern(&self, pattern: Pattern) -> Pattern<'g> {
+        let mut imp = self.imp(Gvn::default);
+
+        imp.pattern(&pattern)
+    }
+
     /// Unnumber each and every value contained within.
     pub fn unnumber_value(&self, value: &Value) -> Value<'g> {
-        let mut imp = Impl::new(
-            Gvn::default,
-            self.global_arena,
-            self.local_arena
-        );
+        let mut imp = self.imp(Gvn::default);
 
         imp.value(value)
     }
@@ -87,6 +86,12 @@ struct Impl<'g, 'local, G: FnMut() -> Gvn> {
     generator: G,
     arena: &'g mem::Arena,
     bindings: mem::ArrayMap<'local, ValueIdentifier, Gvn>,
+}
+
+impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
+    fn imp<G: FnMut() -> Gvn>(&self, g: G) -> Impl<'g, 'local, G> {
+        Impl::new(g, self.global_arena, self.local_arena)
+    }
 }
 
 impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {

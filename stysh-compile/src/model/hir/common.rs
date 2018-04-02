@@ -134,6 +134,10 @@ impl Span for Field {
 //  Implementation Details
 //
 
+impl Default for Field {
+    fn default() -> Self { Field::Index(0, Default::default()) }
+}
+
 impl fmt::Display for Field {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::Field::*;

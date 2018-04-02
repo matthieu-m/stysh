@@ -45,6 +45,11 @@ impl<'a, 'g> CoreFetcher<'a, 'g>
     {
         CoreFetcher { registry, context, global_arena }
     }
+
+    /// Inserts an item into the arena.
+    pub fn insert<T: 'g>(&self, e: T) -> &'g T {
+        self.global_arena.insert(e)
+    }
 }
 
 //

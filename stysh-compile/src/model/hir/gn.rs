@@ -1,11 +1,12 @@
-//! Semantic pass: global value numbering.
+//! Semantic pass: global numbering.
 //!
 //! High-level item in charge of numbering.
 //!
 //! Note:   the only guarantee of this algorithm is that a unique ID is
-//!         assigned to each and every value. The IDs should not be expected
-//!         to appear in any order (depth-first, breadth-first, ...).
+//!         assigned to each and every type and value. The IDs should not be
+//!         expected to appear in any order (depth-first, breadth-first, ...).
 
+use basic::com::{Range, Span};
 use basic::mem::{self, CloneInto};
 
 use model::hir::*;
@@ -14,23 +15,24 @@ use model::hir::*;
 ///
 /// Assigns a unique ID to each value within the given context. Since the
 /// argument is immutable, returns a modified copy.
-pub struct GlobalValueNumberer<'g, 'local> {
+pub struct GlobalNumberer<'g, 'local> {
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
 
-impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
+impl<'g, 'local> GlobalNumberer<'g, 'local> {
     /// Creates an instance.
     pub fn new(global_arena: &'g mem::Arena, local_arena: &'local mem::Arena)
         -> Self
     {
-        GlobalValueNumberer { global_arena, local_arena }
+        GlobalNumberer { global_arena, local_arena }
     }
 
     /// Number each and every value contained within.
     pub fn number_function(&self, function: &Function) -> Function<'g> {
-        let mut counter = 0;
-        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
+        let mut i = BuiltinType::maximum_gin().0;
+        let mut v = 0;
+        let mut imp = self.imp(|| { i += 1; Gin(i) }, || { v += 1; Gvn(v) });
 
         Function {
             prototype: imp.function_proto_ref(function.prototype),
@@ -40,23 +42,34 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 
     /// Number each and every pattern contained within.
     pub fn number_pattern(&self, pattern: Pattern) -> Pattern<'g> {
-        let mut counter = 0;
-        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
+        let mut i = BuiltinType::maximum_gin().0;
+        let mut v = 0;
+        let mut imp = self.imp(|| { i += 1; Gin(i) }, || { v += 1; Gvn(v) });
 
         imp.pattern(&pattern)
     }
 
+    /// Number each and every type contained within.
+    pub fn number_type(&self, ty: Type) -> Type<'g> {
+        let mut i = BuiltinType::maximum_gin().0;
+        let mut v = 0;
+        let mut imp = self.imp(|| { i += 1; Gin(i) }, || { v += 1; Gvn(v) });
+
+        imp.type_(ty)
+    }
+
     /// Number each and every value contained within.
     pub fn number_value(&self, value: &Value) -> Value<'g> {
-        let mut counter = 0;
-        let mut imp = self.imp(|| { counter += 1; Gvn(counter) });
+        let mut i = BuiltinType::maximum_gin().0;
+        let mut v = 0;
+        let mut imp = self.imp(|| { i += 1; Gin(i) }, || { v += 1; Gvn(v) });
 
         imp.value(value)
     }
 
     /// Unnumber each and every value contained within.
     pub fn unnumber_function(&self, function: &Function) -> Function<'g> {
-        let mut imp = self.imp(Gvn::default);
+        let mut imp = self.imp(Gin::default, Gvn::default);
 
         Function {
             prototype: imp.function_proto_ref(function.prototype),
@@ -66,14 +79,21 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 
     /// Unnumber each and every pattern contained within.
     pub fn unnumber_pattern(&self, pattern: Pattern) -> Pattern<'g> {
-        let mut imp = self.imp(Gvn::default);
+        let mut imp = self.imp(Gin::default, Gvn::default);
 
         imp.pattern(&pattern)
     }
 
+    /// Unnumber each and every type contained within.
+    pub fn unnumber_type(&self, ty: Type) -> Type<'g> {
+        let mut imp = self.imp(Gin::default, Gvn::default);
+
+        imp.type_(ty)
+    }
+
     /// Unnumber each and every value contained within.
     pub fn unnumber_value(&self, value: &Value) -> Value<'g> {
-        let mut imp = self.imp(Gvn::default);
+        let mut imp = self.imp(Gin::default, Gvn::default);
 
         imp.value(value)
     }
@@ -82,30 +102,39 @@ impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
 //
 //  Implementation Details
 //
-struct Impl<'g, 'local, G: FnMut() -> Gvn> {
-    generator: G,
+struct Impl<'g, 'local, I: FnMut() -> Gin, V: FnMut() -> Gvn> {
+    gin: I,
+    gvn: V,
     arena: &'g mem::Arena,
-    bindings: mem::ArrayMap<'local, ValueIdentifier, Gvn>,
+    items: mem::ArrayMap<'local, Range, Gin>,
+    values: mem::ArrayMap<'local, Range, Gvn>,
 }
 
-impl<'g, 'local> GlobalValueNumberer<'g, 'local> {
-    fn imp<G: FnMut() -> Gvn>(&self, g: G) -> Impl<'g, 'local, G> {
-        Impl::new(g, self.global_arena, self.local_arena)
+impl<'g, 'local> GlobalNumberer<'g, 'local> {
+    fn imp<I, V>(&self, i: I, v: V) -> Impl<'g, 'local, I, V>
+        where
+            I: FnMut() -> Gin,
+            V: FnMut() -> Gvn,
+    {
+        Impl::new(i, v, self.global_arena, self.local_arena)
     }
 }
 
-impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
+impl<'g, 'local, I: FnMut() -> Gin, V: FnMut() -> Gvn> Impl<'g, 'local, I, V> {
     fn new(
-        generator: G,
+        i: I,
+        v: V,
         global_arena: &'g mem::Arena,
         local_arena: &'local mem::Arena
     )
         -> Self
     {
         Impl {
-            generator: generator,
+            gin: i,
+            gvn: v,
             arena: global_arena,
-            bindings: mem::ArrayMap::new(local_arena),
+            items: mem::ArrayMap::new(local_arena),
+            values: mem::ArrayMap::new(local_arena),
         }
     }
 
@@ -114,8 +143,8 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
     //
     fn argument(&mut self, argument: &Argument) -> Argument<'g> {
         let (name, range) = (argument.name, argument.range);
-        let type_ = self.intern(&argument.type_);
-        let gvn = self.register_identifier(name);
+        let type_ = self.type_(argument.type_);
+        let gvn = self.register_value(name);
 
         Argument { name, type_, range, gvn }
     }
@@ -133,7 +162,7 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
 
         match *callable {
             Builtin(b) => Builtin(b),
-            Function(p) => Function(self.intern(&p)),
+            Function(p) => Function(self.function_prototype(p)),
             Unknown(id) => Unknown(id),
             Unresolved(cs)
                 => Unresolved(mem::CloneInto::clone_into(cs, self.arena)),
@@ -144,7 +173,7 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         -> Constructor<'g, Pattern<'g>>
     {
         Constructor {
-            type_: self.intern(&constructor.type_),
+            type_: self.type_(constructor.type_),
             arguments: self.tuple_pattern(&constructor.arguments),
             range: constructor.range,
         }
@@ -154,7 +183,7 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         -> Constructor<'g, Value<'g>>
     {
         Constructor {
-            type_: self.intern(&constructor.type_),
+            type_: self.type_(constructor.type_),
             arguments: self.tuple_value(&constructor.arguments),
             range: constructor.range,
         }
@@ -173,27 +202,32 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
                 => If(self.value_ref(c), self.value_ref(t), self.value_ref(f)),
             Implicit(i) => Implicit(self.implicit(&i)),
             Loop(ss) => Loop(self.stmts(ss)),
-            Ref(id, _) => Ref(id, self.lookup_identifier(id)),
+            Ref(id, _) => Ref(id, self.lookup_value(id)),
             Tuple(t) => Tuple(self.tuple_value(&t)),
             UnresolvedRef(id) => UnresolvedRef(id),
         }
     }
 
-    fn function_proto_ref(&mut self, proto: &FunctionProto)
-        -> &'g FunctionProto<'g>
-    {
+    fn function_prototype(&mut self, proto: FunctionProto) -> FunctionProto<'g> {
         let mut array = self.array(proto.arguments.len());
 
         for a in proto.arguments {
             array.push(self.argument(a));
         }
 
-        self.intern_ref(&FunctionProto {
+        FunctionProto {
             name: proto.name,
             range: proto.range,
             arguments: array.into_slice(),
-            result: self.intern(&proto.result),
-        })
+            result: self.type_(proto.result),
+        }
+    }
+
+    fn function_proto_ref(&mut self, proto: &FunctionProto)
+        -> &'g FunctionProto<'g>
+    {
+        let proto = self.function_prototype(*proto);
+        self.intern_ref(&proto)
     }
 
     fn implicit(&mut self, implicit: &Implicit) -> Implicit<'g> {
@@ -204,15 +238,19 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         }
     }
 
+    fn path(&mut self, path: Path) -> Path<'g> {
+        Path { components: self.types(path.components) }
+    }
+
     fn pattern(&mut self, pattern: &Pattern) -> Pattern<'g> {
         use self::Pattern::*;
 
         match *pattern {
             Constructor(c, _)
-                => Constructor(self.constructor_pattern(&c), self.next()),
+                => Constructor(self.constructor_pattern(&c), self.next_value()),
             Ignored(r) => Ignored(r),
-            Tuple(t, r, _) => Tuple(self.tuple_pattern(&t), r, self.next()),
-            Var(id, _) => Var(id, self.register_identifier(id)),
+            Tuple(t, r, _) => Tuple(self.tuple_pattern(&t), r, self.next_value()),
+            Var(id, _) => Var(id, self.register_value(id)),
         }
     }
 
@@ -266,6 +304,14 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         }
     }
 
+    fn tuple_type(&mut self, tuple: Tuple<Type>) -> Tuple<'g, Type<'g>>
+    {
+        Tuple {
+            fields: self.types(tuple.fields),
+            names: CloneInto::clone_into(tuple.names, self.arena),
+        }
+    }
+
     fn tuple_value(&mut self, tuple: &Tuple<Value>) -> Tuple<'g, Value<'g>>
     {
         Tuple {
@@ -274,13 +320,46 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         }
     }
 
+    fn type_(&mut self, ty: Type) -> Type<'g> {
+        use self::Type::*;
+
+        match ty {
+            Builtin(b) => Builtin(b),
+            Enum(e, p, _) => Enum(
+                self.intern_ref(e),
+                self.path(p),
+                self.register_item(e.prototype.name),
+            ),
+            Rec(r, p, _) => Rec(
+                self.intern_ref(r),
+                self.path(p),
+                self.register_item(r.prototype.name),
+            ),
+            Tuple(t, _) => Tuple(self.tuple_type(t), self.next_item()),
+            Unresolved(i, p, _)
+                => Unresolved(i, self.path(p), self.next_item()),
+            UnresolvedEnum(e, p, _)
+                => UnresolvedEnum(e, self.path(p), self.next_item()),
+            UnresolvedRec(r, p, _)
+                => UnresolvedRec(r, self.path(p), self.next_item()),
+        }
+    }
+
+    fn types(&mut self, types: &[Type]) -> &'g [Type<'g>] {
+        let mut array = self.array(types.len());
+        for t in types {
+            array.push(self.type_(*t));
+        }
+        array.into_slice()
+    }
+
     fn value(&mut self, value: &Value) -> Value<'g> {
         let expr = self.expr(&value.expr);
         Value {
-            type_: self.intern(&value.type_),
+            type_: self.type_(value.type_),
             range: value.range,
             expr: expr,
-            gvn: self.next(),
+            gvn: self.next_value(),
         }
     }
 
@@ -316,16 +395,32 @@ impl<'g, 'local, G: FnMut() -> Gvn> Impl<'g, 'local, G> {
         self.arena.intern_ref(t)
     }
 
-    fn lookup_identifier(&self, id: ValueIdentifier) -> Gvn {
-        self.bindings.get(&id).cloned().expect("Known identifier!")
+    fn lookup_value(&self, id: ValueIdentifier) -> Gvn {
+        self.values.get(&id.span()).cloned().expect("Known identifier!")
     }
 
-    fn next(&mut self) -> Gvn { (self.generator)() }
+    fn next_item(&mut self) -> Gin { (self.gin)() }
 
-    fn register_identifier(&mut self, id: ValueIdentifier) -> Gvn {
-        let gvn = self.next();
-        self.bindings.insert(id, gvn);
-        gvn
+    fn next_value(&mut self) -> Gvn { (self.gvn)() }
+
+    fn register_item(&mut self, id: ItemIdentifier) -> Gin {
+        if let Some(&gin) = self.items.get(&id.span()) {
+            gin
+        } else {
+            let gin = self.next_item();
+            self.items.insert(id.span(), gin);
+            gin
+        }
+    }
+
+    fn register_value(&mut self, id: ValueIdentifier) -> Gvn {
+        if let Some(&gvn) = self.values.get(&id.span()) {
+            gvn
+        } else {
+            let gvn = self.next_value();
+            self.values.insert(id.span(), gvn);
+            gvn
+        }
     }
 
 }
@@ -348,6 +443,7 @@ mod tests {
                 .push(v.int(1, 0).with_gvn(1))
                 .push(v.int(2, 4).with_gvn(2))
                 .build()
+                .with_gin(5)
                 .with_gvn(3);
 
         assert_eq!(valueit(&global_arena, &before), after);
@@ -387,12 +483,12 @@ mod tests {
     }
 
     fn valueit<'g>(global_arena: &'g mem::Arena, value: &Value) -> Value<'g> {
-        use super::GlobalValueNumberer;
+        use super::GlobalNumberer;
 
         let mut local_arena = mem::Arena::new();
 
         let result =
-            GlobalValueNumberer::new(global_arena, &local_arena)
+            GlobalNumberer::new(global_arena, &local_arena)
                 .number_value(value);
         local_arena.recycle();
 

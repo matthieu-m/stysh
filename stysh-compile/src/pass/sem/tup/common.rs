@@ -114,7 +114,7 @@ impl<'a, 'g> CoreUnifier<'a, 'g>
             T: Copy + 'g,
             F: FnMut(T, Type<'g>) -> Alteration<T>,
     {
-        let fields = if let Type::Tuple(ty) = ty {
+        let fields = if let Type::Tuple(ty, ..) = ty {
             self.unify_slice(t.fields, |i, e| {
                 ty.fields.get(i).map(|ty| f(e, *ty))
                     .unwrap_or(Alteration::forward(e))
@@ -133,7 +133,7 @@ pub mod tests {
     use basic::mem;
 
     use model::hir::*;
-    use model::hir::gvn::GlobalValueNumberer;
+    use model::hir::gn::GlobalNumberer;
     use model::hir::builder::{
         Factory, ItemFactory, PatternFactory, PrototypeFactory, StmtFactory,
         TypeFactory, ValueFactory,
@@ -186,8 +186,8 @@ pub mod tests {
             CoreUnifier::new(&self.registry, &self.context, self.global_arena)
         }
 
-        pub fn numberer<'a>(&'a self) -> GlobalValueNumberer<'g, 'a> {
-            GlobalValueNumberer::new(self.global_arena, &self.local_arena)
+        pub fn numberer<'a>(&'a self) -> GlobalNumberer<'g, 'a> {
+            GlobalNumberer::new(self.global_arena, &self.local_arena)
         }
 
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }

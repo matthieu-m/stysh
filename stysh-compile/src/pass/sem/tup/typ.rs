@@ -78,12 +78,12 @@ impl<'a, 'g> TypeUnifier<'a, 'g>
             //  From then on, deal with concrete types.
             //  Update is NOT a valid action with concrete types; Cast is.
 
-            (Enum(e, _), Rec(r, _)) if r.prototype.enum_ == e.prototype.name
+            (Enum(e, ..), Rec(r, ..)) if r.prototype.enum_ == e.prototype.name
                 => (Action::Keep(t0), Action::Cast(t0)),
-            (Rec(r, _), Enum(e, _)) if r.prototype.enum_ == e.prototype.name
+            (Rec(r, ..), Enum(e, ..)) if r.prototype.enum_ == e.prototype.name
                 => (Action::Cast(t1), Action::Keep(t1)),
 
-            (Tuple(t0), Tuple(t1)) => self.merge_tuple(t0, t1),
+            (Tuple(t0, g0), Tuple(t1, g1)) => self.merge_tuple(t0, g0, t1, g1),
 
             //  In doubt, keep.
             _ => keep,
@@ -113,6 +113,7 @@ impl<'a, 'g> TypeUnifier<'a, 'g>
 
 struct TupleMerger<'g> {
     original: Tuple<'g, Type<'g>>,
+    gin: Gin,
     altered: mem::Array<'g, Type<'g>>,
     length: usize,
     update: bool,
@@ -120,9 +121,10 @@ struct TupleMerger<'g> {
 }
 
 impl<'g> TupleMerger<'g> {
-    fn new(t: Tuple<'g, Type<'g>>, arena: &'g mem::Arena) -> Self {
+    fn new(t: Tuple<'g, Type<'g>>, gin: Gin, arena: &'g mem::Arena) -> Self {
         TupleMerger {
             original: t,
+            gin: gin,
             altered: mem::Array::new(arena),
             length: 0,
             update: false,
@@ -133,15 +135,18 @@ impl<'g> TupleMerger<'g> {
     fn into_action(self) -> Action<'g> {
         if !self.cast && !self.update {
             debug_assert!(self.altered.is_empty());
-            return Action::Keep(Type::Tuple(self.original));
+            return Action::Keep(Type::Tuple(self.original, self.gin));
         }
 
         debug_assert!(self.altered.len() == self.original.len());
 
-        let t = Type::Tuple(Tuple {
-            fields: self.altered.into_slice(),
-            names: self.original.names,
-        });
+        let t = Type::Tuple(
+            Tuple {
+                fields: self.altered.into_slice(),
+                names: self.original.names,
+            },
+            self.gin,
+        );
 
         if self.cast { Action::Cast(t) } else { Action::Update(t) }
     }
@@ -185,15 +190,21 @@ impl<'g> TupleMerger<'g> {
 impl<'a, 'g> TypeUnifier<'a, 'g>
     where 'g: 'a
 {
-    fn merge_tuple(&self, t0: Tuple<'g, Type<'g>>, t1: Tuple<'g, Type<'g>>)
+    fn merge_tuple(
+        &self,
+        t0: Tuple<'g, Type<'g>>,
+        g0: Gin,
+        t1: Tuple<'g, Type<'g>>,
+        g1: Gin,
+    )
         -> (Action<'g>, Action<'g>)
     {
         if t0.fields.len() != t1.fields.len() {
-            return (Action::Keep(Type::Tuple(t0)), Action::Keep(Type::Tuple(t1)));
+            return (Action::Keep(Type::Tuple(t0, g0)), Action::Keep(Type::Tuple(t1, g1)));
         }
 
-        let mut r0 = TupleMerger::new(t0, self.core.global_arena);
-        let mut r1 = TupleMerger::new(t1, self.core.global_arena);
+        let mut r0 = TupleMerger::new(t0, g0, self.core.global_arena);
+        let mut r1 = TupleMerger::new(t1, g1, self.core.global_arena);
 
         for (f0, f1) in t0.fields.iter().zip(t1.fields.iter()) {
             let (a0, a1) = self.merge(*f0, *f1);

@@ -115,7 +115,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         -> hir::Pattern<'static>
     {
         let gvn =
-            self.context.insert_binding(var.into(), hir::Type::unresolved());
+            self.context.insert_value(var.into(), hir::Type::unresolved());
 
         hir::Pattern::Var(var.into(), gvn)
     }
@@ -179,12 +179,17 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         let mut path = self.array(p.components.len());
         path.push(type_);
         for &c in &p.components[1..] {
-            path.push(hir::Type::Unresolved(c.into(), Default::default()));
+            path.push(hir::Type::Unresolved(
+                c.into(),
+                Default::default(),
+                self.context.gin(),
+            ));
         }
 
         hir::Type::Unresolved(
             t.into(),
-            hir::Path { components: path.into_slice() }
+            hir::Path { components: path.into_slice() },
+            self.context.gin(),
         )
     }
 
@@ -193,7 +198,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
-        hir::Type::Tuple(self.tuple_of(t, |t| self.type_of(t)))
+        hir::Type::Tuple(self.tuple_of(t, |t| self.type_of(t)), self.context.gin())
     }
 
     fn value_of_expr(&self, expr: &ast::Expression) -> hir::Value<'g> {
@@ -481,7 +486,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
                 .map(|name| {
                     let gvn =
                         self.context
-                            .lookup_binding(name)
+                            .lookup_value(name)
                             .unwrap_or_default();
                     hir::Expr::Ref(name, gvn)
                 })
@@ -685,12 +690,13 @@ mod tests {
         let rec = p.rec(i.id(6, 3), 0).build();
         env.insert_record(rec, &[0]);
 
+        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
+
         assert_eq!(
             env.value_of(
                 &ast.expr().constructor(ast.type_().simple(0, 3)).build()
             ),
-            v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 0, 3)
-                .build_value()
+            v.constructor(rec, 0, 3).build_value()
         );
     }
 
@@ -708,6 +714,8 @@ mod tests {
         let rec = p.rec(i.id(9, 3), 0).build();
         env.insert_record(rec, &[0]);
 
+        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
+
         assert_eq!(
             env.value_of(
                 &e.constructor(ast.type_().simple(0, 3))
@@ -715,7 +723,7 @@ mod tests {
                     .push(e.int(1, 4))
                     .build()
             ),
-            v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 0, 6)
+            v.constructor(rec, 0, 6)
                 .push(v.int(1, 4))
                 .build_value()
         );
@@ -738,6 +746,8 @@ mod tests {
         let enum_ = p.enum_(i.id(6, 6)).build();
         env.insert_enum(enum_, &[30]);
 
+        let enum_ = hir::Type::UnresolvedEnum(enum_, Default::default(), Default::default());
+
         assert_eq!(
             env.value_of(
                 &e.constructor(
@@ -746,7 +756,7 @@ mod tests {
             ),
             v.constructor(
                 t.unresolved(i.id(38, 4))
-                    .push(hir::Type::UnresolvedEnum(enum_, Default::default()))
+                    .push(enum_)
                     .build(),
                 30,
                 12,
@@ -811,6 +821,8 @@ mod tests {
         let rec = p.rec(i.id(5, 3), 0).range(0, 14).build();
         env.insert_record(rec, &[15]);
 
+        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
+
         assert_eq!(
             env.value_of(
                 &e.field_access(
@@ -823,7 +835,7 @@ mod tests {
                     .build()
             ),
             v.field_access(
-                v.constructor(hir::Type::UnresolvedRec(rec, Default::default()), 15, 7)
+                v.constructor(rec, 15, 7)
                     .push(v.int(42, 19))
                     .build_value()
             ).build()
@@ -1120,7 +1132,7 @@ mod tests {
 
             let rec = f.proto().rec(i.id(5, 4), 0).build();
             env.insert_record(rec, &[23, 34]);
-            let rec = hir::Type::UnresolvedRec(rec, Default::default());
+            let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
 
             v.block(v.name_ref(a, 43))
                 .push(s.var(
@@ -1171,6 +1183,7 @@ mod tests {
             let rec = f.proto().rec(i.id(5, 4), 0).build();
             let rec = hir::Type::UnresolvedRec(
                 env.insert_record(rec, &[27, 42]),
+                Default::default(),
                 Default::default(),
             );
 
@@ -1258,7 +1271,7 @@ mod tests {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::Type::UnresolvedEnum(enum_, Default::default()),
+                    hir::Type::UnresolvedEnum(enum_, Default::default(), Default::default()),
                 );
             } 
         }
@@ -1293,7 +1306,7 @@ mod tests {
                 let id = hir::ItemIdentifier(rec.name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::Type::UnresolvedRec(rec, Default::default()),
+                    hir::Type::UnresolvedRec(rec, Default::default(), Default::default()),
                 );
             }
 
@@ -1325,10 +1338,10 @@ mod tests {
         fn unnumber_value(&self, v: hir::Value<'g>, local_arena: &mem::Arena)
             -> hir::Value<'g>
         {
-            use self::hir::gvn::GlobalValueNumberer;
+            use self::hir::gn::GlobalNumberer;
 
-            let gvn = GlobalValueNumberer::new(self.arena, local_arena);
-            gvn.unnumber_value(&v)
+            let gn = GlobalNumberer::new(self.arena, local_arena);
+            gn.unnumber_value(&v)
         }
 
         fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {

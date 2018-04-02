@@ -24,7 +24,7 @@ pub trait Scope<'g>: fmt::Debug {
 
     /// Returns an unresolved reference.
     fn unresolved_type(&self, name: ItemIdentifier) -> Type<'g> {
-        Type::Unresolved(name, Path::default())
+        Type::Unresolved(name, Path::default(), Gin::default())
     }
 }
 
@@ -98,7 +98,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     pub fn add_enum(&mut self, proto: EnumProto) {
         self.types.insert(
             proto.name.id(),
-            Type::UnresolvedEnum(proto, Path::default()),
+            Type::UnresolvedEnum(proto, Path::default(), Gin::default()),
         );
     }
 

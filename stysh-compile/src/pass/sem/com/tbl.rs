@@ -2,7 +2,7 @@
 
 use std::{convert, marker};
 
-use model::hir::Gvn;
+use model::hir::{Gin, Gvn};
 
 /// GlobalNumber.
 ///
@@ -46,6 +46,10 @@ impl<G: convert::Into<GlobalNumber>, T: Clone> Table<G, T> {
 //
 //  Implementation of traits for GlobalNumber
 //
+
+impl convert::From<Gin> for GlobalNumber {
+    fn from(gin: Gin) -> GlobalNumber { GlobalNumber(gin.0) }
+}
 
 impl convert::From<Gvn> for GlobalNumber {
     fn from(gvn: Gvn) -> GlobalNumber { GlobalNumber(gvn.0) }

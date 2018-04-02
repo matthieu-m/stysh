@@ -60,7 +60,7 @@ impl<'a, 'g: 'a> FieldFetcher<'a, 'g> {
 
         let fields = match self.core.context.value(accessed).type_() {
             Rec(r, ..) => r.definition,
-            Tuple(t) => t,
+            Tuple(t, ..) => t,
             _ => return Status::Unfetched,
         };
 

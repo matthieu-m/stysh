@@ -144,17 +144,17 @@ impl<'g> Resolver<'g> {
 
         match t {
             Builtin(b) => Builtin(b),
-            Enum(e, p)
-                => Enum(self.insert(self.resolve_enum(*e)), self.resolve_path(p)),
-            Rec(r, p)
-                => Rec(self.insert(self.resolve_record(*r)), self.resolve_path(p)),
-            Tuple(t) => Tuple(self.resolve_tuple_type(t)),
-            Unresolved(i, p)
-                => Unresolved(self.resolve_item_id(i), self.resolve_path(p)),
-            UnresolvedEnum(e, p)
-                => UnresolvedEnum(self.resolve_enum_prototype(e), self.resolve_path(p)),
-            UnresolvedRec(r, p)
-                => UnresolvedRec(self.resolve_record_prototype(r), self.resolve_path(p)),
+            Enum(e, p, g)
+                => Enum(self.insert(self.resolve_enum(*e)), self.resolve_path(p), g),
+            Rec(r, p, g)
+                => Rec(self.insert(self.resolve_record(*r)), self.resolve_path(p), g),
+            Tuple(t, g) => Tuple(self.resolve_tuple_type(t), g),
+            Unresolved(i, p, g)
+                => Unresolved(self.resolve_item_id(i), self.resolve_path(p), g),
+            UnresolvedEnum(e, p, g)
+                => UnresolvedEnum(self.resolve_enum_prototype(e), self.resolve_path(p), g),
+            UnresolvedRec(r, p, g)
+                => UnresolvedRec(self.resolve_record_prototype(r), self.resolve_path(p), g),
         }
     }
 
@@ -265,17 +265,17 @@ impl<'g> Scrubber<'g> {
 
         match t {
             Builtin(t) => Builtin(t),
-            Enum(e, p)
-                => Enum(self.insert(self.scrub_enum(*e)), self.scrub_path(p)),
-            Rec(r, p)
-                => Rec(self.insert(self.scrub_record(*r)), self.scrub_path(p)),
-            Tuple(t) => Tuple(self.scrub_tuple_type(t)),
-            Unresolved(id, p)
-                => Unresolved(self.scrub_item_id(id), self.scrub_path(p)),
-            UnresolvedEnum(e, p)
-                => UnresolvedEnum(self.scrub_enum_prototype(e), self.scrub_path(p)),
-            UnresolvedRec(r, p)
-                => UnresolvedRec(self.scrub_record_prototype(r), self.scrub_path(p)),
+            Enum(e, p, g)
+                => Enum(self.insert(self.scrub_enum(*e)), self.scrub_path(p), g),
+            Rec(r, p, g)
+                => Rec(self.insert(self.scrub_record(*r)), self.scrub_path(p), g),
+            Tuple(t, g) => Tuple(self.scrub_tuple_type(t), g),
+            Unresolved(id, p, g)
+                => Unresolved(self.scrub_item_id(id), self.scrub_path(p), g),
+            UnresolvedEnum(e, p, g)
+                => UnresolvedEnum(self.scrub_enum_prototype(e), self.scrub_path(p), g),
+            UnresolvedRec(r, p, g)
+                => UnresolvedRec(self.scrub_record_prototype(r), self.scrub_path(p), g),
         }
     }
 

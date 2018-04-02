@@ -93,7 +93,7 @@ mod tests {
 
         let local = env.local(b"a");
         let a = v.id(0, 1);
-        local.core().context.insert_binding(a, Type::unresolved());
+        local.core().context.insert_value(a, Type::unresolved());
 
         assert_eq!(
             unify(&local, 0, p.var(a), t.int()),

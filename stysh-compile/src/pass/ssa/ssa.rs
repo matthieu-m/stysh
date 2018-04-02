@@ -815,7 +815,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 mod tests {
     use basic::mem;
     use model::hir::builder::*;
-    use model::hir::gvn::*;
+    use model::hir::gn::*;
     use model::hir::*;
     use model::sir::*;
 
@@ -889,7 +889,7 @@ mod tests {
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
-        let rec = Type::UnresolvedRec(r, Default::default());
+        let rec = Type::UnresolvedRec(r, Default::default(), Default::default());
 
         assert_eq!(
             env.valueit(
@@ -1091,7 +1091,7 @@ mod tests {
         let r = po.rec(i.id(5, 1), 0).build();
         let r = env.insert(i.rec(r).push(t.int()).push(t.int()).build());
 
-        let rec = Type::Rec(r, Default::default());
+        let rec = Type::Rec(r, Default::default(), Default::default());
 
         let (a, b) = (v.id(29, 1), v.id(32, 1));
         let binding =
@@ -1588,7 +1588,7 @@ mod tests {
             let mut local_arena = mem::Arena::new();
 
             let fun =
-                GlobalValueNumberer::new(self.global_arena, &local_arena)
+                GlobalNumberer::new(self.global_arena, &local_arena)
                     .number_function(fun);
             println!("{:?}", fun);
 
@@ -1602,7 +1602,7 @@ mod tests {
             let mut local_arena = mem::Arena::new();
 
             let expr =
-                GlobalValueNumberer::new(self.global_arena, &local_arena)
+                GlobalNumberer::new(self.global_arena, &local_arena)
                     .number_value(expr);
             println!("{:?}", expr);
 

@@ -523,7 +523,8 @@ mod tests {
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
         let inner_type = [int, int];
         let type_ = hir::Type::Tuple(
-            hir::Tuple { fields: &inner_type, names: &[] }
+            hir::Tuple { fields: &inner_type, names: &[] },
+            Default::default(),
         );
 
         assert_eq!(
@@ -561,11 +562,15 @@ mod tests {
         let global_arena = mem::Arena::new();
 
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
-        let rec = hir::Type::UnresolvedRec(hir::RecordProto {
-            name: hir::ItemIdentifier(Default::default(), range(5, 4)),
-            range: range(0, 20),
-            enum_: hir::ItemIdentifier::unresolved(),
-        }, Default::default());
+        let rec = hir::Type::UnresolvedRec(
+            hir::RecordProto {
+                name: hir::ItemIdentifier(Default::default(), range(5, 4)),
+                range: range(0, 20),
+                enum_: hir::ItemIdentifier::unresolved(),
+            },
+            Default::default(),
+            Default::default(),
+        );
 
         assert_eq!(
             eval(

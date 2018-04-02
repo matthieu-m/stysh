@@ -42,22 +42,22 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
 type Result<'g> = (Alteration<Type<'g>>, Status);
 
 impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
-    fn fetch_tuple(&self, t: Tuple<'g, Type<'g>>) -> Result<'g> {
+    fn fetch_tuple(&self, t: Tuple<'g, Type<'g>>, gin: Gin) -> Result<'g> {
         let (fields, status) =
             self.fetch_slice(t.fields, |t| self.fetch_type(t));
         let fields = fields.combine(t, |f| Tuple { fields: f, names: t.names });
 
-        (fields.map(|f| Type::Tuple(f)), status)
+        (fields.map(|f| Type::Tuple(f, gin)), status)
     }
 
     fn fetch_type(&self, ty: Type<'g>) -> Result<'g> {
         use self::Type::*;
 
         match self.handle.type_() {
-            Tuple(t) => self.fetch_tuple(t),
-            Unresolved(u, p) => self.fetch_unresolved(ty, u, p),
-            UnresolvedEnum(e, p) => self.fetch_unresolved_enum(ty, e, p),
-            UnresolvedRec(r, p) => self.fetch_unresolved_record(ty, r, p),
+            Tuple(t, g) => self.fetch_tuple(t, g),
+            Unresolved(u, p, _) => self.fetch_unresolved(ty, u, p),
+            UnresolvedEnum(e, p, _) => self.fetch_unresolved_enum(ty, e, p),
+            UnresolvedRec(r, p, _) => self.fetch_unresolved_record(ty, r, p),
             _ => (Alteration::forward(ty), Status::Fetched),
         }
     }
@@ -85,12 +85,12 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
 
         if let Some(parent) = last {
             let (type_, s) = self.fetch_nested(
-                Type::Unresolved(i, Path::default()),
+                Type::Unresolved(i, Path::default(), ty.gin()),
                 parent
             );
             (type_.combine2(ty, path, |t, p| t.with_path(p)), status.combine(s))
         } else {
-            (path.combine(ty, |p| Type::Unresolved(i, p)), Status::Unfetched)
+            (path.combine(ty, |p| Type::Unresolved(i, p, ty.gin())), Status::Unfetched)
         }
     }
 
@@ -100,7 +100,7 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
         self.core.registry
             .lookup_enum(e.name)
             .map(|e| (
-                Alteration::update(Type::Enum(self.core.global_arena.insert(e), p)),
+                Alteration::update(Type::Enum(self.core.insert(e), p, ty.gin())),
                 Status::Fetched,
             ))
             .unwrap_or((Alteration::forward(ty), Status::Unfetched))
@@ -112,25 +112,25 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
         self.core.registry
             .lookup_record(r.name)
             .map(|r| (
-                Alteration::update(Type::Rec(self.core.global_arena.insert(r), p)),
+                Alteration::update(Type::Rec(self.core.insert(r), p, ty.gin())),
                 Status::Fetched,
             ))
             .unwrap_or((Alteration::forward(ty), Status::Unfetched))
     }
 
-    fn fetch_enum_variant(&self, v: ItemIdentifier, e: ItemIdentifier)
+    fn fetch_enum_variant(&self, v: ItemIdentifier, e: ItemIdentifier, gin: Gin)
         -> Result<'g>
     {
         if let Some(e) = self.core.registry.lookup_enum(e) {
             for rec in e.variants {
                 if v.id() == rec.prototype.name.id() {
-                    let r = Type::UnresolvedRec(*rec.prototype, Path::default());
+                    let r = Type::UnresolvedRec(*rec.prototype, Path::default(), gin);
                     return (Alteration::update(r), Status::Fetched);
                 }
             }
         }
 
-        (Alteration::forward(Type::Unresolved(v, Path::default())),
+        (Alteration::forward(Type::Unresolved(v, Path::default(), gin)),
             Status::Unfetched)
     }
 
@@ -142,8 +142,8 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
         let unfetched = (Alteration::forward(t), Status::Unfetched);
 
         match (t, parent) {
-            (Unresolved(id, _), UnresolvedEnum(e, _))
-                => self.fetch_enum_variant(id, e.name),
+            (Unresolved(id, ..), UnresolvedEnum(e, ..))
+                => self.fetch_enum_variant(id, e.name, t.gin()),
             (Unresolved(..), Unresolved(..)) => unfetched,
             (Unresolved(..), _) => panic!("{:?} cannot be a parent!", parent),
             (UnresolvedEnum(..), _) | (UnresolvedRec(..), _) => unfetched,

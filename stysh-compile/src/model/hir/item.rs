@@ -95,6 +95,12 @@ pub struct FunctionProto<'a> {
     pub result: Type<'a>,
 }
 
+/// A global item number.
+///
+/// Defaults to 0, which is considered an invalid value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Gin(pub u32);
+
 /// A Path.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Path<'a> {
@@ -139,17 +145,17 @@ pub enum Type<'a> {
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
-    Enum(&'a Enum<'a>, Path<'a>),
+    Enum(&'a Enum<'a>, Path<'a>, Gin),
     /// A record type, possibly nested.
-    Rec(&'a Record<'a>, Path<'a>),
+    Rec(&'a Record<'a>, Path<'a>, Gin),
     /// A tuple type.
-    Tuple(Tuple<'a, Type<'a>>),
+    Tuple(Tuple<'a, Type<'a>>, Gin),
     /// An unresolved type, possibly nested.
-    Unresolved(ItemIdentifier, Path<'a>),
+    Unresolved(ItemIdentifier, Path<'a>, Gin),
     /// An unresolved enum type, possibly nested.
-    UnresolvedEnum(EnumProto, Path<'a>),
+    UnresolvedEnum(EnumProto, Path<'a>, Gin),
     /// An unresolved record type, possibly nested.
-    UnresolvedRec(RecordProto, Path<'a>),
+    UnresolvedRec(RecordProto, Path<'a>, Gin),
 }
 
 /// An item identifier.
@@ -166,6 +172,23 @@ impl<'a> Argument<'a> {
         self.gvn = gvn.into();
         self
     }
+}
+
+impl BuiltinType {
+    /// Returns the gin associated to the type.
+    pub fn gin(&self) -> Gin {
+        use self::BuiltinType::*;
+
+        match *self {
+            Bool => Gin(1),
+            Int => Gin(2),
+            String => Gin(3),
+            Void => Gin(4),
+        }
+    }
+
+    /// Returns the maximum gin associated to a built-in type.
+    pub fn maximum_gin() -> Gin { Gin(4) }
 }
 
 impl ItemIdentifier {
@@ -200,11 +223,15 @@ impl Type<'static> {
     pub fn void() -> Self { Type::Builtin(BuiltinType::Void) }
 
     /// Returns a unit type.
-    pub fn unit() -> Self { Type::Tuple(Tuple::unit()) }
+    pub fn unit() -> Self { Type::Tuple(Tuple::unit(), Gin::default()) }
 
     /// Returns an unresolved type.
     pub fn unresolved() -> Self {
-        Type::Unresolved(ItemIdentifier::unresolved(), Default::default())
+        Type::Unresolved(
+            ItemIdentifier::unresolved(),
+            Path::default(),
+            Gin::default(),
+        )
     }
 }
 
@@ -219,9 +246,39 @@ impl<'a> Type<'a> {
     /// Note:   unless the type is a Rec or Tuple, the Tuple will be empty.
     pub fn fields(&self) -> Tuple<'a, Type<'a>> {
         match *self {
-            Type::Rec(r, _) => r.definition,
-            Type::Tuple(t) => t,
+            Type::Rec(r, ..) => r.definition,
+            Type::Tuple(t, ..) => t,
             _ => Tuple::unit(),
+        }
+    }
+
+    /// Returns the gin associated to the type.
+    pub fn gin(&self) -> Gin {
+        use self::Type::*;
+
+        match *self {
+            Builtin(b) => b.gin(),
+            Enum(_, _, gin) | Rec(_, _, gin) | Tuple(_, gin)
+                | Unresolved(_, _, gin) | UnresolvedEnum(_, _, gin)
+                | UnresolvedRec(_, _, gin)
+                    => gin,
+        }
+    }
+
+    /// Switches the gin of the type.
+    ///
+    /// Panics: If the type is a built-in.
+    pub fn with_gin(self, gin: Gin) -> Type<'a> {
+        use self::Type::*;
+
+        match self {
+            Builtin(_) => panic!("Built-in have no GIN!"),
+            Enum(e, p, _) => Enum(e, p, gin),
+            Rec(r, p, _) => Rec(r, p, gin),
+            Tuple(t, _) => Tuple(t, gin),
+            Unresolved(i, p, _) => Unresolved(i, p, gin),
+            UnresolvedEnum(e, p, _) => UnresolvedEnum(e, p, gin),
+            UnresolvedRec(r, p, _) => UnresolvedRec(r, p, gin),
         }
     }
 
@@ -232,11 +289,11 @@ impl<'a> Type<'a> {
         use self::Type::*;
 
         match self {
-            Enum(e, _) => Enum(e, p),
-            Rec(r, _) => Rec(r, p),
-            Unresolved(i, _) => Unresolved(i, p),
-            UnresolvedEnum(e, _) => UnresolvedEnum(e, p),
-            UnresolvedRec(r, _) => UnresolvedRec(r, p),
+            Enum(e, _, gin) => Enum(e, p, gin),
+            Rec(r, _, gin) => Rec(r, p, gin),
+            Unresolved(i, _, gin) => Unresolved(i, p, gin),
+            UnresolvedEnum(e, _, gin) => UnresolvedEnum(e, p, gin),
+            UnresolvedRec(r, _, gin) => UnresolvedRec(r, p, gin),
             _ => panic!("{} has no path!", self),
         }
     }
@@ -353,12 +410,12 @@ impl<'a, 'target> CloneInto<'target> for Type<'a> {
 
         match *self {
             Builtin(t) => Builtin(t),
-            Enum(e, p) => Enum(arena.intern_ref(e), arena.intern(&p)),
-            Rec(r, p) => Rec(arena.intern_ref(r), arena.intern(&p)),
-            Tuple(t) => Tuple(arena.intern(&t)),
-            Unresolved(n, p) => Unresolved(n, arena.intern(&p)),
-            UnresolvedEnum(e, p) => UnresolvedEnum(e, arena.intern(&p)),
-            UnresolvedRec(r, p) => UnresolvedRec(r, arena.intern(&p)),
+            Enum(e, p, g) => Enum(arena.intern_ref(e), arena.intern(&p), g),
+            Rec(r, p, g) => Rec(arena.intern_ref(r), arena.intern(&p), g),
+            Tuple(t, g) => Tuple(arena.intern(&t), g),
+            Unresolved(n, p, g) => Unresolved(n, arena.intern(&p), g),
+            UnresolvedEnum(e, p, g) => UnresolvedEnum(e, arena.intern(&p), g),
+            UnresolvedRec(r, p, g) => UnresolvedRec(r, arena.intern(&p), g),
         }
     }
 }
@@ -412,12 +469,12 @@ impl<'a> Span for Type<'a> {
             Builtin(Int) => 3,
             Builtin(String) => 6,
             Builtin(Void) => 4,
-            Enum(e, p) => len(e.prototype.name, p),
-            Rec(r, p) => len(r.prototype.name, p),
-            Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
-            Unresolved(i, p) => len(i, p),
-            UnresolvedEnum(e, p) => len(e.name, p),
-            UnresolvedRec(r, p) => len(r.name, p),
+            Enum(e, p, _) => len(e.prototype.name, p),
+            Rec(r, p, _) => len(r.prototype.name, p),
+            Tuple(t, _) => t.fields.iter().map(|t| t.span().length()).sum(),
+            Unresolved(i, p, _) => len(i, p),
+            UnresolvedEnum(e, p, _) => len(e.name, p),
+            UnresolvedRec(r, p, _) => len(r.name, p),
         };
 
         com::Range::new(0, len)
@@ -427,6 +484,10 @@ impl<'a> Span for Type<'a> {
 //
 //  From Implementations
 //
+
+impl convert::From<u32> for Gin {
+    fn from(i: u32) -> Gin { Gin(i) }
+}
 
 impl<'a> convert::From<Enum<'a>> for Item<'a> {
     fn from(e: Enum<'a>) -> Self { Item::Enum(e) }
@@ -459,15 +520,19 @@ impl convert::From<RecordProto> for Prototype<'static> {
 }
 
 impl convert::From<EnumProto> for Type<'static> {
-    fn from(e: EnumProto) -> Self { Type::UnresolvedEnum(e, Path::default()) }
+    fn from(e: EnumProto) -> Self {
+        Type::UnresolvedEnum(e, Path::default(), Gin::default())
+    }
 }
 
 impl convert::From<RecordProto> for Type<'static> {
-    fn from(r: RecordProto) -> Self { Type::UnresolvedRec(r, Path::default()) }
+    fn from(r: RecordProto) -> Self {
+        Type::UnresolvedRec(r, Path::default(), Gin::default())
+    }
 }
 
 impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
-    fn from(t: Tuple<'a, Type<'a>>) -> Self { Type::Tuple(t) }
+    fn from(t: Tuple<'a, Type<'a>>) -> Self { Type::Tuple(t, Gin::default()) }
 }
 
 //
@@ -510,12 +575,12 @@ impl<'a> fmt::Display for Type<'a> {
 
         match *self {
             Builtin(t) => write!(f, "{}", t),
-            Enum(e, p) => write!(f, "{}{}", p, e.prototype.name),
-            Rec(r, p) => write!(f, "{}{}", p, r.prototype.name),
-            Tuple(t) => write!(f, "{}", t),
-            Unresolved(i, p) => write!(f, "{}{}", p, i),
-            UnresolvedEnum(e, p) => write!(f, "{}{}", p, e.name),
-            UnresolvedRec(r, p) => write!(f, "{}{}", p, r.name),
+            Enum(e, p, _) => write!(f, "{}{}", p, e.prototype.name),
+            Rec(r, p, _) => write!(f, "{}{}", p, r.prototype.name),
+            Tuple(t, _) => write!(f, "{}", t),
+            Unresolved(i, p, _) => write!(f, "{}{}", p, i),
+            UnresolvedEnum(e, p, _) => write!(f, "{}{}", p, e.name),
+            UnresolvedRec(r, p, _) => write!(f, "{}{}", p, r.name),
         }
     }
 }

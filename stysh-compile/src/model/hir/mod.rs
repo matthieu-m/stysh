@@ -18,7 +18,7 @@
 #[cfg(test)]
 pub mod builder;
 #[cfg(test)]
-pub mod gvn;
+pub mod gn;
 #[cfg(test)]
 pub mod interning;
 

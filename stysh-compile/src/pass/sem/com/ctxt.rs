@@ -35,6 +35,13 @@ impl<'g> Context<'g> {
         self.values.borrow_mut().clear();
     }
 
+    /// Returns a fresh GIN.
+    pub fn gin(&self) -> Gin {
+        let gin = self.imp.borrow_mut().gin();
+        //  TODO: register in types.
+        gin
+    }
+
     /// Returns a fresh GVN.
     pub fn gvn(&self) -> Gvn {
         let gvn = self.imp.borrow_mut().gvn();
@@ -67,15 +74,27 @@ impl<'g> Context<'g> {
     //  Bindings
     //
 
-    /// Returns the GVN associated with the binding.
-    pub fn lookup_binding(&self, name: ValueIdentifier) -> Option<Gvn> {
-        self.imp.borrow().lookup_binding(name)
+    /// Returns the GIN associated with the item binding.
+    pub fn lookup_item(&self, name: ItemIdentifier) -> Option<Gin> {
+        self.imp.borrow().lookup_item(name)
     }
 
-    /// Inserts a binding with its currently known type.
-    pub fn insert_binding(&self, name: ValueIdentifier, ty: Type<'g>) -> Gvn {
+    /// Inserts an item binding.
+    pub fn insert_item(&self, name: ItemIdentifier) -> Gin {
+        let gin = self.gin();
+        self.imp.borrow_mut().insert_item(gin, name);
+        gin
+    }
+
+    /// Returns the GVN associated with the value binding.
+    pub fn lookup_value(&self, name: ValueIdentifier) -> Option<Gvn> {
+        self.imp.borrow().lookup_value(name)
+    }
+
+    /// Inserts a value binding with its currently known type.
+    pub fn insert_value(&self, name: ValueIdentifier, ty: Type<'g>) -> Gvn {
         let gvn = self.gvn();
-        self.imp.borrow_mut().insert_binding(gvn, name);
+        self.imp.borrow_mut().insert_value(gvn, name);
         self.value(gvn).set_type(ty);
         gvn
     }
@@ -118,12 +137,16 @@ impl<'g> Context<'g> {
 
 #[derive(Clone, Debug, Default)]
 struct ContextImpl {
+    //  Global Item Number.
+    gin: u32,
     //  Global Value Number.
     gvn: u32,
     //  Current Iteration Number.
     iteration: u32,
     //  Bindings of a particular function/value.
-    bindings: collections::HashMap<Range, Gvn>,
+    items: collections::HashMap<Range, Gin>,
+    //  Bindings of a particular function/value.
+    values: collections::HashMap<Range, Gvn>,
     //  Nested Entities to Fetch.
     unfetched: WorkQueue<Gvn>,
     //  Types to Unify and Propagate.
@@ -142,10 +165,17 @@ impl ContextImpl {
     //
 
     fn clear(&mut self) {
+        self.gin = BuiltinType::maximum_gin().0;
         self.gvn = 0;
         self.iteration = 0;
-        self.bindings.clear();
+        self.values.clear();
         self.unfetched.clear();
+    }
+
+    fn gin(&mut self) -> Gin {
+        self.gin += 1;
+
+        Gin(self.gin)
     }
 
     fn gvn(&mut self) -> Gvn {
@@ -162,17 +192,30 @@ impl ContextImpl {
     //  Bindings
     //
 
-    fn lookup_binding(&self, name: ValueIdentifier) -> Option<Gvn> {
-        self.bindings.get(&name.span()).cloned()
+    fn lookup_item(&self, name: ItemIdentifier) -> Option<Gin> {
+        self.items.get(&name.span()).cloned()
     }
 
-    fn insert_binding(&mut self, gvn: Gvn, name: ValueIdentifier) {
+    fn insert_item(&mut self, gin: Gin, name: ItemIdentifier) {
         debug_assert!(
-            !self.bindings.contains_key(&name.span()),
+            !self.items.contains_key(&name.span()),
             "{:?} already contained", name
         );
 
-        self.bindings.insert(name.span(), gvn);
+        self.items.insert(name.span(), gin);
+    }
+
+    fn lookup_value(&self, name: ValueIdentifier) -> Option<Gvn> {
+        self.values.get(&name.span()).cloned()
+    }
+
+    fn insert_value(&mut self, gvn: Gvn, name: ValueIdentifier) {
+        debug_assert!(
+            !self.values.contains_key(&name.span()),
+            "{:?} already contained", name
+        );
+
+        self.values.insert(name.span(), gvn);
     }
 
     //

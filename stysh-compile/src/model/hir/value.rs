@@ -207,6 +207,12 @@ impl<'a> Value<'a> {
         self
     }
 
+    /// Sets the gin of the value type..
+    pub fn with_gin<G: convert::Into<Gin>>(mut self, gin: G) -> Value<'a> {
+        self.type_ = self.type_.with_gin(gin.into());
+        self
+    }
+
     /// Sets the gvn of the value.
     pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
         self.gvn = gvn.into();

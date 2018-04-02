@@ -613,7 +613,7 @@ impl<'a> TypeEnumBuilder<'a> {
 
     /// Creates a Enum Type.
     pub fn build(&self) -> Type<'a> {
-        Type::Enum(self.enum_, self.path.build())
+        Type::Enum(self.enum_, self.path.build(), Gin::default())
     }
 }
 
@@ -634,7 +634,7 @@ impl<'a> TypeRecordBuilder<'a> {
 
     /// Creates a Record Type.
     pub fn build(&self) -> Type<'a> {
-        Type::Rec(self.record, self.path.build())
+        Type::Rec(self.record, self.path.build(), Gin::default())
     }
 }
 
@@ -655,7 +655,7 @@ impl<'a> TypeUnresolvedBuilder<'a> {
 
     /// Creates an Unresolved Type.
     pub fn build(&self) -> Type<'a> {
-        Type::Unresolved(self.name, self.path.build())
+        Type::Unresolved(self.name, self.path.build(), Gin::default())
     }
 }
 
@@ -682,7 +682,7 @@ impl<'a> TypeUnresolvedEnumBuilder<'a> {
 
     /// Creates an UnresolvedEnum Type.
     pub fn build(&self) -> Type<'a> {
-        Type::UnresolvedEnum(self.proto.build(), self.path.build())
+        Type::UnresolvedEnum(self.proto.build(), self.path.build(), Gin::default())
     }
 }
 
@@ -709,7 +709,7 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
 
     /// Appends a component to the path.
     pub fn push(&mut self, component: Type<'a>) -> &mut Self {
-        if let Type::UnresolvedEnum(e, _) = component {
+        if let Type::UnresolvedEnum(e, ..) = component {
             self.proto.enum_(e.name);
         }
         self.path.push(component);
@@ -718,7 +718,7 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
 
     /// Creates an UnresolvedRecord Type.
     pub fn build(&self) -> Type<'a> {
-        Type::UnresolvedRec(self.proto.build(), self.path.build())
+        Type::UnresolvedRec(self.proto.build(), self.path.build(), Gin::default())
     }
 }
 
@@ -1114,7 +1114,7 @@ impl<'a> ImplicitBuilder<'a> {
     /// Creates a to-enum implicit Value.
     pub fn enum_(&self, e: EnumProto, v: Value<'a>) -> Value<'a> {
         value(
-            Type::UnresolvedEnum(e, Path::default()),
+            Type::UnresolvedEnum(e, Path::default(), Gin::default()),
             Expr::Implicit(Implicit::ToEnum(e, self.arena.insert(v))),
         ).with_range(v.range.offset(), v.range.length())
     }

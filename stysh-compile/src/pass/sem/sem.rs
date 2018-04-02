@@ -169,7 +169,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         -> hir::Item<'g>
     {
         for a in p.arguments{
-            self.context.insert_binding(a.name, a.type_);
+            self.context.insert_value(a.name, a.type_);
         }
 
         let scope = self.function_scope(self.scope, p);
@@ -252,7 +252,7 @@ mod tests {
     use model::ast::builder::Factory as SynFactory;
     use model::hir::builder::Factory as SemFactory;
     use model::hir::*;
-    use model::hir::gvn::GlobalValueNumberer;
+    use model::hir::gn::GlobalNumberer;
     use model::hir::interning::Scrubber;
     use model::hir::mocks::MockRegistry;
     use super::Context;
@@ -546,7 +546,7 @@ mod tests {
         fn unnumber_item(&self, item: Item<'g>, local_arena: &mem::Arena)
             -> Item<'g>
         {
-            let gvn = GlobalValueNumberer::new(self.arena, local_arena);
+            let gvn = GlobalNumberer::new(self.arena, local_arena);
 
             match item {
                 Item::Fun(f) => Item::Fun(gvn.unnumber_function(&f)),

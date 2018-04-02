@@ -34,14 +34,14 @@ impl<'a, 'g> ValueUnifier<'a, 'g>
         let (expr, type_) = e.unify();
 
         match type_ {
-            Cast(Type::Enum(e, p)) => {
+            Cast(Type::Enum(e, p, gin)) => {
                 let value = if expr.altered > 0 {
                     self.core.insert(v)
                 } else {
                     self.core.insert(v.with_expr(expr.entity).with_type(v.type_))
                 };
                 Alteration::update(Value {
-                    type_: Type::Enum(e, p),
+                    type_: Type::Enum(e, p, gin),
                     range: v.range,
                     expr: Expr::Implicit(Implicit::ToEnum(*e.prototype, value)),
                     gvn: self.core.context.gvn(),
@@ -165,15 +165,15 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
         let forward =
             (Alteration::forward(self.expr), Action::Keep(self.type_));
 
-        let (record, path) = match c.type_ {
-            Rec(r, p) => (r, p),
+        let (record, path, gin) = match c.type_ {
+            Rec(r, p, g) => (r, p, g),
             Unresolved(..) | UnresolvedRec(..) => return forward,
             _ => unimplemented!("Constructor type {:?}", c.type_),
         };
 
         let (arguments, _) =
-            self.unify_tuple_impl(c.arguments, Type::Tuple(record.definition));
-        let type_ = Type::Rec(record, path);
+            self.unify_tuple_impl(c.arguments, Type::Tuple(record.definition, gin));
+        let type_ = Type::Rec(record, path, gin);
         let range = c.range;
 
         (
@@ -300,35 +300,38 @@ impl<'a, 'g> ExprUnifier<'a, 'g>
     {
         use self::Action::*;
 
-        if let Type::Tuple(ty) = ty {
+        if let Type::Tuple(ty, gin) = ty {
             if v.len() == ty.len() {
                 for (&f, &ty) in v.fields.iter().zip(ty.fields.iter()) {
                     match self.merge(f.type_, ty).1 {
                         Cast(_) => unimplemented!(),
                         Keep(_) => continue,
-                        Update(_) => return Update(self.type_of(v)),
+                        Update(_) => return Update(self.type_of(v, gin)),
                     }
                 }
 
-                Keep(Type::Tuple(ty))
+                Keep(Type::Tuple(ty, gin))
             } else {
-                Update(self.type_of(v))
+                Update(self.type_of(v, gin))
             }
         } else {
-            Update(self.type_of(v))
+            Update(self.type_of(v, ty.gin()))
         }
     }
 
-    fn type_of(&self, v: Tuple<'g, Value<'g>>) -> Type<'g> {
+    fn type_of(&self, v: Tuple<'g, Value<'g>>, gin: Gin) -> Type<'g> {
         let mut fields =
             mem::Array::with_capacity(v.len(), self.core.global_arena);
         for v in v.fields {
             fields.push(v.type_);
         }
-        Type::Tuple(Tuple {
-            fields: fields.into_slice(),
-            names: v.names,
-        })
+        Type::Tuple(
+            Tuple {
+                fields: fields.into_slice(),
+                names: v.names,
+            },
+            gin,
+        )
     }
 
     fn unify_value(&self, v: Value<'g>, ty: Type<'g>) -> Alteration<Value<'g>> {

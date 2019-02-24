@@ -9,20 +9,18 @@ use super::com::*;
 
 /// Field Fetcher.
 #[derive(Clone, Debug)]
-pub struct FieldFetcher<'a, 'g: 'a> {
-    core: CoreFetcher<'a, 'g>,
-    handle: ValueHandle<'a, 'g>,
+pub struct FieldFetcher<'a> {
+    core: CoreFetcher<'a>,
+    handle: ValueHandle<'a>,
 }
 
 //
 //  Public interface of FieldFetcher
 //
 
-impl<'a, 'g: 'a> FieldFetcher<'a, 'g> {
+impl<'a> FieldFetcher<'a> {
     /// Creates an instance.
-    pub fn new(core: CoreFetcher<'a, 'g>, handle: ValueHandle<'a, 'g>)
-        -> Self
-    {
+    pub fn new(core: CoreFetcher<'a>, handle: ValueHandle<'a>) -> Self {
         FieldFetcher { core, handle }
     }
 
@@ -36,7 +34,7 @@ impl<'a, 'g: 'a> FieldFetcher<'a, 'g> {
 //  Implementation of FieldFetcher
 //
 
-impl<'a, 'g: 'a> FieldFetcher<'a, 'g> {
+impl<'a> FieldFetcher<'a> {
     fn fetch_children(&self) -> Status {
         use self::ValueChildren::*;
 

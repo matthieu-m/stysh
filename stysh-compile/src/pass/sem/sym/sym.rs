@@ -16,35 +16,22 @@ use super::scp::{BlockScope, Scope};
 /// The Symbol Mapper.
 ///
 /// For each top-level reference to a symbol, resolves the symbol.
-pub struct SymbolMapper<'a, 'g, 'local>
-    where 'g: 'a
-{
-    scope: &'a Scope<'g>,
-    context: &'a Context<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
+pub struct SymbolMapper<'a> {
+    scope: &'a Scope,
+    context: &'a Context,
 }
 
-impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
-    where 'g: 'a
-{
+impl<'a> SymbolMapper<'a> {
     /// Creates a new instance.
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(
-        scope: &'a Scope<'g>,
-        context: &'a Context<'g>,
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena,
-    )
-        -> Self
-    {
-        SymbolMapper { scope, context, global_arena, local_arena }
+    pub fn new(scope: &'a Scope, context: &'a Context) -> Self {
+        SymbolMapper { scope, context }
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::Pattern<'g> {
+    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::Pattern {
         use model::ast::Pattern;
 
         match *p {
@@ -56,7 +43,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&self, t: &ast::Type) -> hir::Type<'g> {
+    pub fn type_of(&self, t: &ast::Type) -> hir::Type {
         use model::ast::Type;
 
         match *t {
@@ -68,7 +55,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&self, e: &ast::Expression) -> hir::Value<'g> {
+    pub fn value_of(&self, e: &ast::Expression) -> hir::Value {
         self.value_of_expr(e)
     }
 }
@@ -76,14 +63,12 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
 //
 //  Implementation Details
 //
-impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
-    where 'g: 'a
-{
+impl<'a> SymbolMapper<'a> {
     fn pattern_of_constructor(
         &self,
         c: ast::Constructor<ast::Pattern>,
     )
-        -> hir::Pattern<'g>
+        -> hir::Pattern
     {
         hir::Pattern::Constructor(
             hir::Constructor {
@@ -96,13 +81,13 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn pattern_of_ignored(&self, underscore: com::Range)
-        -> hir::Pattern<'static>
+        -> hir::Pattern
     {
         hir::Pattern::Ignored(underscore)
     }
 
     fn pattern_of_tuple(&self, t: &ast::Tuple<ast::Pattern>)
-        -> hir::Pattern<'g>
+        -> hir::Pattern
     {
         hir::Pattern::Tuple(
             self.tuple_of(t, |p| self.pattern_of(p)),
@@ -112,7 +97,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn pattern_of_var(&self, var: ast::VariableIdentifier)
-        -> hir::Pattern<'static>
+        -> hir::Pattern
     {
         let gvn =
             self.context.insert_value(var.into(), hir::Type::unresolved());
@@ -122,11 +107,9 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
 
     fn stmt_of_return<'b>(&self,
         ret: &ast::Return,
-        scope: &mut BlockScope<'b, 'g, 'local>,
+        scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt<'g>
-        where
-            'g: 'b
+        -> hir::Stmt
     {
         let range = ret.span();
         let unit = hir::Value::unit().with_range(range.end_offset() - 3, 2);
@@ -142,11 +125,9 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     fn stmt_of_set<'b>(
         &self,
         set: &ast::VariableReBinding,
-        scope: &mut BlockScope<'b, 'g, 'local>,
+        scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt<'g>
-        where
-            'g: 'b
+        -> hir::Stmt
     {
         let range = set.span();
         let left = self.rescope(scope).value_of_expr(&set.left);
@@ -157,26 +138,24 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     fn stmt_of_var<'b>(
         &self,
         var: &ast::VariableBinding,
-        scope: &mut BlockScope<'b, 'g, 'local>,
+        scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt<'g>
-        where
-            'g: 'b
+        -> hir::Stmt
     {
         let left = self.rescope(self.scope).pattern_of(&var.pattern);
         let right = self.rescope(scope).value_of_expr(&var.expr);
         let range = var.span();
-        scope.add_pattern(left);
+        scope.add_pattern(left.clone());
 
         hir::Stmt::Var(hir::Binding { left, right, range })
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
-        -> hir::Type<'g>
+        -> hir::Type
     {
         let type_ = self.scope.lookup_type(p.components[0].into());
 
-        let mut path = self.array(p.components.len());
+        let path = mem::DynArray::with_capacity(p.components.len());
         path.push(type_);
         for &c in &p.components[1..] {
             path.push(hir::Type::Unresolved(
@@ -188,20 +167,20 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
 
         hir::Type::Unresolved(
             t.into(),
-            hir::Path { components: path.into_slice() },
+            hir::Path { components: path },
             self.context.gin(),
         )
     }
 
-    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type<'g> {
+    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type {
         self.scope.lookup_type(t.into())
     }
 
-    fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::Type<'g> {
+    fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::Type {
         hir::Type::Tuple(self.tuple_of(t, |t| self.type_of(t)), self.context.gin())
     }
 
-    fn value_of_expr(&self, expr: &ast::Expression) -> hir::Value<'g> {
+    fn value_of_expr(&self, expr: &ast::Expression) -> hir::Value {
         use model::ast::Expression::*;
 
         match *expr {
@@ -221,18 +200,12 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }.with_gvn(self.context.gvn())
     }
 
-    fn value_of_block(&self, block: &ast::Block) -> hir::Value<'g> {
-        let mut scope =
-            BlockScope::new(
-                self.scope,
-                self.global_arena,
-                self.local_arena
-            );
+    fn value_of_block(&self, block: &ast::Block) -> hir::Value {
+        let mut scope = BlockScope::new(self.scope);
         let stmts = self.statements(&block.statements, &mut scope);
-        let value = block.expression.map(
-            |e| self.rescope(&scope).value_of_expr(e)
+        let expr = block.expression.map(
+            |e| mem::Ptr::new(self.rescope(&scope).value_of_expr(e))
         );
-        let expr = value.map(|v| &*self.global_arena.insert(v));
 
         hir::Value {
             type_: hir::Type::unresolved(),
@@ -248,7 +221,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         left: &ast::Expression,
         right: &ast::Expression
     )
-        -> hir::Value<'g>
+        -> hir::Value
     {
         use model::ast::BinaryOperator as O;
         use model::hir::BuiltinFunction as F;
@@ -279,20 +252,20 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             range: range,
             expr: hir::Expr::Call(
                 hir::Callable::Builtin(op),
-                self.global_arena.insert_slice(&[left, right])
+                mem::DynArray::new(vec!(left, right)),
             ),
             gvn: self.context.gvn(),
         }
     }
 
     fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>)
-        -> hir::Value<'g>
+        -> hir::Value
     {
         let type_ = self.type_of(&c.type_);
         let arguments = self.tuple_of(&c.arguments, |v| self.value_of(v));
 
         hir::Value {
-            type_: type_,
+            type_: type_.clone(),
             range: c.span(),
             expr: hir::Expr::Constructor(hir::Constructor {
                 type_: type_,
@@ -303,14 +276,14 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }
     }
 
-    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::Value<'g> {
+    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::Value {
         let callable = if let ast::Expression::Var(id) = *fun.function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!()
         };
 
-        let values = self.slice_of(fun.arguments.fields, |a| self.value_of(a));
+        let values = self.array_of(fun.arguments.fields, |a| self.value_of(a));
 
         hir::Value {
             type_: hir::Type::unresolved(),
@@ -320,10 +293,10 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }
     }
 
-    fn value_of_field(&self, field: ast::FieldAccess) -> hir::Value<'g> {
+    fn value_of_field(&self, field: ast::FieldAccess) -> hir::Value {
         use self::ast::FieldIdentifier::*;
 
-        let accessed = self.global_arena.insert(self.value_of(field.accessed));
+        let accessed = mem::Ptr::new(self.value_of(field.accessed));
 
         let f = match field.field {
             Index(i, r) => hir::Field::Index(i, r),
@@ -338,7 +311,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }
     }
 
-    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::Value<'g> {
+    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::Value {
         let condition = self.value_of_expr(&if_else.condition);
         let true_branch = self.value_of_block(&if_else.true_expr);
         let false_branch = self.value_of_block(&if_else.false_expr);
@@ -347,16 +320,16 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             type_: hir::Type::unresolved(),
             range: if_else.span(),
             expr: hir::Expr::If(
-                self.global_arena.insert(condition),
-                self.global_arena.insert(true_branch),
-                self.global_arena.insert(false_branch),
+                mem::Ptr::new(condition),
+                mem::Ptr::new(true_branch),
+                mem::Ptr::new(false_branch),
             ),
             gvn: self.context.gvn(),
         }
     }
 
     fn value_of_literal(&self, lit: ast::Literal)
-        -> hir::Value<'g>
+        -> hir::Value
     {
         use model::ast::Literal::*;
 
@@ -373,7 +346,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         value: bool,
         range: com::Range
     )
-        -> hir::Value<'g>
+        -> hir::Value
     {
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::Bool),
@@ -384,9 +357,9 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn value_of_literal_bytes(&self, bytes: &[u8], range: com::Range)
-        -> hir::Value<'g>
+        -> hir::Value
     {
-        let value = self.global_arena.insert_slice(bytes);
+        let value = bytes.iter().cloned().collect();
 
         //  TODO(matthieum): Fix type, should be Array[[Byte]].
         hir::Value {
@@ -398,7 +371,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn value_of_literal_integral(&self, i: i64, range: com::Range)
-        -> hir::Value<'g>
+        -> hir::Value
     {
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::Int),
@@ -409,9 +382,9 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn value_of_literal_string(&self, string: &[u8], range: com::Range)
-        -> hir::Value<'g>
+        -> hir::Value
     {
-        let value = self.global_arena.insert_slice(string);
+        let value = string.iter().cloned().collect();
 
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::String),
@@ -421,13 +394,8 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }
     }
 
-    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::Value<'g> {
-        let mut scope =
-            BlockScope::new(
-                self.scope,
-                self.global_arena,
-                self.local_arena
-            );
+    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::Value {
+        let mut scope = BlockScope::new(self.scope);
         let stmts = self.statements(&loop_.statements, &mut scope);
 
         hir::Value {
@@ -443,7 +411,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         expr: &ast::Expression,
         range: com::Range,
     )
-        -> hir::Value<'g>
+        -> hir::Value
     {
         use model::ast::PrefixOperator as O;
         use model::hir::BuiltinFunction as F;
@@ -459,14 +427,14 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
             range: range,
             expr: hir::Expr::Call(
                 hir::Callable::Builtin(op),
-                self.global_arena.insert_slice(&[expr])
+                mem::DynArray::new(vec!(expr)),
             ),
             gvn: self.context.gvn(),
         }
     }
 
     fn value_of_tuple(&self, tup: &ast::Tuple<ast::Expression>)
-        -> hir::Value<'g>
+        -> hir::Value
     {
         let expr = self.tuple_of(tup, |v| self.value_of(v));
         hir::Value {
@@ -478,7 +446,7 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
     }
 
     fn value_of_variable(&self, var: ast::VariableIdentifier)
-        -> hir::Value<'g>
+        -> hir::Value
     {
         let expr =
             self.scope
@@ -500,27 +468,23 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         }
     }
 
-    fn rescope<'b>(&self, scope: &'b Scope<'g>) -> SymbolMapper<'b, 'g, 'local>
+    fn rescope<'b>(&self, scope: &'b Scope) -> SymbolMapper<'b>
         where 'a: 'b
     {
         SymbolMapper {
             scope: scope,
             context: self.context,
-            global_arena: self.global_arena,
-            local_arena: self.local_arena,
         }
     }
 
     fn statements<'b>(
         &self,
         stmts: &[ast::Statement],
-        scope: &mut BlockScope<'b, 'g, 'local>,
+        scope: &mut BlockScope<'b>,
     )
-        -> &'g [hir::Stmt<'g>]
-        where
-            'g: 'b
+        -> mem::DynArray<hir::Stmt>
     {
-        self.slice_of(stmts, |&s| {
+        self.array_of(stmts, |&s| {
             match s {
                 ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
                 ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
@@ -529,45 +493,36 @@ impl<'a, 'g, 'local> SymbolMapper<'a, 'g, 'local>
         })
     }
 
-    fn array<T>(&self, size: usize) -> mem::Array<'g, T> {
-        mem::Array::with_capacity(size, self.global_arena)
-    }
-
-    fn slice_of<'b, T: 'b, U: 'g, F: FnMut(&'b T) -> U>(
+    fn array_of<'b, T: 'b, U, F: FnMut(&'b T) -> U>(
         &self,
         input: &'b [T],
         mut transformer: F,
     )
-        -> &'g [U]
+        -> mem::DynArray<U>
     {
-        let mut result = self.array(input.len());
+        let result = mem::DynArray::with_capacity(input.len());
 
         for i in input {
             result.push(transformer(i));
         }
 
-        result.into_slice()
+        result
     }
 
     /// TODO: Move functionality from GraphBuilder to SymbolMapper.
-    pub fn tuple_of<'b, T: 'b, U: 'g, F: FnMut(&'b T) -> U>(
+    pub fn tuple_of<'b, T: 'b, U, F: FnMut(&'b T) -> U>(
         &self,
         tup: &'b ast::Tuple<'b, T>,
         transformer: F,
     )
-        -> hir::Tuple<'g, U>
+        -> hir::Tuple<U>
     {
         debug_assert!(
             tup.names.is_empty() || tup.names.len() == tup.fields.len()
         );
 
-        let fields = self.slice_of(tup.fields, transformer);
-
-        let names = if !tup.names.is_empty() {
-            self.slice_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r))
-        } else {
-            &[]
-        };
+        let fields = self.array_of(tup.fields, transformer);
+        let names = self.array_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r));
 
         hir::Tuple { fields, names }
     }
@@ -601,7 +556,7 @@ mod tests {
         };
 
         let hir = {
-            let v = HirFactory::new(&global_arena).value();
+            let v = HirFactory::new().value();
             v.block_div().range(0, 2).build().without_type()
         };
 
@@ -612,7 +567,7 @@ mod tests {
     fn value_builtin_boolean() {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
         let env = Env::new(b"true", &global_arena);
 
         assert_eq!(
@@ -626,7 +581,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
 
         let env = Env::new(b"'Hello, World!'", &global_arena);
 
@@ -640,7 +595,7 @@ mod tests {
     fn value_call_add() {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
         let env = Env::new(b"1 + 2", &global_arena);
 
         assert_eq!(
@@ -654,13 +609,13 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
-        let hir = HirFactory::new(&global_arena);
+        let hir = HirFactory::new();
         let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let mut env = Env::new(b"basic(1, 2)    basic", &global_arena);
 
         let proto = p.fun(i.id(15, 5), t.int()).build();
-        env.insert_function(proto, &[0]);
+        env.insert_function(proto.clone(), &[0]);
 
         assert_eq!(
             env.value_of(
@@ -682,7 +637,7 @@ mod tests {
     fn value_constructor() {
         let global_arena = mem::Arena::new();
         let ast = AstFactory::new(&global_arena);
-        let h = HirFactory::new(&global_arena);
+        let h = HirFactory::new();
         let (i, p, v) = (h.item(), h.proto(), h.value());
 
         let mut env = Env::new(b"Rec   Rec", &global_arena);
@@ -706,7 +661,7 @@ mod tests {
         let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let h = HirFactory::new(&global_arena);
+        let h = HirFactory::new();
         let (i, p, v) = (h.item(), h.proto(), h.value());
 
         let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
@@ -735,7 +690,7 @@ mod tests {
         let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let h = HirFactory::new(&global_arena);
+        let h = HirFactory::new();
         let (i, p, t, v) = (h.item(), h.proto(), h.type_(), h.value());
 
         let mut env = Env::new(
@@ -769,7 +724,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
 
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
 
@@ -800,7 +755,7 @@ mod tests {
         };
 
         let hir = {
-            let v = HirFactory::new(&global_arena).value();
+            let v = HirFactory::new().value();
             v.loop_().range(0, 9).build()
         };
 
@@ -813,7 +768,7 @@ mod tests {
         let ast = AstFactory::new(&global_arena);
         let e = ast.expr();
 
-        let h = HirFactory::new(&global_arena);
+        let h = HirFactory::new();
         let (i, p, v) = (h.item(), h.proto(), h.value());
 
         let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
@@ -858,7 +813,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (s, v) = (f.stmt(), f.value());
 
             v.block_div().push(s.ret(v.int(1, 10))).build().without_type()
@@ -891,7 +846,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (s, v) = (f.stmt(), f.value());
 
             v.if_(
@@ -920,7 +875,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -960,7 +915,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -988,7 +943,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
 
         let env = Env::new(b"(42, 43).1", &global_arena);
 
@@ -1011,7 +966,7 @@ mod tests {
         let global_arena = mem::Arena::new();
         let e = AstFactory::new(&global_arena).expr();
 
-        let v = HirFactory::new(&global_arena).value();
+        let v = HirFactory::new().value();
 
         let env = Env::new(b"(.x := 42, .y := 43).y", &global_arena);
 
@@ -1056,7 +1011,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let (a, b) = (v.id(7, 1), v.id(20, 1));
@@ -1088,7 +1043,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = v.id(7, 1);
@@ -1124,7 +1079,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (i, p, s, v) =
                 (f.item(), f.pat(), f.stmt(), f.value());
 
@@ -1136,7 +1091,7 @@ mod tests {
 
             v.block(v.name_ref(a, 43))
                 .push(s.var(
-                    p.constructor(rec, 23, 7)
+                    p.constructor(rec.clone(), 23, 7)
                         .push(p.var(a))
                         .build_pattern(),
                     v.constructor(rec, 34, 7)
@@ -1174,7 +1129,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (i, p, s, v) =
                 (f.item(), f.pat(), f.stmt(), f.value());
 
@@ -1189,7 +1144,7 @@ mod tests {
 
             v.block(v.name_ref(a, 55))
                 .push(s.var(
-                    p.constructor(rec, 27, 11)
+                    p.constructor(rec.clone(), 27, 11)
                         .push(p.var(a)).name(env.field_id(32, 2))
                         .build_pattern(),
                     v.constructor(rec, 42, 11)
@@ -1220,7 +1175,7 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new(&global_arena);
+            let f = HirFactory::new();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let (a, b) = (v.id(8, 1), v.id(11, 1));
@@ -1241,24 +1196,22 @@ mod tests {
     }
 
     struct Env<'g> {
-        scope: MockScope<'g>,
-        context: Context<'g>,
+        scope: MockScope,
+        context: Context,
         ast_resolver: ast::interning::Resolver<'g>,
         hir_resolver: hir::interning::Resolver<'g>,
-        scrubber: hir::interning::Scrubber<'g>,
-        arena: &'g mem::Arena,
+        scrubber: hir::interning::Scrubber,
     }
 
     impl<'g> Env<'g> {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
             let interner = rc::Rc::new(mem::Interner::new());
             Env {
-                scope: MockScope::new(arena),
+                scope: MockScope::new(),
                 context: Context::default(),
                 ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
-                hir_resolver: hir::interning::Resolver::new(fragment, interner, arena),
-                scrubber: hir::interning::Scrubber::new(arena),
-                arena: arena,
+                hir_resolver: hir::interning::Resolver::new(fragment, interner),
+                scrubber: hir::interning::Scrubber::new(),
             }
         }
 
@@ -1278,7 +1231,7 @@ mod tests {
 
         fn insert_function(
             &mut self,
-            proto: hir::FunctionProto<'g>,
+            proto: hir::FunctionProto,
             positions: &[usize],
         )
         {
@@ -1287,8 +1240,9 @@ mod tests {
             println!("Registered function: {:?}", proto.name);
 
             for p in positions {
-                let id = hir::ValueIdentifier(proto.name.id(), range(*p, len));
-                self.scope.callables.insert(id, hir::Callable::Function(proto));
+                let proto_clone = proto.clone();
+                let id = hir::ValueIdentifier(proto_clone.name.id(), range(*p, len));
+                self.scope.callables.insert(id, hir::Callable::Function(proto_clone));
             }
         }
 
@@ -1324,37 +1278,25 @@ mod tests {
             hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
-        fn mapper<'a, 'local>(&'a self, local: &'local mem::Arena)
-            -> super::SymbolMapper<'a, 'g, 'local>
-        {
-            super::SymbolMapper::new(
-                &self.scope,
-                &self.context,
-                self.arena, 
-                local
-            )
+        fn mapper<'a>(&'a self) -> super::SymbolMapper<'a> {
+            super::SymbolMapper::new(&self.scope, &self.context)
         }
 
-        fn unnumber_value(&self, v: hir::Value<'g>, local_arena: &mem::Arena)
-            -> hir::Value<'g>
-        {
+        fn unnumber_value(&self, v: hir::Value) -> hir::Value {
             use self::hir::gn::GlobalNumberer;
 
-            let gn = GlobalNumberer::new(self.arena, local_arena);
-            gn.unnumber_value(&v)
+            GlobalNumberer::new().unnumber_value(v)
         }
 
-        fn value_of(&self, expr: &ast::Expression) -> hir::Value<'g> {
+        fn value_of(&self, expr: &ast::Expression) -> hir::Value {
             self.scrubber.scrub_value(self.value_of_resolved(expr))
         }
 
-        fn value_of_resolved(&self, expr: &ast::Expression) -> hir::Value<'g> {
+        fn value_of_resolved(&self, expr: &ast::Expression) -> hir::Value {
             let expr = self.ast_resolver.resolve_expr(*expr);
 
-            let mut local_arena = mem::Arena::new();
-            let result = self.mapper(&local_arena).value_of(&expr);
-            let result = self.unnumber_value(result, &local_arena);
-            local_arena.recycle();
+            let result = self.mapper().value_of(&expr);
+            let result = self.unnumber_value(result);
 
             result
         }

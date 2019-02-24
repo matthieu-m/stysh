@@ -62,7 +62,7 @@ impl ModuleId {
 /// Note:   the `Range` does not know which buffer it indexes in.
 ///
 /// Note:   a `Range` cannot index past 4GB.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Range {
     offset: u32,
     length: u32,
@@ -132,6 +132,12 @@ impl Range {
                 length: (other.end_offset() - self.offset()) as u32
             }
         }
+    }
+}
+
+impl std::fmt::Debug for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}@{}", self.length, self.offset)
     }
 }
 

@@ -1,9 +1,10 @@
 //! Builder for the semantic model (aka AST).
 
-use std::{self, convert, marker};
+use std::{self, convert};
 
-use basic::{com, mem};
+use basic::com;
 use basic::com::Span;
+use basic::mem::{DynArray, Ptr};
 
 use model::hir::*;
 
@@ -13,43 +14,31 @@ use model::hir::*;
 
 /// Factory
 #[derive(Clone, Copy, Debug)]
-pub struct Factory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct Factory;
 
 /// ItemFactory
 #[derive(Clone, Copy, Debug)]
-pub struct ItemFactory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct ItemFactory;
 
 /// PatternFactory
 #[derive(Clone, Copy, Debug)]
-pub struct PatternFactory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct PatternFactory;
 
 /// PrototypeFactory
 #[derive(Clone, Copy, Debug)]
-pub struct PrototypeFactory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct PrototypeFactory;
 
 /// StmtFactory
 #[derive(Clone, Copy, Debug)]
-pub struct StmtFactory<'a>(marker::PhantomData<&'a ()>);
+pub struct StmtFactory;
 
 /// TypeFactory
 #[derive(Clone, Copy, Debug)]
-pub struct TypeFactory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct TypeFactory;
 
 /// ValueFactory
 #[derive(Clone, Copy, Debug)]
-pub struct ValueFactory<'a> {
-    arena: &'a mem::Arena,
-}
+pub struct ValueFactory;
 
 //
 //  Item Builders
@@ -57,16 +46,16 @@ pub struct ValueFactory<'a> {
 
 /// EnumBuilder
 #[derive(Clone, Debug)]
-pub struct EnumBuilder<'a> {
-    prototype: &'a EnumProto,
-    variants: mem::Array<'a, Record<'a>>,
+pub struct EnumBuilder {
+    prototype: EnumProto,
+    variants: DynArray<Record>,
 }
 
 /// RecordBuilder
 #[derive(Clone, Debug)]
-pub struct RecordBuilder<'a> {
-    prototype: &'a RecordProto,
-    definition: TupleBuilder<'a, Type<'a>>,
+pub struct RecordBuilder {
+    prototype: RecordProto,
+    definition: TupleBuilder<Type>,
 }
 
 //
@@ -77,11 +66,11 @@ pub struct RecordBuilder<'a> {
 //  Prototype Builders
 //
 #[derive(Clone, Debug)]
-pub struct FunctionProtoBuilder<'a> {
+pub struct FunctionProtoBuilder {
     name: ItemIdentifier,
     range: com::Range,
-    arguments: mem::Array<'a, Argument<'a>>,
-    result: Type<'a>,
+    arguments: DynArray<Argument>,
+    result: Type,
     with_gvn: bool,
 }
 
@@ -96,42 +85,42 @@ pub struct FunctionProtoBuilder<'a> {
 pub struct BuiltinTypeBuilder;
 
 #[derive(Clone, Debug)]
-pub struct TypeEnumBuilder<'a> {
-    enum_: &'a Enum<'a>,
-    path: PathBuilder<'a>,
+pub struct TypeEnumBuilder {
+    enum_: Enum,
+    path: PathBuilder,
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeRecordBuilder<'a> {
-    record: &'a Record<'a>,
-    path: PathBuilder<'a>,
+pub struct TypeRecordBuilder {
+    record: Record,
+    path: PathBuilder,
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeUnresolvedBuilder<'a> {
+pub struct TypeUnresolvedBuilder {
     name: ItemIdentifier,
-    path: PathBuilder<'a>,
+    path: PathBuilder,
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeUnresolvedEnumBuilder<'a> {
+pub struct TypeUnresolvedEnumBuilder {
     proto: EnumProtoBuilder,
-    path: PathBuilder<'a>,
+    path: PathBuilder,
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeUnresolvedRecordBuilder<'a> {
+pub struct TypeUnresolvedRecordBuilder {
     proto: RecordProtoBuilder,
-    path: PathBuilder<'a>,
+    path: PathBuilder,
 }
 
 //
 //  Value Builders
 //
 #[derive(Clone, Debug)]
-pub struct BlockBuilder<'a> {
-    value: Option<&'a Value<'a>>,
-    statements: mem::Array<'a, Stmt<'a>>,
+pub struct BlockBuilder {
+    value: Option<Value>,
+    statements: DynArray<Stmt>,
     range: com::Range,
 }
 
@@ -139,42 +128,40 @@ pub struct BlockBuilder<'a> {
 pub struct BuiltinValueBuilder;
 
 #[derive(Clone, Debug)]
-pub struct CallBuilder<'a> {
-    callable: Callable<'a>,
-    unresolved: mem::Array<'a, Callable<'a>>,
-    arguments: mem::Array<'a, Value<'a>>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FieldAccessBuilder<'a> {
-    field: Field,
-    type_: Option<Type<'a>>,
-    value: &'a Value<'a>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct IfBuilder<'a> {
-    type_: Option<Type<'a>>,
-    condition: &'a Value<'a>,
-    true_: &'a Value<'a>,
-    false_: &'a Value<'a>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ImplicitBuilder<'a> {
-    arena: &'a mem::Arena,
+pub struct CallBuilder {
+    callable: Callable,
+    unresolved: DynArray<Callable>,
+    arguments: DynArray<Value>,
 }
 
 #[derive(Clone, Debug)]
-pub struct LoopBuilder<'a>{
-    statements: mem::Array<'a, Stmt<'a>>,
+pub struct FieldAccessBuilder {
+    field: Field,
+    type_: Option<Type>,
+    value: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct IfBuilder {
+    type_: Option<Type>,
+    condition: Value,
+    true_: Value,
+    false_: Value,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImplicitBuilder;
+
+#[derive(Clone, Debug)]
+pub struct LoopBuilder {
+    statements: DynArray<Stmt>,
     range: com::Range,
 }
 
 #[derive(Clone, Debug)]
-pub struct ValueTupleBuilder<'a> {
-    type_: TupleBuilder<'a, Type<'a>>,
-    expr: TupleBuilder<'a, Value<'a>>,
+pub struct ValueTupleBuilder {
+    type_: TupleBuilder<Type>,
+    expr: TupleBuilder<Value>,
 }
 
 //
@@ -182,9 +169,9 @@ pub struct ValueTupleBuilder<'a> {
 //
 
 #[derive(Clone, Debug)]
-pub struct ConstructorBuilder<'a, T: 'a> {
-    type_: Type<'a>,
-    arguments: TupleBuilder<'a, T>,
+pub struct ConstructorBuilder<T> {
+    type_: Type,
+    arguments: TupleBuilder<T>,
     range: com::Range,
 }
 
@@ -195,8 +182,8 @@ pub struct EnumProtoBuilder {
 }
 
 #[derive(Clone, Debug)]
-pub struct PathBuilder<'a> {
-    components: mem::Array<'a, Type<'a>>,
+pub struct PathBuilder {
+    components: DynArray<Type>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -208,47 +195,43 @@ pub struct RecordProtoBuilder {
 
 /// TupleBuilder
 #[derive(Clone, Debug)]
-pub struct TupleBuilder<'a, T: 'a> {
-    fields: mem::Array<'a, T>,
-    names: mem::Array<'a, ValueIdentifier>,
+pub struct TupleBuilder<T> {
+    fields: DynArray<T>,
+    names: DynArray<ValueIdentifier>,
 }
 
 //
 //  Implementation of Factory
 //
-impl<'a> Factory<'a> {
+impl Factory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
-        Factory { arena: arena }
-    }
+    pub fn new() -> Self { Factory }
 
     /// Creates a ItemFactory.
-    pub fn item(&self) -> ItemFactory<'a> { ItemFactory::new(self.arena) }
+    pub fn item(&self) -> ItemFactory { ItemFactory::new() }
 
     /// Creates a PatternFactory.
-    pub fn pat(&self) -> PatternFactory<'a> { PatternFactory::new(self.arena) }
+    pub fn pat(&self) -> PatternFactory { PatternFactory::new() }
 
     /// Creates a PrototypeFactory.
-    pub fn proto(&self) -> PrototypeFactory<'a> {
-        PrototypeFactory::new(self.arena)
-    }
+    pub fn proto(&self) -> PrototypeFactory { PrototypeFactory::new() }
 
     /// Creates a StmtFactory.
-    pub fn stmt(&self) -> StmtFactory<'a> { StmtFactory::new(self.arena) }
+    pub fn stmt(&self) -> StmtFactory { StmtFactory::new() }
 
     /// Creates an TypeFactory.
-    pub fn type_(&self) -> TypeFactory<'a> { TypeFactory::new(self.arena) }
+    pub fn type_(&self) -> TypeFactory { TypeFactory::new() }
 
     /// Creates a ValueFactory.
-    pub fn value(&self) -> ValueFactory<'a> { ValueFactory::new(self.arena) }
+    pub fn value(&self) -> ValueFactory { ValueFactory::new() }
 }
 
 //
 //  Implementation Details (Item)
 //
-impl<'a> ItemFactory<'a> {
+impl ItemFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self { ItemFactory { arena } }
+    pub fn new() -> Self { ItemFactory }
 
     /// Creates an ItemIdentifier.
     pub fn id(&self, pos: usize, len: usize) -> ItemIdentifier {
@@ -256,45 +239,40 @@ impl<'a> ItemFactory<'a> {
     }
 
     /// Creates an EnumBuilder.
-    pub fn enum_(&self, p: EnumProto) -> EnumBuilder<'a> {
-        EnumBuilder::new(self.arena, p)
-    }
+    pub fn enum_(&self, p: EnumProto) -> EnumBuilder { EnumBuilder::new(p) }
 
     /// Creates a Function.
-    pub fn fun(&self, p: FunctionProto<'a>, body: Value<'a>) -> Function<'a> {
-        Function {
-            prototype: self.arena.insert(p),
-            body: body,
-        }
+    pub fn fun(&self, prototype: FunctionProto, body: Value) -> Function {
+        Function { prototype, body }
     }
 
     /// Creates a RecordBuilder.
-    pub fn rec(&self, r: RecordProto) -> RecordBuilder<'a> {
-        RecordBuilder::new(self.arena, r)
+    pub fn rec(&self, r: RecordProto) -> RecordBuilder {
+        RecordBuilder::new(r)
     }
 
     /// Shortcut: Creates a Unit Record.
-    pub fn unit(&self, pos: usize, len: usize) -> Record<'a> {
+    pub fn unit(&self, pos: usize, len: usize) -> Record {
         let proto = RecordProtoBuilder::new(self.id(pos, len), pos).build();
         self.rec(proto).build()
     }
 }
 
-impl<'a> EnumBuilder<'a> {
+impl EnumBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, p: EnumProto) -> Self {
+    pub fn new(p: EnumProto) -> Self {
         EnumBuilder {
-            prototype: arena.insert(p),
-            variants: mem::Array::new(arena),
+            prototype: p,
+            variants: DynArray::default(),
         }
     }
 
     /// Pushes a variant.
-    pub fn push(&mut self, r: Record<'a>) -> &mut Self {
-        let proto = self.variants.arena().insert(RecordProto {
+    pub fn push(&mut self, r: Record) -> &mut Self {
+        let proto = RecordProto {
             enum_: self.prototype.name,
-            ..*r.prototype
-        });
+            ..r.prototype
+        };
         self.variants.push(Record {
             prototype: proto,
             definition: r.definition,
@@ -303,25 +281,25 @@ impl<'a> EnumBuilder<'a> {
     }
 
     /// Creates an Enum.
-    pub fn build(&self) -> Enum<'a> {
+    pub fn build(&self) -> Enum {
         Enum {
             prototype: self.prototype,
-            variants: self.variants.clone().into_slice(),
+            variants: self.variants.clone(),
         }
     }
 }
 
-impl<'a> RecordBuilder<'a> {
+impl RecordBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, p: RecordProto) -> Self {
+    pub fn new(p: RecordProto) -> Self {
         RecordBuilder {
-            prototype: arena.insert(p),
-            definition: TupleBuilder::new(arena),
+            prototype: p,
+            definition: TupleBuilder::new(),
         }
     }
 
     /// Pushes a field.
-    pub fn push(&mut self, t: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, t: Type) -> &mut Self {
         self.definition.push(t);
         self
     }
@@ -333,7 +311,7 @@ impl<'a> RecordBuilder<'a> {
     }
 
     /// Creates an Record.
-    pub fn build(&self) -> Record<'a> {
+    pub fn build(&self) -> Record {
         Record {
             prototype: self.prototype,
             definition: self.definition.build(),
@@ -344,29 +322,29 @@ impl<'a> RecordBuilder<'a> {
 //
 //  Implementation Details (Pattern)
 //
-impl<'a> PatternFactory<'a> {
+impl PatternFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self { PatternFactory { arena } }
+    pub fn new() -> Self { PatternFactory }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, type_: Type<'a>, pos: usize, len: usize)
-        -> ConstructorBuilder<'a, Pattern<'a>>
+    pub fn constructor(&self, type_: Type, pos: usize, len: usize)
+        -> ConstructorBuilder<Pattern>
     {
-        ConstructorBuilder::new(self.arena, type_, pos, len)
+        ConstructorBuilder::new(type_, pos, len)
     }
 
     /// Creates an ignored Pattern.
-    pub fn ignored(&self, pos: usize) -> Pattern<'static> {
+    pub fn ignored(&self, pos: usize) -> Pattern {
         Pattern::Ignored(range(pos, 1))
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
-        TupleBuilder::new(self.arena)
+    pub fn tuple(&self) -> TupleBuilder<Pattern> {
+        TupleBuilder::new()
     }
 
     /// Creates a var Pattern.
-    pub fn var(&self, id: ValueIdentifier) -> Pattern<'static> {
+    pub fn var(&self, id: ValueIdentifier) -> Pattern {
         Pattern::Var(id, Default::default())
     }
 }
@@ -374,9 +352,9 @@ impl<'a> PatternFactory<'a> {
 //
 //  Implementation Details (Prototype)
 //
-impl<'a> PrototypeFactory<'a> {
+impl PrototypeFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self { PrototypeFactory { arena } }
+    pub fn new() -> Self { PrototypeFactory }
 
     /// Creates an EnumProtoBuilder.
     pub fn enum_(&self, name: ItemIdentifier) -> EnumProtoBuilder {
@@ -389,11 +367,11 @@ impl<'a> PrototypeFactory<'a> {
     pub fn fun(
         &self,
         name: ItemIdentifier,
-        result: Type<'a>,
+        result: Type,
     )
-        -> FunctionProtoBuilder<'a>
+        -> FunctionProtoBuilder
     {
-        FunctionProtoBuilder::new(self.arena, name, result)
+        FunctionProtoBuilder::new(name, result)
     }
 
     /// Creates a RecordProtoBuilder.
@@ -406,19 +384,18 @@ impl<'a> PrototypeFactory<'a> {
     }
 }
 
-impl<'a> FunctionProtoBuilder<'a> {
+impl FunctionProtoBuilder {
     /// Creates an instance.
     pub fn new(
-        arena: &'a mem::Arena,
         name: ItemIdentifier,
-        result: Type<'a>,
+        result: Type,
     )
         -> Self
     {
         FunctionProtoBuilder {
             name: name,
             range: range(0, 0),
-            arguments: mem::Array::new(arena),
+            arguments: DynArray::default(),
             result: result,
             with_gvn: false,
         }
@@ -431,7 +408,7 @@ impl<'a> FunctionProtoBuilder<'a> {
     }
 
     /// Pushes an argument.
-    pub fn push(&mut self, name: ValueIdentifier, type_: Type<'a>) -> &mut Self
+    pub fn push(&mut self, name: ValueIdentifier, type_: Type) -> &mut Self
     {
         let gvn = Default::default();
         let len = name.span().length() + 2 + type_.span().length();
@@ -442,8 +419,9 @@ impl<'a> FunctionProtoBuilder<'a> {
 
     /// Sets the range of the last argument.
     pub fn arg_range(&mut self, pos: usize, len: usize) -> &mut Self {
-        if let Some(a) = self.arguments.last_mut() {
+        if let Some(mut a) = self.arguments.last() {
             a.range = range(pos, len);
+            self.arguments.replace(self.arguments.len() - 1, a);
         }
         self
     }
@@ -455,21 +433,20 @@ impl<'a> FunctionProtoBuilder<'a> {
     }
 
     /// Creates a FunctionProto.
-    pub fn build(&self) -> FunctionProto<'a> {
-        let arguments = self.arguments.clone().into_slice();
-
-        for (i, a) in arguments.iter_mut().enumerate() {
+    pub fn build(&self) -> FunctionProto {
+        let mut arguments = self.arguments.get_array();
+        arguments.iter_mut().enumerate().for_each(|(i, a)| {
             a.gvn = Gvn(if self.with_gvn { i as u32 + 1 } else { 0 });
 
-            if i + 1 == self.arguments.len() { continue; }
+            if i + 1 == self.arguments.len() { return; }
             a.range = range(a.range.offset(), a.range.length() + 1);
-        }
+        });
 
         FunctionProto {
             name: self.name,
             range: self.range,
-            arguments: arguments,
-            result: self.result
+            arguments: DynArray::new(arguments),
+            result: self.result.clone()
         }
     }
 }
@@ -477,12 +454,12 @@ impl<'a> FunctionProtoBuilder<'a> {
 //
 //  Implementation Details (Stmt)
 //
-impl<'a> StmtFactory<'a> {
+impl StmtFactory {
     /// Creates an instance.
-    pub fn new(_: &'a mem::Arena) -> Self { StmtFactory(marker::PhantomData) }
+    pub fn new() -> Self { StmtFactory }
 
     /// Creates a return Stmt.
-    pub fn ret(&self, value: Value<'a>) -> Stmt<'a> {
+    pub fn ret(&self, value: Value) -> Stmt {
         let off = value.range.offset() - 8;
         let end = value.range.end_offset() + 1;
         let range = range(off, end - off);
@@ -491,7 +468,7 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Shortcut: Creates an empty return statement.
-    pub fn ret_unit(&self, pos: usize, len: usize) -> Stmt<'a> {
+    pub fn ret_unit(&self, pos: usize, len: usize) -> Stmt {
         let value = Value::unit().with_range(pos + len - 3, 2);
         let range = range(pos, len);
 
@@ -499,7 +476,7 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Creates a re-binding Stmt.
-    pub fn set(&self, left: Value<'a>, right: Value<'a>) -> Stmt<'a> {
+    pub fn set(&self, left: Value, right: Value) -> Stmt {
         let off = left.range.offset() - 5;
         let end = right.range.end_offset() + 1;
         let range = range(off, end - off);
@@ -508,7 +485,7 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Creates a binding Stmt.
-    pub fn var(&self, left: Pattern<'a>, right: Value<'a>) -> Stmt<'a> {
+    pub fn var(&self, left: Pattern, right: Value) -> Stmt {
         let off = left.span().offset() - 5;
         let end = right.range.end_offset() + 1;
         let range = range(off, end - off);
@@ -517,7 +494,7 @@ impl<'a> StmtFactory<'a> {
     }
 
     /// Shortcut: Creates a simple binding Stmt.
-    pub fn var_id(&self, id: ValueIdentifier, value: Value<'a>) -> Stmt<'a> {
+    pub fn var_id(&self, id: ValueIdentifier, value: Value) -> Stmt {
         self.var(Pattern::Var(id, Default::default()), value)
     }
 }
@@ -525,57 +502,57 @@ impl<'a> StmtFactory<'a> {
 //
 //  Implementation Details (Type)
 //
-impl<'a> TypeFactory<'a> {
+impl TypeFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self { TypeFactory { arena } }
+    pub fn new() -> Self { TypeFactory }
 
     /// Creates a BuiltinTypeBuilder.
     pub fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
 
     /// Shortcut: creates a Bool Type.
-    pub fn bool_(&self) -> Type<'a> { Type::Builtin(self.builtin().bool_()) }
+    pub fn bool_(&self) -> Type { Type::Builtin(self.builtin().bool_()) }
 
     /// Shortcut: creates a Int Type.
-    pub fn int(&self) -> Type<'a> { Type::Builtin(self.builtin().int()) }
+    pub fn int(&self) -> Type { Type::Builtin(self.builtin().int()) }
 
     /// Shortcut: creates a String Type.
-    pub fn string(&self) -> Type<'a> { Type::Builtin(self.builtin().string()) }
+    pub fn string(&self) -> Type { Type::Builtin(self.builtin().string()) }
 
     /// Shortcut: creates a Void Type.
-    pub fn void(&self) -> Type<'a> { Type::Builtin(self.builtin().void()) }
+    pub fn void(&self) -> Type { Type::Builtin(self.builtin().void()) }
 
     /// Creates a TypeEnumBuilder.
-    pub fn enum_(&self, e: Enum<'a>) -> TypeEnumBuilder<'a> {
-        TypeEnumBuilder::new(e, self.arena)
+    pub fn enum_(&self, e: Enum) -> TypeEnumBuilder {
+        TypeEnumBuilder::new(e)
     }
 
     /// Creates a TypeRecordBuilder.
-    pub fn record(&self, r: Record<'a>) -> TypeRecordBuilder<'a> {
-        TypeRecordBuilder::new(r, self.arena)
+    pub fn record(&self, r: Record) -> TypeRecordBuilder {
+        TypeRecordBuilder::new(r)
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TupleBuilder<'a, Type<'a>> {
-        TupleBuilder::new(self.arena)
+    pub fn tuple(&self) -> TupleBuilder<Type> {
+        TupleBuilder::new()
     }
 
     /// Creates a TypeUnresolvedBuilder.
-    pub fn unresolved(&self, id: ItemIdentifier) -> TypeUnresolvedBuilder<'a> {
-        TypeUnresolvedBuilder::new(id, self.arena)
+    pub fn unresolved(&self, id: ItemIdentifier) -> TypeUnresolvedBuilder {
+        TypeUnresolvedBuilder::new(id)
     }
 
     /// Creates a TypeUnresolvedEnumBuilder.
     pub fn unresolved_enum(&self, name: ItemIdentifier, pos: usize)
-        -> TypeUnresolvedEnumBuilder<'a>
+        -> TypeUnresolvedEnumBuilder
     {
-        TypeUnresolvedEnumBuilder::new(name, pos, self.arena)
+        TypeUnresolvedEnumBuilder::new(name, pos)
     }
 
     /// Creates a TypeUnresolvedRecordBuilder.
     pub fn unresolved_record(&self, name: ItemIdentifier, pos: usize)
-        -> TypeUnresolvedRecordBuilder<'a>
+        -> TypeUnresolvedRecordBuilder
     {
-        TypeUnresolvedRecordBuilder::new(name, pos, self.arena)
+        TypeUnresolvedRecordBuilder::new(name, pos)
     }
 }
 
@@ -596,75 +573,75 @@ impl BuiltinTypeBuilder {
     pub fn void(&self) -> BuiltinType { BuiltinType::Void }
 }
 
-impl<'a> TypeEnumBuilder<'a> {
+impl TypeEnumBuilder {
     /// Creates an instance.
-    pub fn new(enum_: Enum<'a>, arena: &'a mem::Arena) -> Self {
+    pub fn new(enum_: Enum) -> Self {
         TypeEnumBuilder {
-            enum_: arena.intern_ref(&enum_),
-            path: PathBuilder::new(arena),
+            enum_: enum_,
+            path: PathBuilder::new(),
         }
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         self.path.push(component);
         self
     }
 
     /// Creates a Enum Type.
-    pub fn build(&self) -> Type<'a> {
-        Type::Enum(self.enum_, self.path.build(), Gin::default())
+    pub fn build(&self) -> Type {
+        Type::Enum(self.enum_.clone(), self.path.build(), Gin::default())
     }
 }
 
-impl<'a> TypeRecordBuilder<'a> {
+impl TypeRecordBuilder {
     /// Creates an instance.
-    pub fn new(record: Record, arena: &'a mem::Arena) -> Self {
+    pub fn new(record: Record) -> Self {
         TypeRecordBuilder {
-            record: arena.intern_ref(&record),
-            path: PathBuilder::new(arena),
+            record: record,
+            path: PathBuilder::new(),
         }
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         self.path.push(component);
         self
     }
 
     /// Creates a Record Type.
-    pub fn build(&self) -> Type<'a> {
-        Type::Rec(self.record, self.path.build(), Gin::default())
+    pub fn build(&self) -> Type {
+        Type::Rec(self.record.clone(), self.path.build(), Gin::default())
     }
 }
 
-impl<'a> TypeUnresolvedBuilder<'a> {
+impl TypeUnresolvedBuilder {
     /// Creates an instance.
-    pub fn new(name: ItemIdentifier, arena: &'a mem::Arena) -> Self {
+    pub fn new(name: ItemIdentifier) -> Self {
         TypeUnresolvedBuilder {
             name: name,
-            path: PathBuilder::new(arena),
+            path: PathBuilder::new(),
         }
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         self.path.push(component);
         self
     }
 
     /// Creates an Unresolved Type.
-    pub fn build(&self) -> Type<'a> {
+    pub fn build(&self) -> Type {
         Type::Unresolved(self.name, self.path.build(), Gin::default())
     }
 }
 
-impl<'a> TypeUnresolvedEnumBuilder<'a> {
+impl TypeUnresolvedEnumBuilder {
     /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize, arena: &'a mem::Arena) -> Self {
+    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
         TypeUnresolvedEnumBuilder {
             proto: EnumProtoBuilder::new(name, pos),
-            path: PathBuilder::new(arena),
+            path: PathBuilder::new(),
         }
     }
 
@@ -675,23 +652,23 @@ impl<'a> TypeUnresolvedEnumBuilder<'a> {
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         self.path.push(component);
         self
     }
 
     /// Creates an UnresolvedEnum Type.
-    pub fn build(&self) -> Type<'a> {
+    pub fn build(&self) -> Type {
         Type::UnresolvedEnum(self.proto.build(), self.path.build(), Gin::default())
     }
 }
 
-impl<'a> TypeUnresolvedRecordBuilder<'a> {
+impl TypeUnresolvedRecordBuilder {
     /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize, arena: &'a mem::Arena) -> Self {
+    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
         TypeUnresolvedRecordBuilder {
             proto: RecordProtoBuilder::new(name, pos),
-            path: PathBuilder::new(arena),
+            path: PathBuilder::new(),
         }
     }
 
@@ -708,7 +685,7 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         if let Type::UnresolvedEnum(e, ..) = component {
             self.proto.enum_(e.name);
         }
@@ -717,7 +694,7 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
     }
 
     /// Creates an UnresolvedRecord Type.
-    pub fn build(&self) -> Type<'a> {
+    pub fn build(&self) -> Type {
         Type::UnresolvedRec(self.proto.build(), self.path.build(), Gin::default())
     }
 }
@@ -725,9 +702,9 @@ impl<'a> TypeUnresolvedRecordBuilder<'a> {
 //
 //  Implementation Details (Value)
 //
-impl<'a> ValueFactory<'a> {
+impl ValueFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self { ValueFactory { arena } }
+    pub fn new() -> Self { ValueFactory }
 
     /// Creates an ValueIdentifier.
     pub fn id(&self, pos: usize, len: usize) -> ValueIdentifier {
@@ -735,20 +712,20 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Creates a BlockBuilder.
-    pub fn block(&self, value: Value<'a>) -> BlockBuilder<'a> {
-        BlockBuilder::new(self.arena, value)
+    pub fn block(&self, value: Value) -> BlockBuilder {
+        BlockBuilder::new(value)
     }
 
     /// Creates a diverging BlockBuilder.
-    pub fn block_div(&self) -> BlockBuilder<'a> {
-        BlockBuilder::diverging(self.arena)
+    pub fn block_div(&self) -> BlockBuilder {
+        BlockBuilder::diverging()
     }
 
     /// Creates a BuiltinValueBuilder.
     pub fn builtin(&self) -> BuiltinValueBuilder { BuiltinValueBuilder::new() }
 
     /// Shortcut: creates a boolean Value.
-    pub fn bool_(&self, b: bool, pos: usize) -> Value<'a> {
+    pub fn bool_(&self, b: bool, pos: usize) -> Value {
         value(
             Type::Builtin(BuiltinType::Bool),
             Expr::BuiltinVal(self.builtin().bool_(b))
@@ -756,7 +733,7 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Shortcut: creates an integral Value.
-    pub fn int(&self, i: i64, pos: usize) -> Value<'a> {
+    pub fn int(&self, i: i64, pos: usize) -> Value {
         value(
             Type::Builtin(BuiltinType::Int),
             Expr::BuiltinVal(self.builtin().int(i))
@@ -764,7 +741,7 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Shortcut: creates a string Value.
-    pub fn string(&self, s: &'static str, pos: usize) -> Value<'a> {
+    pub fn string(&self, s: &'static str, pos: usize) -> Value {
         value(
             Type::Builtin(BuiltinType::String),
             Expr::BuiltinVal(self.builtin().string(s))
@@ -772,91 +749,91 @@ impl<'a> ValueFactory<'a> {
     }
 
     /// Creates a CallBuilder.
-    pub fn call(&self) -> CallBuilder<'a> { CallBuilder::new(self.arena) }
+    pub fn call(&self) -> CallBuilder { CallBuilder::new() }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, type_: Type<'a>, pos: usize, len: usize)
-        -> ConstructorBuilder<'a, Value<'a>>
+    pub fn constructor(&self, type_: Type, pos: usize, len: usize)
+        -> ConstructorBuilder<Value>
     {
-        ConstructorBuilder::new(self.arena, type_, pos, len)
+        ConstructorBuilder::new(type_, pos, len)
     }
 
     /// Creates a FieldAccessBuilder.
-    pub fn field_access(&self, accessed: Value<'a>)
-        -> FieldAccessBuilder<'a>
+    pub fn field_access(&self, accessed: Value)
+        -> FieldAccessBuilder
     {
-        FieldAccessBuilder::new(self.arena, accessed)
+        FieldAccessBuilder::new(accessed)
     }
 
     /// Creates an IfBuilder.
-    pub fn if_(&self, cond: Value<'a>, true_: Value<'a>, false_: Value<'a>)
-        -> IfBuilder<'a>
+    pub fn if_(&self, cond: Value, true_: Value, false_: Value)
+        -> IfBuilder
     {
-        IfBuilder::new(self.arena, cond, true_, false_)
+        IfBuilder::new(cond, true_, false_)
     }
 
     /// Creates an ImplicitBuilder.
-    pub fn implicit(&self) -> ImplicitBuilder<'a> {
-        ImplicitBuilder::new(self.arena)
+    pub fn implicit(&self) -> ImplicitBuilder {
+        ImplicitBuilder::new()
     }
 
     /// Creates a LoopBuilder.
-    pub fn loop_(&self) -> LoopBuilder<'a> { LoopBuilder::new(self.arena) }
+    pub fn loop_(&self) -> LoopBuilder { LoopBuilder::new() }
 
     /// Creates an Ref Value.
-    pub fn name_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
+    pub fn name_ref(&self, name: ValueIdentifier, pos: usize) -> Value {
         value(Type::unresolved(), Expr::Ref(name, Default::default()))
             .with_range(pos, name.span().length())
     }
 
     /// Creates a ValueTupleBuilder.
-    pub fn tuple(&self) -> ValueTupleBuilder<'a> {
-        ValueTupleBuilder::new(self.arena)
+    pub fn tuple(&self) -> ValueTupleBuilder {
+        ValueTupleBuilder::new()
     }
 
     /// Creates an unresolved ref Value.
-    pub fn unresolved_ref(&self, name: ValueIdentifier) -> Value<'a> {
+    pub fn unresolved_ref(&self, name: ValueIdentifier) -> Value {
         value(Type::unresolved(), Expr::UnresolvedRef(name))
             .with_range(name.span().offset(), name.span().length())
     }
 
     /// Shortcut: creates a Bool ref.
-    pub fn bool_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
+    pub fn bool_ref(&self, name: ValueIdentifier, pos: usize) -> Value {
         self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::Bool))
     }
 
     /// Shortcut: creates a Int ref.
-    pub fn int_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
+    pub fn int_ref(&self, name: ValueIdentifier, pos: usize) -> Value {
         self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::Int))
     }
 
     /// Shortcut: creates a String ref.
-    pub fn string_ref(&self, name: ValueIdentifier, pos: usize) -> Value<'a> {
+    pub fn string_ref(&self, name: ValueIdentifier, pos: usize) -> Value {
         self.name_ref(name, pos).with_type(Type::Builtin(BuiltinType::String))
     }
 }
 
-impl<'a> BlockBuilder<'a> {
+impl BlockBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
+    pub fn new(value: Value) -> Self {
         BlockBuilder {
-            value: Some(arena.insert(value)),
-            statements: mem::Array::new(arena),
+            value: Some(value),
+            statements: DynArray::default(),
             range: Default::default(),
         }
     }
 
     /// Creates an instance.
-    pub fn diverging(arena: &'a mem::Arena) -> Self {
+    pub fn diverging() -> Self {
         BlockBuilder {
             value: None,
-            statements: mem::Array::new(arena),
+            statements: DynArray::default(),
             range: Default::default(),
         }
     }
 
     /// Push a statement.
-    pub fn push(&mut self, stmt: Stmt<'a>) -> &mut Self {
+    pub fn push(&mut self, stmt: Stmt) -> &mut Self {
         self.statements.push(stmt);
         self
     }
@@ -868,9 +845,9 @@ impl<'a> BlockBuilder<'a> {
     }
 
     /// Creates a Block Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         let (first, last) = (self.statements.first(), self.statements.last());
-        let value_range = self.value.map(|v| v.range);
+        let value_range = self.value.as_ref().map(|v| v.range);
 
         let off = if self.range == Default::default() {
             first.map(|s| s.span().offset())
@@ -881,15 +858,17 @@ impl<'a> BlockBuilder<'a> {
 
         let end = if self.range == Default::default() {
             value_range.map(|v| v.end_offset())
-                .unwrap_or_else(|| last.unwrap().span().end_offset()) + 2
+                .unwrap_or_else(|| last.as_ref().unwrap().span().end_offset()) + 2
         } else {
             self.range.end_offset()
         };
 
-        let expr =
-            Expr::Block(self.statements.clone().into_slice(), self.value);
+        let expr = Expr::Block(
+            self.statements.clone(),
+            self.value.as_ref().map(|v| Ptr::new(v.clone())),
+        );
         let type_ =
-            self.value.map(|v| v.type_)
+            self.value.as_ref().map(|v| v.type_.clone())
                 .or_else(|| last.map(|s| s.result_type()))
                 .unwrap_or(Type::unit());
         value(type_, expr).with_range(off, end - off)
@@ -901,28 +880,28 @@ impl BuiltinValueBuilder {
     pub fn new() -> Self { BuiltinValueBuilder }
 
     /// Creates a Bool.
-    pub fn bool_(&self, value: bool) -> BuiltinValue<'static> {
+    pub fn bool_(&self, value: bool) -> BuiltinValue {
         BuiltinValue::Bool(value)
     }
 
     /// Creates an Int.
-    pub fn int(&self, value: i64) -> BuiltinValue<'static> {
+    pub fn int(&self, value: i64) -> BuiltinValue {
         BuiltinValue::Int(value)
     }
 
     /// Creates a string.
-    pub fn string(&self, value: &'static str) -> BuiltinValue<'static> {
-        BuiltinValue::String(value.as_bytes())
+    pub fn string(&self, value: &'static str) -> BuiltinValue {
+        BuiltinValue::String(value.as_bytes().iter().cloned().collect())
     }
 }
 
-impl<'a> CallBuilder<'a> {
+impl CallBuilder {
     /// Creates an instance, defaults to Add.
-    pub fn new(arena: &'a mem::Arena) -> Self {
+    pub fn new() -> Self {
         CallBuilder {
             callable: Callable::Builtin(BuiltinFunction::Add),
-            unresolved: mem::Array::new(arena),
-            arguments: mem::Array::new(arena),
+            unresolved: DynArray::default(),
+            arguments: DynArray::default(),
         }
     }
 
@@ -933,7 +912,7 @@ impl<'a> CallBuilder<'a> {
     }
 
     /// Sets a user-defined function.
-    pub fn function(&mut self, f: FunctionProto<'a>) -> &mut Self {
+    pub fn function(&mut self, f: FunctionProto) -> &mut Self {
         self.callable = Callable::Function(f);
         self
     }
@@ -951,25 +930,25 @@ impl<'a> CallBuilder<'a> {
     }
 
     /// Pushes an unresolved user-defined function.
-    pub fn push_function(&mut self, f: FunctionProto<'a>) -> &mut Self {
+    pub fn push_function(&mut self, f: FunctionProto) -> &mut Self {
         self.unresolved.push(Callable::Function(f));
         self
     }
 
     /// Pushes an argument.
-    pub fn push(&mut self, argument: Value<'a>) -> &mut Self {
+    pub fn push(&mut self, argument: Value) -> &mut Self {
         self.arguments.push(argument);
         self
     }
 
     /// Creates a Call Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         use self::Callable::*;
 
         let callable = if self.unresolved.len() == 0 {
-            self.callable
+            self.callable.clone()
         } else {
-            Callable::Unresolved(self.unresolved.clone().into_slice())
+            Callable::Unresolved(self.unresolved.clone())
         };
 
         let args = if self.arguments.len() == 0 {
@@ -981,7 +960,7 @@ impl<'a> CallBuilder<'a> {
         };
 
         let (off, len) = args.map(|(off, len)| {
-            match callable {
+            match &callable {
                 Builtin(BuiltinFunction::Not) => (off - 5, len + 5),
                 Builtin(_) => (off, len),
                 Function(p) => {
@@ -998,18 +977,18 @@ impl<'a> CallBuilder<'a> {
 
         value(
             Type::unresolved(),
-            Expr::Call(callable, self.arguments.clone().into_slice()),
+            Expr::Call(callable, self.arguments.clone()),
         ).with_range(off, len)
     }
 }
 
-impl<'a> FieldAccessBuilder<'a> {
+impl FieldAccessBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, value: Value<'a>) -> Self {
+    pub fn new(value: Value) -> Self {
         FieldAccessBuilder {
             field: Field::Index(0, Default::default()),
             type_: None,
-            value: arena.insert(value),
+            value: value,
         }
     }
 
@@ -1026,13 +1005,13 @@ impl<'a> FieldAccessBuilder<'a> {
     }
 
     /// Sets the type.
-    pub fn type_(&mut self, type_: Type<'a>) -> &mut Self {
+    pub fn type_(&mut self, type_: Type) -> &mut Self {
         self.type_ = Some(type_);
         self
     }
 
     /// Creates a field access Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         let field = if let Field::Index(i, r) = self.field {
             let range = if r == Default::default() {
                 range(self.value.span().end_offset(), 1 + count_characters(i as i64))
@@ -1044,51 +1023,50 @@ impl<'a> FieldAccessBuilder<'a> {
             self.field
         };
 
-        let type_ = self.type_.unwrap_or_else(|| {
+        let type_ = self.type_.clone().unwrap_or_else(|| {
             self.value.type_.field(self.field)
         });
 
         let offset = self.value.range.offset();
         let length = self.value.range.extend(field.span()).length();
 
-        value(type_, Expr::FieldAccess(self.value, field))
+        value(type_, Expr::FieldAccess(Ptr::new(self.value.clone()), field))
             .with_range(offset, length)
     }
 }
 
-impl<'a> IfBuilder<'a> {
+impl IfBuilder {
     /// Creates an instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        condition: Value<'a>,
-        true_: Value<'a>,
-        false_: Value<'a>
+        condition: Value,
+        true_: Value,
+        false_: Value
     )
         -> Self
     {
         IfBuilder {
             type_: None,
-            condition: arena.insert(condition),
-            true_: arena.insert(true_),
-            false_: arena.insert(false_),
+            condition: condition,
+            true_: true_,
+            false_: false_,
         }
     }
 
     /// Sets a type.
-    pub fn type_(&mut self, type_: Type<'a>) -> &mut Self {
+    pub fn type_(&mut self, type_: Type) -> &mut Self {
         self.type_ = Some(type_);
         self
     }
 
     /// Creates an if-else Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         let off = self.condition.range.offset() - 4;
         let end = self.false_.range.end_offset();
 
-        let true_ = self.true_.type_;
-        let false_ = self.false_.type_;
+        let true_ = self.true_.type_.clone();
+        let false_ = self.false_.type_.clone();
 
-        let type_ = self.type_.unwrap_or_else(|| {
+        let type_ = self.type_.clone().unwrap_or_else(|| {
             if true_ == false_ || false_ == Type::void() {
                 true_
             } else if true_ == Type::void() {
@@ -1100,31 +1078,36 @@ impl<'a> IfBuilder<'a> {
 
         value(
             type_,
-            Expr::If(self.condition, self.true_, self.false_)
+            Expr::If(
+                Ptr::new(self.condition.clone()),
+                Ptr::new(self.true_.clone()),
+                Ptr::new(self.false_.clone()),
+            )
         ).with_range(off, end - off)
     }
 }
 
-impl<'a> ImplicitBuilder<'a> {
+impl ImplicitBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
-        ImplicitBuilder { arena }
+    pub fn new() -> Self {
+        ImplicitBuilder
     }
 
     /// Creates a to-enum implicit Value.
-    pub fn enum_(&self, e: EnumProto, v: Value<'a>) -> Value<'a> {
+    pub fn enum_(&self, e: EnumProto, v: Value) -> Value {
+        let r = v.range;
         value(
             Type::UnresolvedEnum(e, Path::default(), Gin::default()),
-            Expr::Implicit(Implicit::ToEnum(e, self.arena.insert(v))),
-        ).with_range(v.range.offset(), v.range.length())
+            Expr::Implicit(Implicit::ToEnum(e, Ptr::new(v))),
+        ).with_range(r.offset(), r.length())
     }
 }
 
-impl<'a> LoopBuilder<'a> {
+impl LoopBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
+    pub fn new() -> Self {
         LoopBuilder {
-            statements: mem::Array::new(arena),
+            statements: DynArray::default(),
             range: Default::default(),
         }
     }
@@ -1136,13 +1119,13 @@ impl<'a> LoopBuilder<'a> {
     }
 
     /// Push a statement.
-    pub fn push(&mut self, stmt: Stmt<'a>) -> &mut Self {
+    pub fn push(&mut self, stmt: Stmt) -> &mut Self {
         self.statements.push(stmt);
         self
     }
 
     /// Creates a Loop Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         let (off, len) = if self.range == Default::default() {
             let first = self.statements.first().expect("statements");
             let last = self.statements.last().expect("statements");
@@ -1154,23 +1137,23 @@ impl<'a> LoopBuilder<'a> {
             (self.range.offset(), self.range.length())
         };
 
-        let expr = Expr::Loop(self.statements.clone().into_slice());
+        let expr = Expr::Loop(self.statements.clone());
         value(Type::Builtin(BuiltinType::Void), expr).with_range(off, len)
     }
 }
 
-impl<'a> ValueTupleBuilder<'a> {
+impl ValueTupleBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
+    pub fn new() -> Self {
         ValueTupleBuilder {
-            type_: TupleBuilder::new(arena),
-            expr: TupleBuilder::new(arena),
+            type_: TupleBuilder::new(),
+            expr: TupleBuilder::new(),
         }
     }
 
     /// Push a value.
-    pub fn push(&mut self, value: Value<'a>) -> &mut Self {
-        self.type_.push(value.type_);
+    pub fn push(&mut self, value: Value) -> &mut Self {
+        self.type_.push(value.type_.clone());
         self.expr.push(value);
         self
     }
@@ -1183,7 +1166,7 @@ impl<'a> ValueTupleBuilder<'a> {
     }
 
     /// Creates a Tuple Value.
-    pub fn build(&self) -> Value<'a> {
+    pub fn build(&self) -> Value {
         let range = self.expr.span();
         value(self.type_.build(), self.expr.build())
             .with_range(range.offset(), range.length())
@@ -1217,21 +1200,21 @@ impl EnumProtoBuilder {
     }
 }
 
-impl<'a> PathBuilder<'a> {
+impl PathBuilder {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
-        PathBuilder { components: mem::Array::new(arena) }
+    pub fn new() -> Self {
+        PathBuilder { components: DynArray::default() }
     }
 
     /// Appends a component to the path.
-    pub fn push(&mut self, component: Type<'a>) -> &mut Self {
+    pub fn push(&mut self, component: Type) -> &mut Self {
         self.components.push(component);
         self
     }
 
     /// Builds a Path.
-    pub fn build(&self) -> Path<'a> {
-        Path { components: self.components.clone().into_slice() }
+    pub fn build(&self) -> Path {
+        Path { components: self.components.clone() }
     }
 }
 
@@ -1267,11 +1250,10 @@ impl RecordProtoBuilder {
     }
 }
 
-impl<'a, T> ConstructorBuilder<'a, T> {
+impl<T> ConstructorBuilder<T> {
     /// Creates an instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        type_: Type<'a>,
+        type_: Type,
         pos: usize,
         len: usize
     )
@@ -1279,7 +1261,7 @@ impl<'a, T> ConstructorBuilder<'a, T> {
     {
         ConstructorBuilder {
             type_: type_,
-            arguments: TupleBuilder::new(arena),
+            arguments: TupleBuilder::new(),
             range: range(pos, len),
         }
     }
@@ -1297,37 +1279,37 @@ impl<'a, T> ConstructorBuilder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + Clone> ConstructorBuilder<'a, T> {
+impl<T: Clone> ConstructorBuilder<T> {
     /// Creates a Constructor.
-    pub fn build(&self) -> Constructor<'a, T> {
+    pub fn build(&self) -> Constructor<T> {
         Constructor {
-            type_: self.type_,
+            type_: self.type_.clone(),
             arguments: self.arguments.build(),
             range: self.range,
         }
     }
 }
 
-impl<'a> ConstructorBuilder<'a, Pattern<'a>> {
+impl ConstructorBuilder<Pattern> {
     /// Shortcut: creates a Pattern.
-    pub fn build_pattern(&self) -> Pattern<'a> {
+    pub fn build_pattern(&self) -> Pattern {
         self.build().into()
     }
 }
 
-impl<'a> ConstructorBuilder<'a, Value<'a>> {
+impl ConstructorBuilder<Value> {
     /// Shortcut: creates a Value.
-    pub fn build_value(&self) -> Value<'a> {
+    pub fn build_value(&self) -> Value {
         self.build().into()
     }
 }
 
-impl<'a, T: 'a> TupleBuilder<'a, T> {
+impl<T> TupleBuilder<T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
+    pub fn new() -> Self {
         TupleBuilder {
-            fields: mem::Array::new(arena),
-            names: mem::Array::new(arena),
+            fields: DynArray::default(),
+            names: DynArray::default(),
         }
     }
 
@@ -1340,34 +1322,34 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
 
     /// Overrides the name of the last field, if any.
     pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        if let Some(last) = self.names.last_mut() {
-            *last = name;
+        if !self.names.is_empty() {
+            self.names.replace(self.names.len() - 1, name);
         }
         self
     }
 
-    fn names(&self) -> &'a [ValueIdentifier] {
+    fn names(&self) -> DynArray<ValueIdentifier> {
         if let Some(first) = self.names.first() {
-            if *first != Default::default() {
-                return self.names.clone().into_slice();
+            if first != Default::default() {
+                return self.names.clone();
             }
         }
 
-        &[]
+        DynArray::default()
     }
 }
 
-impl<'a, T: 'a + Clone> TupleBuilder<'a, T> {
+impl<T: Clone> TupleBuilder<T> {
     /// Creates a new Tuple instance.
-    pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
+    pub fn build<U: convert::From<Tuple<T>>>(&self) -> U {
         Tuple {
-            fields: self.fields.clone().into_slice(),
+            fields: self.fields.clone(),
             names: self.names(),
         }.into()
     }
 }
 
-impl<'a, T: 'a + Span> Span for TupleBuilder<'a, T> {
+impl<T: Clone + Span> Span for TupleBuilder<T> {
     /// Computes the range spanned by the tuple.
     fn span(&self) -> com::Range {
         let off =
@@ -1397,7 +1379,7 @@ fn count_characters(i: i64) -> usize {
 
 fn range(pos: usize, len: usize) -> com::Range { com::Range::new(pos, len) }
 
-fn value<'a>(type_: Type<'a>, expr: Expr<'a>) -> Value<'a> {
+fn value(type_: Type, expr: Expr) -> Value {
     Value {
         type_: type_,
         range: range(0, 0),

@@ -1,4 +1,4 @@
-/// Integration Tests for the `pass::int` module.
+//! Integration Tests for the `pass::int` module.
 
 extern crate stysh_compile;
 
@@ -50,8 +50,7 @@ fn fibonnacci_iterative() {
 
 fn interpret(raw: &[u8]) -> String {
     let interner = mem::Interner::new();
-    let arena = mem::Arena::new();
-    let value = utils::interpret(raw, &interner, &arena);
+    let value = utils::interpret(raw, &interner);
 
     format!("{:?}", value.expr)
 }

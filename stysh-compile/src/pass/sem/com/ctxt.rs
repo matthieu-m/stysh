@@ -13,15 +13,15 @@ use super::flat::*;
 /// item/value being processed by the semantic passes. Information updated
 /// incrementally as each successive pass is altered.
 #[derive(Clone, Debug, Default)]
-pub struct Context<'g> {
+pub struct Context {
     imp: cell::RefCell<ContextImpl>,
-    values: cell::RefCell<ValueContext<'g>>,
+    values: cell::RefCell<ValueContext>,
 }
 
 //
 //  Public interface of Context
 //
-impl<'g> Context<'g> {
+impl Context {
     //
     //  General
     //
@@ -52,7 +52,7 @@ impl<'g> Context<'g> {
     /// Returns a Value handle.
     ///
     /// Panics: If the GVN is invalid.
-    pub fn value<'a>(&'a self, gvn: Gvn) -> ValueHandle<'a, 'g> {
+    pub fn value<'a>(&'a self, gvn: Gvn) -> ValueHandle<'a> {
         ValueHandle::new(&self.values, gvn)
     }
 
@@ -92,7 +92,7 @@ impl<'g> Context<'g> {
     }
 
     /// Inserts a value binding with its currently known type.
-    pub fn insert_value(&self, name: ValueIdentifier, ty: Type<'g>) -> Gvn {
+    pub fn insert_value(&self, name: ValueIdentifier, ty: Type) -> Gvn {
         let gvn = self.gvn();
         self.imp.borrow_mut().insert_value(gvn, name);
         self.value(gvn).set_type(ty);
@@ -111,7 +111,7 @@ impl<'g> Context<'g> {
     ///
     /// Note:   If fetching the item is not possible, then it should be put
     ///         back with `push_unfetched` below.
-    pub fn pop_unfetched<'a>(&'a self) -> Option<ValueHandle<'a, 'g>> {
+    pub fn pop_unfetched<'a>(&'a self) -> Option<ValueHandle<'a>> {
         self.imp.borrow_mut().pop_unfetched().map(|g| self.value(g))
     }
 
@@ -121,7 +121,7 @@ impl<'g> Context<'g> {
     /// Note:   It is expected that any element added to the HIR item
     ///         associated with this context should be immediately pushed if it
     ///         contains an unfetched item.
-    pub fn push_unfetched<'a>(&'a self, h: ValueHandle<'a, 'g>) {
+    pub fn push_unfetched<'a>(&'a self, h: ValueHandle<'a>) {
         self.imp.borrow_mut().push_unfetched(h.gvn());
     }
 

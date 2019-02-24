@@ -1,6 +1,6 @@
 //! Type Fetcher
 
-use basic::mem;
+use basic::mem::DynArray;
 
 use model::hir::*;
 
@@ -10,20 +10,18 @@ use super::flat::ValueHandle;
 
 /// Type Fetcher.
 #[derive(Clone, Debug)]
-pub struct TypeFetcher<'a, 'g: 'a> {
-    core: CoreFetcher<'a, 'g>,
-    handle: ValueHandle<'a, 'g>,
+pub struct TypeFetcher<'a> {
+    core: CoreFetcher<'a>,
+    handle: ValueHandle<'a>,
 }
 
 //
 //  Public interface of TypeFetcher
 //
 
-impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
+impl<'a> TypeFetcher<'a> {
     /// Creates a new instance.
-    pub fn new(core: CoreFetcher<'a, 'g>, handle: ValueHandle<'a, 'g>)
-        -> Self
-    {
+    pub fn new(core: CoreFetcher<'a>, handle: ValueHandle<'a>) -> Self {
         TypeFetcher { core, handle }
     }
 
@@ -39,18 +37,18 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
 //  Implementation Details
 //
 
-type Result<'g> = (Alteration<Type<'g>>, Status);
+type Result = (Alteration<Type>, Status);
 
-impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
-    fn fetch_tuple(&self, t: Tuple<'g, Type<'g>>, gin: Gin) -> Result<'g> {
+impl<'a> TypeFetcher<'a> {
+    fn fetch_tuple(&self, t: Tuple<Type>, gin: Gin) -> Result {
         let (fields, status) =
-            self.fetch_slice(t.fields, |t| self.fetch_type(t));
-        let fields = fields.combine(t, |f| Tuple { fields: f, names: t.names });
+            self.fetch_array(t.fields.clone(), |t| self.fetch_type(t));
+        let fields = fields.combine(t, |t, f| Tuple { fields: f, names: t.names });
 
         (fields.map(|f| Type::Tuple(f, gin)), status)
     }
 
-    fn fetch_type(&self, ty: Type<'g>) -> Result<'g> {
+    fn fetch_type(&self, ty: Type) -> Result {
         use self::Type::*;
 
         match self.handle.type_() {
@@ -62,69 +60,80 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
         }
     }
 
-    fn fetch_unresolved(&self, ty: Type<'g>, i: ItemIdentifier, p: Path<'g>)
-        -> Result<'g>
+    fn fetch_unresolved(&self, ty: Type, i: ItemIdentifier, p: Path)
+        -> Result
     {
         //  Cannot fetch anything without a root.
-        if let Some(&Type::Unresolved(..)) = p.components.first() {
+        if let Some(Type::Unresolved(..)) = p.components.first() {
             return (Alteration::forward(ty), Status::Unfetched);
         }
 
         let mut last = None;
-        let (path, status) = 
-            self.fetch_slice(p.components, |c| {
-                    let (result, status) = if let Some(parent) = last {
-                        self.fetch_nested(c, parent)
-                    } else {
-                        (Alteration::forward(c), Status::Fetched)
-                    };
-                    last = Some(result.entity);
-                    (result, status)
-                });
-        let path = path.map(|components| Path { components });
+        let mut result = Status::Fetched;
+        let mut altered = 0;
+
+        for i in 0..p.components.len() {
+            let element = p.components.replace_with_default(i);
+
+            let (alteration, status) = {
+                let (result, status) = if let Some(parent) = last {
+                    self.fetch_nested(element, parent)
+                } else {
+                    (Alteration::forward(element), Status::Fetched)
+                };
+                last = Some(result.entity.clone());
+                (result, status)
+            };
+
+            altered += alteration.altered;
+            p.components.replace(i, alteration.entity);
+            result = result.combine(status);
+        }
+
+        let path = Alteration { entity: p, altered };
 
         if let Some(parent) = last {
             let (type_, s) = self.fetch_nested(
                 Type::Unresolved(i, Path::default(), ty.gin()),
                 parent
             );
-            (type_.combine2(ty, path, |t, p| t.with_path(p)), status.combine(s))
+            (type_.combine2(ty, path, |_, t, p| t.with_path(p)), result.combine(s))
         } else {
-            (path.combine(ty, |p| Type::Unresolved(i, p, ty.gin())), Status::Unfetched)
+            (path.combine(ty, |ty, p| Type::Unresolved(i, p, ty.gin())), Status::Unfetched)
         }
     }
 
-    fn fetch_unresolved_enum(&self, ty: Type<'g>, e: EnumProto, p: Path<'g>)
-        -> Result<'g>
+    fn fetch_unresolved_enum(&self, ty: Type, e: EnumProto, p: Path)
+        -> Result
     {
         self.core.registry
             .lookup_enum(e.name)
             .map(|e| (
-                Alteration::update(Type::Enum(self.core.insert(e), p, ty.gin())),
+                Alteration::update(Type::Enum(e, p, ty.gin())),
                 Status::Fetched,
             ))
             .unwrap_or((Alteration::forward(ty), Status::Unfetched))
     }
 
-    fn fetch_unresolved_record(&self, ty: Type<'g>, r: RecordProto, p: Path<'g>)
-        -> Result<'g>
+    fn fetch_unresolved_record(&self, ty: Type, r: RecordProto, p: Path)
+        -> Result
     {
         self.core.registry
             .lookup_record(r.name)
             .map(|r| (
-                Alteration::update(Type::Rec(self.core.insert(r), p, ty.gin())),
+                Alteration::update(Type::Rec(r, p, ty.gin())),
                 Status::Fetched,
             ))
             .unwrap_or((Alteration::forward(ty), Status::Unfetched))
     }
 
     fn fetch_enum_variant(&self, v: ItemIdentifier, e: ItemIdentifier, gin: Gin)
-        -> Result<'g>
+        -> Result
     {
         if let Some(e) = self.core.registry.lookup_enum(e) {
             for rec in e.variants {
                 if v.id() == rec.prototype.name.id() {
-                    let r = Type::UnresolvedRec(*rec.prototype, Path::default(), gin);
+                    let r = Type::UnresolvedRec(rec.prototype, Path::default(), gin);
                     return (Alteration::update(r), Status::Fetched);
                 }
             }
@@ -134,68 +143,41 @@ impl<'a, 'g: 'a> TypeFetcher<'a, 'g> {
             Status::Unfetched)
     }
 
-    fn fetch_nested(&self, t: Type<'g>, parent: Type<'g>)
-        -> Result<'g>
-    {
+    fn fetch_nested(&self, t: Type, parent: Type) -> Result {
         use self::Type::*;
 
-        let unfetched = (Alteration::forward(t), Status::Unfetched);
+        let unfetched = (Alteration::forward(t.clone()), Status::Unfetched);
+        let gin = t.gin();
 
         match (t, parent) {
             (Unresolved(id, ..), UnresolvedEnum(e, ..))
-                => self.fetch_enum_variant(id, e.name, t.gin()),
+                => self.fetch_enum_variant(id, e.name, gin),
             (Unresolved(..), Unresolved(..)) => unfetched,
-            (Unresolved(..), _) => panic!("{:?} cannot be a parent!", parent),
+            (Unresolved(..), parent) => panic!("{:?} cannot be a parent!", parent),
             (UnresolvedEnum(..), _) | (UnresolvedRec(..), _) => unfetched,
-            _ => panic!("{:?} cannot be nested!", t),
+            (t, _) => panic!("{:?} cannot be nested!", t),
         }
     }
 
-    fn fetch_slice<T, F>(&self, slice: &'g [T], mut f: F)
-        -> (Alteration<&'g [T]>, Status)
+    fn fetch_array<T, F>(&self, array: DynArray<T>, mut fun: F)
+        -> (Alteration<DynArray<T>>, Status)
         where
-            T: Copy + 'g,
+            T: Default,
             F: FnMut(T) -> (Alteration<T>, Status),
     {
-        let mut found = None;
+        let mut result = Status::Fetched;
+        let mut altered = 0;
 
-        for (i, e) in slice.iter().enumerate() {
-            let (a, s) = f(*e);
+        for i in 0..array.len() {
+            let element = array.replace_with_default(i);
 
-            if a.altered > 0 {
-                found = Some((i, a, s));
-                break;
-            }
+            let (alteration, status) = fun(element);
+
+            altered += alteration.altered;
+            array.replace(i, alteration.entity);
+            result = result.combine(status);
         }
 
-        if found.is_none() {
-            return (Alteration::forward(slice), Status::Unfetched);
-        }
-
-        let (index, alteration, mut status) = found.unwrap();
-
-        let length = slice.len();
-        let mut result = mem::Array::with_capacity(length, self.core.global_arena);
-
-        for e in &slice[..(index as usize)] {
-            result.push(*e);
-        }
-
-        let mut altered = alteration.altered;
-        result.push(alteration.entity);
-
-        if index as usize + 1 < length {
-            for e in &slice[(index as usize + 1)..] {
-                let (a, s) = f(*e);
-
-                altered += a.altered;
-                status = status.combine(s);
-
-                result.push(a.entity);
-            }
-        }
-
-        let entity = result.into_slice();
-        (Alteration { entity, altered }, status)
+        (Alteration { entity: array, altered }, result)
     }
 }

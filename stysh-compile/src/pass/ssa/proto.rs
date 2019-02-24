@@ -1,64 +1,57 @@
 //! Building blocks of the SIR in a more fluid representation.
 
 use std::convert;
+use std::collections::HashMap;
 
-use basic::mem;
+use basic::mem::DynArray;
 use model::{hir, sir};
 
 //  A sir::BasicBlock in the process of being constructed.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ProtoBlock<'g, 'local>
-    where 'g: 'local
-{
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ProtoBlock {
     pub id: BlockId,
-    pub arguments: mem::Array<'local, (BindingId, hir::Type<'g>)>,
-    pub predecessors: mem::Array<'local, BlockId>,
-    pub bindings: mem::Array<'local, (BindingId, sir::ValueId, hir::Type<'g>)>,
-    pub instructions: mem::Array<'local, sir::Instruction<'g>>,
+    pub arguments: DynArray<(BindingId, hir::Type)>,
+    pub predecessors: DynArray<BlockId>,
+    pub bindings: DynArray<(BindingId, sir::ValueId, hir::Type)>,
+    pub instructions: DynArray<sir::Instruction>,
     pub last_value: Option<sir::ValueId>,
-    pub exit: ProtoTerminator<'g, 'local>,
+    pub exit: ProtoTerminator,
 }
 
 //  A sir::TerminatorInstruction in the process of being constructed.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum ProtoTerminator<'g, 'local>
-    where 'g: 'local
-{
-    Branch(sir::ValueId, mem::Array<'local, ProtoJump<'g, 'local>>),
-    Jump(ProtoJump<'g, 'local>),
+pub enum ProtoTerminator {
+    Branch(sir::ValueId, DynArray<ProtoJump>),
+    Jump(ProtoJump),
     Return(sir::ValueId),
     Unreachable,
 }
 
 //  A sir::Jump in the process of being constructed.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ProtoJump<'g, 'local>
-    where 'g: 'local
-{
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ProtoJump {
     pub dest: BlockId,
-    pub arguments: mem::Array<'local, (sir::ValueId, hir::Type<'g>)>,
+    pub arguments: DynArray<(sir::ValueId, hir::Type)>,
 }
 
 //  Also known as Global Value Number.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BlockId(pub u32);
 
 //  Also known as Global Value Number.
 //
 //  Note:   For a function argument, the GVN is the index of the argument + 1.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BindingId(pub u32);
 
-impl<'g, 'local> ProtoBlock<'g, 'local> {
-    pub fn new(id: BlockId, arena: &'local mem::Arena)
-        -> ProtoBlock<'g, 'local>
-    {
+impl ProtoBlock {
+    pub fn new(id: BlockId) -> ProtoBlock {
         ProtoBlock {
             id: id,
-            arguments: mem::Array::new(arena),
-            predecessors: mem::Array::new(arena),
-            bindings: mem::Array::new(arena),
-            instructions: mem::Array::new(arena),
+            arguments: DynArray::default(),
+            predecessors: DynArray::default(),
+            bindings: DynArray::default(),
+            instructions: DynArray::default(),
             last_value: None,
             exit: ProtoTerminator::Unreachable,
         }
@@ -76,28 +69,26 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     }
 
     pub fn into_block(
-        &self,
-        map: &mem::ArrayMap<BlockId, sir::BlockId>,
-        arena: &'g mem::Arena
+        self,
+        map: &HashMap<BlockId, sir::BlockId>,
     )
-        -> sir::BasicBlock<'g>
+        -> sir::BasicBlock
     {
-        let mut arguments =
-            mem::Array::with_capacity(self.arguments.len(), arena);
+        let arguments = DynArray::with_capacity(self.arguments.len());
 
-        for &(_, type_) in &self.arguments { arguments.push(type_); }
+        for (_, type_) in self.arguments { arguments.push(type_); }
 
         sir::BasicBlock {
-            arguments: arguments.into_slice(),
-            instructions: arena.insert_slice(&*self.instructions),
-            exit: self.exit.into_terminator(map, arena),
+            arguments: arguments,
+            instructions: self.instructions,
+            exit: self.exit.into_terminator(map),
         }
     }
 
-    pub fn bind(&mut self, binding: BindingId, type_: hir::Type<'g>)
+    pub fn bind(&mut self, binding: BindingId, type_: hir::Type)
         -> sir::ValueId
     {
-        for &(id, value, _) in &self.bindings {
+        for (id, value, _) in &self.bindings {
             if id == binding {
                 return value;
             }
@@ -118,13 +109,13 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     pub fn bind_successor(
         &mut self,
         id: BlockId,
-        bindings: &[(BindingId, hir::Type<'g>)],
+        bindings: &DynArray<(BindingId, hir::Type)>,
     )
         -> usize
     {
         let result = {
-            let jump = self.get_jump_mut(id);
-            debug_assert!(jump.dest == id);
+            let jump = self.get_jump(id);
+            debug_assert!(jump.dest == id, "No {:?} in {:?}", id, self);
 
             if jump.arguments.len() == bindings.len() {
                 return 0;
@@ -133,17 +124,14 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
             }
         };
 
-        let mut arguments =
-            mem::Array::with_capacity(bindings.len(), self.arguments.arena());
+        let arguments = DynArray::with_capacity(bindings.len());
 
-        for &(b, t) in bindings {
-            arguments.push((self.bind(b, t), t));
+        for (b, t) in bindings {
+            arguments.push((self.bind(b, t.clone()), t));
         }
 
-        let jump = self.get_jump_mut(id);
-        debug_assert!(jump.dest == id);
+        self.set_jump_arguments(id, arguments);
 
-        jump.arguments = arguments;
         result
     }
 
@@ -152,19 +140,19 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         let id = self.id;
         let arguments = self.arguments.clone();
 
-        self.bind_successor(id, arguments.as_slice())
+        self.bind_successor(id, &arguments)
     }
 
     pub fn push_binding(
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        t: hir::Type<'g>,
+        t: hir::Type,
     )
     {
         //  TODO(matthieum): The binding may already have been created by
         //                   push_instr, which should not be necessary.
-        for b in self.bindings.as_slice() {
+        for b in &self.bindings {
             if b.0 == binding {
                 assert_eq!(
                     b.1, id, "{:?} bound to {:?} cannot bind to {:?}", b.0, b.1, id
@@ -183,25 +171,23 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        type_: hir::Type<'g>,
+        type_: hir::Type,
     )
     {
-        for b in self.bindings.as_slice_mut() {
-            if b.0 == binding {
-                b.1 = id;
-                return;
-            }
+        if let Some(index) = self.bindings.find(|b| b.0 == binding) {
+            self.bindings.update(index, |mut b| { b.1 = id; b });
+            return;
         }
 
         self.bindings.push((binding, id, type_));
     }
 
-    pub fn push_instr(&mut self, b: BindingId, ins: sir::Instruction<'g>) {
-        let id = self.push_immediate(ins);
+    pub fn push_instr(&mut self, b: BindingId, ins: sir::Instruction) {
+        let id = self.push_immediate(ins.clone());
         self.bindings.push((b, id, ins.result_type()));
     }
 
-    pub fn push_immediate(&mut self, ins: sir::Instruction<'g>)
+    pub fn push_immediate(&mut self, ins: sir::Instruction)
         -> sir::ValueId
     {
         let id = sir::ValueId::new_instruction(self.instructions.len());
@@ -211,10 +197,8 @@ impl<'g, 'local> ProtoBlock<'g, 'local> {
     }
 }
 
-impl<'g, 'local> ProtoTerminator<'g, 'local>
-    where 'g: 'local
-{
-    pub fn get_jump(&self, block: BlockId) -> &ProtoJump<'g, 'local> {
+impl ProtoTerminator {
+    pub fn get_jump(&self, block: BlockId) -> ProtoJump {
         use self::ProtoTerminator::*;
 
         match self {
@@ -226,66 +210,59 @@ impl<'g, 'local> ProtoTerminator<'g, 'local>
             },
             &Jump(ref jump) => {
                 debug_assert!(jump.dest == block, "{:?} != {:?}", block, jump);
-                jump
+                jump.clone()
             },
             _ => panic!("No jump for {:?}", block),
         }
     }
 
-    pub fn into_terminator<'target>(
-        &self,
-        map: &mem::ArrayMap<BlockId, sir::BlockId>,
-        arena: &'target mem::Arena
+    pub fn into_terminator(
+        self,
+        map: &HashMap<BlockId, sir::BlockId>,
     )
-        -> sir::TerminatorInstruction<'target>
+        -> sir::TerminatorInstruction
     {
         use self::ProtoTerminator::*;
         use model::sir::TerminatorInstruction as TI;
 
         match self {
-            &Branch(value, ref protos) => {
-                let mut jumps = mem::Array::with_capacity(protos.len(), arena);
+            Branch(value, protos) => {
+                let jumps = DynArray::with_capacity(protos.len());
                 for j in protos {
-                    jumps.push(j.into_jump(map, arena));
+                    jumps.push(j.into_jump(map));
                 }
-                TI::Branch(value, arena.insert_slice(&*jumps))
+                TI::Branch(value, jumps)
             },
-            &Jump(ref jump) => TI::Jump(jump.into_jump(map, arena)),
-            &Return(value) => TI::Return(value),
-            &Unreachable => TI::Unreachable,
+            Jump(jump) => TI::Jump(jump.into_jump(map)),
+            Return(value) => TI::Return(value),
+            Unreachable => TI::Unreachable,
         }
     }
 }
 
-impl<'g, 'local> ProtoJump<'g, 'local>
-    where 'g: 'local
-{
-    pub fn new(block: BlockId, arena: &'local mem::Arena)
-        -> ProtoJump<'g, 'local>
-    {
+impl ProtoJump {
+    pub fn new(block: BlockId) -> ProtoJump {
         ProtoJump {
             dest: block,
-            arguments: mem::Array::new(arena),
+            arguments: DynArray::default(),
         }
     }
 
-    pub fn into_jump<'target>(
-        &self,
-        map: &mem::ArrayMap<BlockId, sir::BlockId>,
-        arena: &'target mem::Arena
+    pub fn into_jump(
+        self,
+        map: &HashMap<BlockId, sir::BlockId>
     )
-        -> sir::Jump<'target>
+        -> sir::Jump
     {
-        let mut arguments =
-            mem::Array::with_capacity(self.arguments.len(), arena);
+        let arguments = DynArray::with_capacity(self.arguments.len());
 
-        for &(a, _) in self.arguments.iter() {
+        for (a, _) in self.arguments {
             arguments.push(a);
         }
 
         sir::Jump {
             dest: *map.get(&self.dest).expect("Complete map"),
-            arguments: arguments.into_slice(),
+            arguments: arguments,
         }
     }
 }
@@ -302,24 +279,57 @@ impl convert::From<hir::Gvn> for BindingId {
     }
 }
 
+impl<'a> convert::From<&'a hir::Gvn> for BindingId {
+    fn from(gvn: &'a hir::Gvn) -> BindingId {
+        BindingId(gvn.0)
+    }
+}
+
 //
 //  Implementation Details
 //
-impl<'g, 'local> ProtoBlock<'g, 'local> {
-    fn get_jump_mut(&mut self, id: BlockId) -> &mut ProtoJump<'g, 'local> {
+impl ProtoBlock {
+    fn get_jump(&mut self, id: BlockId) -> ProtoJump {
         match self.exit {
-            ProtoTerminator::Branch(_, ref mut jumps) => {
-                for j in jumps.as_slice_mut() {
+            ProtoTerminator::Branch(_, ref jumps) => {
+                for j in jumps {
                     if j.dest == id {
                         return j;
                     }
                 }
-                unreachable!()
+                unreachable!("Could not find {:?} in {:?}", id, self);
             },
-            ProtoTerminator::Jump(ref mut jump) => jump,
-            _ => unreachable!(),
+            ProtoTerminator::Jump(ref mut jump) => jump.clone(),
+            _ => unreachable!("Unexpected terminator in {:?}", self),
         }
     }
+
+    fn set_jump_arguments(
+        &mut self,
+        id: BlockId,
+        arguments: DynArray<(sir::ValueId, hir::Type)>
+    )
+    {
+        match self.exit {
+            ProtoTerminator::Branch(_, ref jumps) => {
+                if let Some(i) = jumps.find(|j| j.dest == id) {
+                    jumps.update(i, |mut j| { j.arguments = arguments; j });
+                    return;
+                }
+                unreachable!("Could not find {:?} in {:?}", id, self);
+            },
+            ProtoTerminator::Jump(ref mut jump) => jump.arguments = arguments,
+            _ => unreachable!("Unexpected terminator in {:?}", self),
+        }
+    }
+}
+
+//
+//  Traits Implementations
+//
+
+impl Default for ProtoTerminator {
+    fn default() -> Self { ProtoTerminator::Unreachable }
 }
 
 //

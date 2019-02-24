@@ -3,10 +3,10 @@
 //! This module is in charge of transforming the Abstract Semantic Graph (often
 //! confusingly dubbed AST) into a CFG in a variant of the SSA form.
 
-use std::cell::RefCell;
+use std::collections::HashMap;
 
-use basic::{com, mem};
-use basic::com::Span;
+use basic::com::{self, Span};
+use basic::mem::{DynArray, Ptr};
 
 use model::{hir, sir};
 
@@ -15,40 +15,20 @@ use super::proto::*;
 /// Stysh CFG builder.
 ///
 /// Builds the Control-Flow Graph.
-pub struct GraphBuilder<'g, 'local>
-    where 'g: 'local
-{
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
-}
+pub struct GraphBuilder;
 
-impl<'g, 'local> GraphBuilder<'g, 'local>
-    where 'g: 'local
-{
+impl GraphBuilder {
     /// Creates a new instance of a GraphBuilder.
-    ///
-    /// The global arena sets the lifetime of the returned objects, while the
-    /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena,
-    )
-        -> GraphBuilder<'g, 'local>
-    {
-        GraphBuilder { global_arena, local_arena }
-    }
+    pub fn new() -> GraphBuilder { GraphBuilder }
 
     /// Translates a semantic expression into its control-flow graph.
-    pub fn from_value(&self, expr: &hir::Value<'g>)
-        -> sir::ControlFlowGraph<'g>
+    pub fn from_value(&self, expr: &hir::Value)
+        -> sir::ControlFlowGraph
     {
-        let mut imp = GraphBuilderImpl::new(
-            self.global_arena,
-            self.local_arena,
-        );
+        let mut imp = GraphBuilderImpl::new();
 
         imp.from_value(
-            ProtoBlock::new(expr.gvn.into(), self.local_arena),
+            ProtoBlock::new(hir::Gvn(1).into()),
             expr
         );
 
@@ -56,28 +36,19 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
     }
 
     /// Translates a semantic function into its control-flow graph.
-    pub fn from_function(&self, fun: &hir::Function<'g>)
-        -> sir::ControlFlowGraph<'g>
+    pub fn from_function(&self, fun: &hir::Function)
+        -> sir::ControlFlowGraph
     {
-        let mut arguments = mem::Array::with_capacity(
-            fun.prototype.arguments.len(),
-            self.local_arena
-        );
+        let arguments = DynArray::with_capacity(fun.prototype.arguments.len());
 
-        for a in fun.prototype.arguments {
+        for a in &fun.prototype.arguments {
             arguments.push((a.gvn.into(), a.type_));
         }
 
-        let mut first = ProtoBlock::new(
-            fun.body.gvn.into(),
-            self.local_arena
-        );
+        let mut first = ProtoBlock::new(fun.body.gvn.into());
         first.arguments = arguments;
 
-        let mut imp = GraphBuilderImpl::new(
-            self.global_arena,
-            self.local_arena,
-        );
+        let mut imp = GraphBuilderImpl::new();
 
         imp.from_value(first, &fun.body);
 
@@ -88,58 +59,44 @@ impl<'g, 'local> GraphBuilder<'g, 'local>
 //
 //  Implementation Details
 //
-struct GraphBuilderImpl<'g, 'local>
-    where 'g: 'local
-{
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
-    blocks: mem::Array<'local, RefCell<ProtoBlock<'g, 'local>>>,
+struct GraphBuilderImpl {
+    blocks: DynArray<ProtoBlock>,
 }
 
-impl<'g, 'local> GraphBuilderImpl<'g, 'local>
-    where 'g: 'local
-{
+impl GraphBuilderImpl {
     //
     //  High-level methods
     //
-    fn new(
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena,
-    )
-        -> GraphBuilderImpl<'g, 'local>
-    {
+    fn new() -> GraphBuilderImpl {
         GraphBuilderImpl {
-            global_arena: global_arena,
-            local_arena: local_arena,
-            blocks: mem::Array::with_capacity(1, local_arena),
+            blocks: DynArray::with_capacity(1),
         }
     }
 
     fn from_value(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        value: &hir::Value<'g>
+        current: ProtoBlock,
+        value: &hir::Value,
     )
     {
         if let Some(mut current) = self.convert_value(current, value) {
             let return_value = current.last_value();
             current.exit = ProtoTerminator::Return(return_value);
 
-            self.blocks.push(RefCell::new(current));
+            self.blocks.push(current);
         }
     }
 
-    fn into_blocks(&self) -> &'g [sir::BasicBlock<'g>] {
+    fn into_blocks(&self) -> DynArray<sir::BasicBlock> {
         let map = self.resolve_arguments();
 
-        let mut result =
-            mem::Array::with_capacity(self.blocks.len(), self.global_arena);
+        let result = DynArray::with_capacity(self.blocks.len());
 
         for b in &self.blocks {
-            result.push(b.borrow().into_block(&map, self.global_arena));
+            result.push(b.into_block(&map));
         }
 
-        result.into_slice()
+        result
     }
 
     //
@@ -147,18 +104,18 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
     //
     fn convert_value(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        value: &hir::Value<'g>
+        current: ProtoBlock,
+        value: &hir::Value,
     )
-        -> Option<ProtoBlock<'g, 'local>>
+        -> Option<ProtoBlock>
     {
-        let t = value.type_;
+        let t = value.type_.clone();
         let r = value.range;
         let gvn = value.gvn;
 
-        match value.expr {
+        match &value.expr {
             hir::Expr::Block(stmts, v)
-                => self.convert_block(current, stmts, v),
+                => self.convert_block(current, stmts, &v.as_ref().map(|p| p.get())),
             hir::Expr::BuiltinVal(val)
                 => Some(self.convert_literal(current, val, gvn, r)),
             hir::Expr::Call(callable, args)
@@ -166,25 +123,25 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             hir::Expr::Constructor(c)
                 => Some(self.convert_constructor(current, c, gvn, r)),
             hir::Expr::FieldAccess(v, f)
-                => Some(self.convert_field_access(current, value.type_, v, f, r)),
+                => Some(self.convert_field_access(current, t, &v.get(), f, r)),
             hir::Expr::If(cond, true_, false_)
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
             hir::Expr::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
             hir::Expr::Ref(_, gvn)
-                => Some(self.convert_identifier(current, t, gvn)),
+                => Some(self.convert_identifier(current, t, *gvn)),
             hir::Expr::Tuple(tuple)
-                => Some(self.convert_tuple(current, value.type_, tuple, gvn, r)),
+                => Some(self.convert_tuple(current, t, tuple, gvn, r)),
             _ => panic!("unimplemented - convert_value - {:?}", value.expr),
         }
     }
 
     fn convert_value_opt(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        value: Option<&hir::Value<'g>>
+        current: ProtoBlock,
+        value: &Option<hir::Value>
     )
-        -> Option<ProtoBlock<'g, 'local>>
+        -> Option<ProtoBlock>
     {
         if let Some(value) = value {
             self.convert_value(current, value)
@@ -195,24 +152,24 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_binding(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        b: hir::Binding<'g>,
+        mut current: ProtoBlock,
+        b: &hir::Binding,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         current = self.convert_value(current, &b.right).expect("!Void");
         let id = current.last_value();
 
-        self.convert_pattern(current, id, b.left, b.right.type_)
+        self.convert_pattern(current, id, &b.left, b.right.type_.clone())
     }
 
     fn convert_block(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        stmts: &[hir::Stmt<'g>],
-        value: Option<&hir::Value<'g>>,
+        current: ProtoBlock,
+        stmts: &DynArray<hir::Stmt>,
+        value: &Option<hir::Value>,
     )
-        -> Option<ProtoBlock<'g, 'local>>
+        -> Option<ProtoBlock>
     {
         self.convert_statements(current, stmts)
             .and_then(|current| self.convert_value_opt(current, value))
@@ -220,13 +177,13 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_call(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        callable: hir::Callable<'g>,
-        args: &[hir::Value<'g>],
+        current: ProtoBlock,
+        callable: &hir::Callable,
+        args: &DynArray<hir::Value>,
         gvn: hir::Gvn,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         //  :and and :or have short-circuiting semantics.
         if let hir::Callable::Builtin(b) = callable {
@@ -235,7 +192,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             match b {
                 And | Or => return self.convert_call_shortcircuit(
                     current,
-                    b,
+                    *b,
                     args,
                     gvn,
                     range
@@ -249,7 +206,7 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::Call(callable, arguments, range)
+            sir::Instruction::Call(callable.clone(), arguments, range)
         );
 
         current
@@ -257,13 +214,13 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_call_shortcircuit(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
+        current: ProtoBlock,
         fun: hir::BuiltinFunction,
-        args: &[hir::Value<'g>],
+        args: &DynArray<hir::Value>,
         gvn: hir::Gvn,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         //  Short circuiting expressions are close to sugar for if/else
         //  expressions.
@@ -271,22 +228,22 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         debug_assert!(args.len() == 2, "Too many arguments: {:?}", args);
 
-        let r = args[0].range;
+        let r = args.at(0).range;
 
         match fun {
             And => self.convert_if_impl(
                 current,
-                &args[0],
-                &args[1],
+                &args.at(0),
+                &args.at(1),
                 &hir::Value::bool_(false).with_range(r.offset(), r.length()),
                 hir::Type::bool_(),
                 gvn
             ),
             Or => self.convert_if_impl(
                 current,
-                &args[0],
+                &args.at(0),
                 &hir::Value::bool_(true).with_range(r.offset(), r.length()),
-                &args[1],
+                &args.at(1),
                 hir::Type::bool_(),
                 gvn
             ),
@@ -296,19 +253,19 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_constructor(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        cons: hir::Constructor<'g, hir::Value<'g>>,
+        current: ProtoBlock,
+        cons: &hir::Constructor<hir::Value>,
         gvn: hir::Gvn,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         let (mut current, arguments) =
-            self.convert_array_of_values(current, cons.arguments.fields);
+            self.convert_array_of_values(current, &cons.arguments.fields);
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::New(cons.type_, arguments, range)
+            sir::Instruction::New(cons.type_.clone(), arguments, range)
         );
 
         current
@@ -316,13 +273,13 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_field_access(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        type_: hir::Type<'g>,
-        value: &'g hir::Value<'g>,
-        field: hir::Field,
+        current: ProtoBlock,
+        type_: hir::Type,
+        value: &hir::Value,
+        field: &hir::Field,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         let mut current = self.convert_value(current, value).expect("!Void");
         let value_id = current.last_value();
@@ -337,11 +294,11 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_identifier(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        type_: hir::Type<'g>,
+        mut current: ProtoBlock,
+        type_: hir::Type,
         gvn: hir::Gvn,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         current.last_value = Some(current.bind(gvn.into(), type_));
         current
@@ -349,20 +306,20 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_if(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        condition: &hir::Value<'g>,
-        true_: &hir::Value<'g>,
-        false_: &hir::Value<'g>,
-        type_: hir::Type<'g>,
+        current: ProtoBlock,
+        condition: &Ptr<hir::Value>,
+        true_: &Ptr<hir::Value>,
+        false_: &Ptr<hir::Value>,
+        type_: hir::Type,
         gvn: hir::Gvn,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         self.convert_if_impl(
             current,
-            condition,
-            true_,
-            false_,
+            &condition.get(),
+            &true_.get(),
+            &false_.get(),
             type_,
             gvn
         )
@@ -370,38 +327,38 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_if_impl(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        condition: &hir::Value<'g>,
-        true_: &hir::Value<'g>,
-        false_: &hir::Value<'g>,
-        type_: hir::Type<'g>,
+        mut current: ProtoBlock,
+        condition: &hir::Value,
+        true_: &hir::Value,
+        false_: &hir::Value,
+        type_: hir::Type,
         gvn: hir::Gvn,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
-        fn create_branch<'g, 'local>(
-            imp: &mut GraphBuilderImpl<'g, 'local>,
+        fn create_branch(
+            imp: &mut GraphBuilderImpl,
             pred_id: BlockId,
             if_id: BlockId,
             branch_id: BlockId,
-            value: &hir::Value<'g>
+            value: &hir::Value,
         )
             -> Option<BlockId>
         {
-            let mut block = ProtoBlock::new(branch_id, imp.local_arena);
+            let mut block = ProtoBlock::new(branch_id);
             block.predecessors.push(pred_id);
 
             block = imp.convert_value(block, value)?;
 
             let id = BindingId(if_id.0);
             let last_value = block.last_value();
-            block.bindings.push((id, last_value, value.type_));
+            block.bindings.push((id, last_value, value.type_.clone()));
 
             block.exit = ProtoTerminator::Jump(
-                ProtoJump::new(if_id, imp.local_arena)
+                ProtoJump::new(if_id)
             );
 
-            imp.blocks.push(RefCell::new(block));
+            imp.blocks.push(block);
 
             Some(branch_id)
         }
@@ -415,18 +372,15 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
         current.exit = ProtoTerminator::Branch(
             current.last_value(),
-            mem::Array::from_slice(
-                &[
-                    ProtoJump::new(true_id, self.local_arena),
-                    ProtoJump::new(false_id, self.local_arena),
-                ],
-                self.local_arena
-            ),
+            DynArray::new(vec!(
+                ProtoJump::new(true_id),
+                ProtoJump::new(false_id),
+            )),
         );
 
-        self.blocks.push(RefCell::new(current));
+        self.blocks.push(current);
 
-        let mut result = ProtoBlock::new(if_id, self.local_arena);
+        let result = ProtoBlock::new(if_id);
         result.arguments.push((BindingId(if_id.0), type_));
 
         if let Some(id) = create_branch(self, current_id, if_id, true_id, true_) {
@@ -441,32 +395,32 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_literal(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        val: hir::BuiltinValue<'g>,
+        mut current: ProtoBlock,
+        val: &hir::BuiltinValue,
         gvn: hir::Gvn,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
-        current.push_instr(gvn.into(), sir::Instruction::Load(val, range));
+        current.push_instr(gvn.into(), sir::Instruction::Load(val.clone(), range));
         current
     }
 
     fn convert_loop(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        stmts: &[hir::Stmt<'g>],
+        mut current: ProtoBlock,
+        stmts: &DynArray<hir::Stmt>,
         gvn: hir::Gvn,
     )
-        -> Option<ProtoBlock<'g, 'local>>
+        -> Option<ProtoBlock>
     {
         let current_id = current.id;
         let head_id: BlockId = gvn.into();
 
         current.exit = ProtoTerminator::Jump(self.jump(head_id));
-        self.blocks.push(RefCell::new(current));
+        self.blocks.push(current);
 
-        let mut head = ProtoBlock::new(head_id, self.local_arena);
+        let head = ProtoBlock::new(head_id);
         head.predecessors.push(current_id);
         let head_index = self.blocks.len();
 
@@ -474,11 +428,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             if self.blocks.len() == head_index {
                 tail.predecessors.push(tail.id);
             } else {
-                self.blocks[head_index].get_mut().predecessors.push(tail.id);
+                self.blocks.update(
+                    head_index,
+                    |b| { b.predecessors.push(tail.id); b }
+                );
             }
 
             tail.exit = ProtoTerminator::Jump(self.jump(head_id));
-            self.blocks.push(RefCell::new(tail));
+            self.blocks.push(tail);
         }
 
         None
@@ -486,12 +443,12 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_pattern(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
+        mut current: ProtoBlock,
         matched: sir::ValueId,
-        pattern: hir::Pattern<'g>,
-        type_: hir::Type<'g>,
+        pattern: &hir::Pattern,
+        type_: hir::Type,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         use self::hir::Pattern::*;
 
@@ -502,12 +459,12 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
                 return current;
             },
             Constructor(pattern, ..) => (
-                pattern.arguments.fields,
-                type_.fields().fields,
+                pattern.arguments.fields.clone(),
+                type_.fields().fields.clone(),
             ),
             Tuple(pattern, ..) => (
-                pattern.fields,
-                type_.fields().fields,
+                pattern.fields.clone(),
+                type_.fields().fields.clone(),
             ),
         };
 
@@ -516,9 +473,9 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         for (index, (p, t)) in patterns.iter().zip(types.iter()).enumerate() {
             let i = index as u16;
             let id = current.push_immediate(
-                sir::Instruction::Field(*t, matched, i, p.span()),
+                sir::Instruction::Field(t.clone(), matched, i, p.span()),
             );
-            current = self.convert_pattern(current, id, *p, *t);
+            current = self.convert_pattern(current, id, &p, t);
         }
 
         current
@@ -526,10 +483,10 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_rebind(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        re: hir::ReBinding<'g>,
+        mut current: ProtoBlock,
+        re: &hir::ReBinding,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         current = self.convert_value(current, &re.right).expect("!Void");
 
@@ -538,10 +495,10 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_rebind_recurse(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        left: &hir::Value<'g>,
+        mut current: ProtoBlock,
+        left: &hir::Value,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         //  Rebinding is binding an existing name to a new value.
         //
@@ -569,12 +526,12 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         //  analysis is the job of the optimizer; here only semantics matter.
         //
         //  The following bit of code captures this reversal.
-        match left.expr {
+        match &left.expr {
             hir::Expr::FieldAccess(v, f)
-                => self.convert_rebind_recurse_field(current, v, f, left.gvn),
+                => self.convert_rebind_recurse_field(current, &v.get(), *f, left.gvn),
             hir::Expr::Ref(_, gvn) => {
                 let id = current.last_value();
-                current.push_rebinding(gvn.into(), id, left.type_);
+                current.push_rebinding(gvn.into(), id, left.type_.clone());
                 return current;
             },
             hir::Expr::Tuple(t)
@@ -585,12 +542,12 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_rebind_recurse_field(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        value: &hir::Value<'g>,
+        mut current: ProtoBlock,
+        value: &hir::Value,
         field: hir::Field,
         gvn: hir::Gvn,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         let id = current.last_value();
         let index = field.index();
@@ -603,15 +560,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         let fields = &value.type_.fields().fields;
         assert!(fields.len() > index as usize, "{} > {}", fields.len(), index);
 
-        let mut args =
-            mem::Array::with_capacity(fields.len(), self.global_arena);
+        let args = DynArray::with_capacity(fields.len());
 
         for i in 0..(fields.len() as u16) {
             if i == index {
                 args.push(id);
             } else {
                 let id = current.push_immediate(sir::Instruction::Field(
-                    fields[i as usize],
+                    fields.at(i as usize),
                     tuple_id,
                     i,
                     value.range
@@ -625,8 +581,8 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         current.push_instr(
             gvn.into(),
             sir::Instruction::New(
-                value.type_,
-                args.into_slice(),
+                value.type_.clone(),
+                args,
                 value.range,
             ),
         );
@@ -636,10 +592,10 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_rebind_recurse_tuple(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        tuple: &hir::Tuple<'g, hir::Value<'g>>,
+        mut current: ProtoBlock,
+        tuple: &hir::Tuple<hir::Value>,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         let id = current.last_value();
 
@@ -647,14 +603,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
             current.push_instr(
                 field.gvn.into(),
                 sir::Instruction::Field(
-                    field.type_,
+                    field.type_.clone(),
                     id,
                     index as u16,
                     field.range,
                 ),
             );
 
-            current = self.convert_rebind_recurse(current, field);
+            current = self.convert_rebind_recurse(current, &field);
         }
 
         current
@@ -662,16 +618,16 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_tuple(
         &mut self,
-        current: ProtoBlock<'g, 'local>,
-        type_: hir::Type<'g>,
-        tuple: hir::Tuple<'g, hir::Value<'g>>,
+        current: ProtoBlock,
+        type_: hir::Type,
+        tuple: &hir::Tuple<hir::Value>,
         gvn: hir::Gvn,
         range: com::Range,
     )
-        -> ProtoBlock<'g, 'local>
+        -> ProtoBlock
     {
         let (mut current, arguments) =
-            self.convert_array_of_values(current, tuple.fields);
+            self.convert_array_of_values(current, &tuple.fields);
 
         current.push_instr(
             gvn.into(),
@@ -683,46 +639,45 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 
     fn convert_array_of_values(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        values: &[hir::Value<'g>],
+        mut current: ProtoBlock,
+        values: &DynArray<hir::Value>,
     )
-        -> (ProtoBlock<'g, 'local>, &'g [sir::ValueId])
+        -> (ProtoBlock, DynArray<sir::ValueId>)
     {
         for v in values {
-            current = self.convert_value(current, v).expect("!Void");
+            current = self.convert_value(current, &v).expect("!Void");
         }
 
-        let mut arguments =
-            mem::Array::with_capacity(values.len(), self.global_arena);
+        let arguments = DynArray::with_capacity(values.len());
         for a in values {
-            arguments.push(current.bind(Self::binding_of(a), a.type_));
+            arguments.push(current.bind(Self::binding_of(&a), a.type_));
         }
 
-        (current, arguments.into_slice())
+        (current, arguments)
     }
 
     fn convert_statements(
         &mut self,
-        mut current: ProtoBlock<'g, 'local>,
-        stmts: &[hir::Stmt<'g>],
+        mut current: ProtoBlock,
+        stmts: &DynArray<hir::Stmt>,
     )
-        -> Option<ProtoBlock<'g, 'local>>
+        -> Option<ProtoBlock>
     {
-        for &s in stmts {
+        for s in stmts {
             match s {
                 hir::Stmt::Return(r) => {
                     current =
                         self.convert_value(current, &r.value).expect("!Void");
                     current.exit =
                         ProtoTerminator::Return(current.last_value());
-                    self.blocks.push(RefCell::new(current));
+                    self.blocks.push(current);
                     return None;
                 },
                 hir::Stmt::Set(re) => {
-                    current = self.convert_rebind(current, re);
+                    current = self.convert_rebind(current, &re);
                 },
                 hir::Stmt::Var(b) => {
-                    current = self.convert_binding(current, b);
+                    current = self.convert_binding(current, &b);
                 },
             }
         }
@@ -737,21 +692,14 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         }
     }
 
-    fn jump(&self, to: BlockId) -> ProtoJump<'g, 'local> {
-        ProtoJump::new(to, self.local_arena)
-    }
+    fn jump(&self, to: BlockId) -> ProtoJump { ProtoJump::new(to) }
 
-    fn resolve_arguments(&self)
-        -> mem::ArrayMap<'local, BlockId, sir::BlockId>
-    {
+    fn resolve_arguments(&self) -> HashMap<BlockId, sir::BlockId> {
         //  Map each proto block ID to its definitive block ID.
         let map = {
-            let mut map = mem::ArrayMap::with_capacity(
-                self.blocks.len(),
-                self.local_arena
-            );
+            let mut map = HashMap::with_capacity(self.blocks.len());
             for (index, block) in self.blocks.iter().enumerate() {
-                map.insert(block.borrow().id, sir::BlockId::new(index));
+                map.insert(block.id, sir::BlockId::new(index));
             }
             map
         };
@@ -762,35 +710,36 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
         while bound > 0 {
             bound = 0;
 
-            for block in self.blocks.iter().rev() {
-                let mut block = block.borrow_mut();
+            for block_index in (0..self.blocks.len()).rev() {
+                let mut block = self.blocks.at(block_index);
 
                 let mut self_successor = false;
-                for id in block.predecessors.as_slice() {
-                    if *id == block.id {
+                for id in &block.predecessors {
+                    if id == block.id {
                         self_successor = true;
                         continue;
                     }
 
-                    let id = map.get(id).expect("Known block!");
-                    let mut pred = self.blocks[id.index()].borrow_mut();
-                    bound += pred.bind_successor(block.id, &block.arguments);
+                    let id = map.get(&id).expect("Known block!");
+                    self.blocks.update(id.index(), |mut pred| {
+                        bound += pred.bind_successor(block.id, &block.arguments);
+                        pred
+                    });
                 }
 
                 if self_successor {
                     bound += block.bind_self_successor();
+                    self.blocks.replace(block_index, block);
                 }
             }
         }
 
         //  Check that each jump correctly forwards the right number of
         //  arguments.
-        for block in self.blocks.iter() {
-            let block = block.borrow();
-
-            for pred in block.predecessors.iter() {
-                let pred = map.get(pred).expect("Known block!");
-                let pred = self.blocks[pred.index()].borrow();
+        for block in &self.blocks {
+            for pred in &block.predecessors {
+                let pred = map.get(&pred).expect("Known block!");
+                let pred = self.blocks.at(pred.index());
                 let jump = pred.exit.get_jump(block.id);
 
                 debug_assert!(
@@ -813,7 +762,6 @@ impl<'g, 'local> GraphBuilderImpl<'g, 'local>
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
     use model::hir::builder::*;
     use model::hir::gn::*;
     use model::hir::*;
@@ -821,14 +769,13 @@ mod tests {
 
     #[test]
     fn value_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
 
         let v = env.hir().5;
         let val = v.call().push(v.int(1, 0)).push(v.int(2, 4)).build();
 
         assert_eq!(
-            env.valueit(&val).to_string(),
+            env.valueit(val).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@0",
@@ -842,14 +789,13 @@ mod tests {
 
     #[test]
     fn tuple_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
 
         let v = env.hir().5;
 
         assert_eq!(
             env.valueit(
-                &v.tuple().push(v.int(1, 1)).push(v.int(2, 5)).build()
+                v.tuple().push(v.int(1, 1)).push(v.int(2, 5)).build()
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -864,14 +810,13 @@ mod tests {
 
     #[test]
     fn enum_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(15, 4), 15).enum_(i.id(6, 6)).build();
 
         assert_eq!(
-            env.valueit(&v.constructor(r, 30, 12).build_value()).to_string(),
+            env.valueit(v.constructor(r, 30, 12).build_value()).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := new <4@15> () ; 12@30",
@@ -884,8 +829,7 @@ mod tests {
     #[test]
     fn record_arguments() {
         //  ":rec Args(Int);    Args(42)"
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
@@ -893,7 +837,7 @@ mod tests {
 
         assert_eq!(
             env.valueit(
-                &v.constructor(rec, 19, 8).push(v.int(42, 24)).build_value()
+                v.constructor(rec, 19, 8).push(v.int(42, 24)).build_value()
             ).to_string(),
             cat(&[
                 "0 ():",
@@ -908,8 +852,7 @@ mod tests {
     #[test]
     fn record_field() {
         //  ":rec Args(Int, Int);   Args(4, 42).1"
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, _, v) = env.hir();
 
         let r = p.rec(i.id(5, 4), 0).build();
@@ -920,7 +863,7 @@ mod tests {
                 .build_value();
 
         assert_eq!(
-            env.valueit(&v.field_access(c).index(1).build()).to_string(),
+            env.valueit(v.field_access(c).index(1).build()).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 4 ; 1@28",
@@ -935,8 +878,7 @@ mod tests {
 
     #[test]
     fn block_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := 1; :var b := 2; a + b }
@@ -950,7 +892,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -964,8 +906,7 @@ mod tests {
 
     #[test]
     fn block_rebinding() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := 1; :set a := 2; a }
@@ -977,7 +918,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -990,8 +931,7 @@ mod tests {
 
     #[test]
     fn block_rebinding_nested_field() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  { :var a := (1, (2, 3)); :set a.1.0 := 4; a }
@@ -1001,8 +941,8 @@ mod tests {
         let a_v = v.tuple().push(v.int(1, 13)).push(a_1_v).build();
 
         let block =
-            v.block(v.name_ref(a, 42).with_type(a_v.type_))
-                .push(s.var_id(a, a_v))
+            v.block(v.name_ref(a, 42).with_type(a_v.type_.clone()))
+                .push(s.var_id(a, a_v.clone()))
                 .push(s.set(
                     v.field_access(
                         v.field_access(v.name_ref(a, 30).with_type(a_v.type_))
@@ -1014,7 +954,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 //  :var a := (1, (2, 3));
@@ -1039,8 +979,7 @@ mod tests {
 
     #[test]
     fn block_rebinding_tuple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, p, _, s, _, v) = env.hir();
 
         //  "{ :var (a, b) := (1, 2); :set (a, b) := (b, a); a }"
@@ -1064,7 +1003,7 @@ mod tests {
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -1083,19 +1022,18 @@ mod tests {
 
     #[test]
     fn block_constructor_binding() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, p, po, s, t, v) = env.hir();
 
         //  :rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }
         let r = po.rec(i.id(5, 1), 0).build();
-        let r = env.insert(i.rec(r).push(t.int()).push(t.int()).build());
+        let r = i.rec(r).push(t.int()).push(t.int()).build();
 
         let rec = Type::Rec(r, Default::default(), Default::default());
 
         let (a, b) = (v.id(29, 1), v.id(32, 1));
         let binding =
-            p.constructor(rec, 27, 7)
+            p.constructor(rec.clone(), 27, 7)
                 .push(p.var(a))
                 .push(p.var(b))
                 .build_pattern();
@@ -1105,12 +1043,12 @@ mod tests {
                 .push(v.int(2, 43))
                 .build_value();
         let block =
-            v.block(v.name_ref(a, 47).with_type(value.type_))
+            v.block(v.name_ref(a, 47).with_type(value.type_.clone()))
                 .push(s.var(binding, value))
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@40",
@@ -1126,15 +1064,14 @@ mod tests {
 
     #[test]
     fn block_return_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  { :return 1; }
         let block = v.block_div().push(s.ret(v.int(1, 10))).build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@10",
@@ -1146,8 +1083,7 @@ mod tests {
 
     #[test]
     fn block_tuple_binding() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, p, _, s, _, v) = env.hir();
 
         //  { :var (a, b) := (1, 2); a }
@@ -1155,12 +1091,12 @@ mod tests {
         let binding = p.tuple().push(p.var(a)).push(p.var(b)).build();
         let value = v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).build();
         let block =
-            v.block(v.name_ref(a, 25).with_type(value.type_))
+            v.block(v.name_ref(a, 25).with_type(value.type_.clone()))
                 .push(s.var(binding, value))
                 .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -1176,8 +1112,7 @@ mod tests {
 
     #[test]
     fn fun_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, t, v) = env.hir();
 
         let (a, b) = (v.id(9, 1), v.id(17, 1));
@@ -1198,7 +1133,7 @@ mod tests {
         let function = i.fun(f, v.block(body).build());
 
         assert_eq!(
-            env.funit(&function).to_string(),
+            env.funit(function).to_string(),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -1210,15 +1145,14 @@ mod tests {
 
     #[test]
     fn if_simple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let v = env.hir().5;
 
         //  ":if true { 1 } :else { 2 }"
         let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
 
         assert_eq!(
-            env.valueit(&if_).to_string(),
+            env.valueit(if_).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load true ; 4@4",
@@ -1226,11 +1160,11 @@ mod tests {
                 "",
                 "1 ():",
                 "    $0 := load 1 ; 1@11",
-                "    jump <0> ($0)",
+                "    jump <3> ($0)",
                 "",
                 "2 ():",
                 "    $0 := load 2 ; 1@23",
-                "    jump <0> ($0)",
+                "    jump <3> ($0)",
                 "",
                 "3 (Int):",
                 "    return @0",
@@ -1243,8 +1177,7 @@ mod tests {
     fn if_shortcircuit() {
         use self::BuiltinFunction::*;
 
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, t, v) = env.hir();
 
         let (a, b, c) = (v.id(8, 1), v.id(16, 1), v.id(24, 1));
@@ -1278,7 +1211,7 @@ mod tests {
 
         //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :and b < c }"
         assert_eq!(
-            env.funit(&maker(And)).to_string(),
+            env.funit((maker.clone())(And)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1300,7 +1233,7 @@ mod tests {
 
         //  ":fun in(a: Int, b: Int, c: Int) -> Bool { a <= b :or  b < c }"
         assert_eq!(
-            env.funit(&maker(Or)).to_string(),
+            env.funit(maker(Or)).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := __lte__(@0, @1) ; 6@42",
@@ -1323,8 +1256,7 @@ mod tests {
 
     #[test]
     fn if_return() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  ":if true { :return 1; } :else { 2 }"
@@ -1335,7 +1267,7 @@ mod tests {
         ).build();
 
         assert_eq!(
-            env.valueit(&if_).to_string(),
+            env.valueit(if_).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load true ; 4@4",
@@ -1347,7 +1279,7 @@ mod tests {
                 "",
                 "2 ():",
                 "    $0 := load 2 ; 1@32",
-                "    jump <0> ($0)",
+                "    jump <3> ($0)",
                 "",
                 "3 (Int):",
                 "    return @0",
@@ -1360,8 +1292,7 @@ mod tests {
     fn if_with_arguments() {
         use self::BuiltinFunction::*;
 
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (i, _, p, _, t, v) = env.hir();
 
         //  ":fun fib(current: Int, next: Int, count: Int) -> Int {"     55
@@ -1395,7 +1326,7 @@ mod tests {
                     .with_range(74, 32),
                 v.block(
                     v.call()
-                        .function(proto)
+                        .function(proto.clone())
                         .push(v.name_ref(next, 117).with_type(t.int()))
                         .push(
                             v.call()
@@ -1420,7 +1351,7 @@ mod tests {
         let fun = i.fun(proto, v.block(if_).build().with_range(53, 105));
 
         assert_eq!(
-            env.funit(&fun).to_string(),
+            env.funit(fun).to_string(),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := load 0 ; 1@72",
@@ -1446,8 +1377,7 @@ mod tests {
 
     #[test]
     fn loop_increment() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, _, v) = env.hir();
 
         //  "{ :var i := 0; :loop { :set i := i + 1; } }"
@@ -1458,7 +1388,7 @@ mod tests {
         let block = v.block(loop_).push(var).build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 0 ; 1@12",
@@ -1475,8 +1405,7 @@ mod tests {
 
     #[test]
     fn loop_argument_forwarding() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(&global_arena);
+        let env = Env::new();
         let (_, _, _, s, t, v) = env.hir();
 
         //  "{"                                               2
@@ -1531,7 +1460,7 @@ mod tests {
             .build();
 
         assert_eq!(
-            env.valueit(&block).to_string(),
+            env.valueit(block).to_string(),
             cat(&[
                 "0 ():",
                 "    $0 := load 8 ; 1@16",
@@ -1560,66 +1489,41 @@ mod tests {
         );
     }
 
-    struct Env<'g> {
-        global_arena: &'g mem::Arena,
-    }
+    struct Env;
 
-    impl<'g> Env<'g> {
-        fn new(global_arena: &'g mem::Arena) -> Env<'g> {
-            Env { global_arena }
-        }
+    impl Env {
+        fn new() -> Env { Env }
 
         fn hir(&self) -> (
-            ItemFactory<'g>,
-            PatternFactory<'g>,
-            PrototypeFactory<'g>,
-            StmtFactory<'g>,
-            TypeFactory<'g>,
-            ValueFactory<'g>,
+            ItemFactory,
+            PatternFactory,
+            PrototypeFactory,
+            StmtFactory,
+            TypeFactory,
+            ValueFactory,
         )
         {
-            let f = Factory::new(self.global_arena);
+            let f = Factory::new();
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
         }
 
-        fn insert<T: 'g>(&self, e: T) -> &'g T { self.global_arena.insert(e) }
+        fn funit(&self, fun: Function) -> ControlFlowGraph {
+            let fun = GlobalNumberer::new().number_function(fun);
+            println!("funit - {:#?}", fun);
+            println!("");
 
-        fn funit(&self, fun: &Function<'g>) -> ControlFlowGraph<'g> {
-            let mut local_arena = mem::Arena::new();
-
-            let fun =
-                GlobalNumberer::new(self.global_arena, &local_arena)
-                    .number_function(fun);
-            println!("{:?}", fun);
-
-            let result = self.builder(&local_arena).from_function(&fun);
-            local_arena.recycle();
-
-            result
+            self.builder().from_function(&fun)
         }
 
-        fn valueit(&self, expr: &Value<'g>) -> ControlFlowGraph<'g> {
-            let mut local_arena = mem::Arena::new();
+        fn valueit(&self, expr: Value) -> ControlFlowGraph {
+            let expr = GlobalNumberer::new().number_value(expr);
+            println!("valueit - {:#?}", expr);
+            println!("");
 
-            let expr =
-                GlobalNumberer::new(self.global_arena, &local_arena)
-                    .number_value(expr);
-            println!("{:?}", expr);
-
-            let result = self.builder(&local_arena).from_value(&expr);
-            local_arena.recycle();
-
-            result
+            self.builder().from_value(&expr)
         }
 
-        fn builder<'local>(&self, local_arena: &'local mem::Arena)
-            -> super::GraphBuilder<'g, 'local>
-        {
-            super::GraphBuilder::new(
-                self.global_arena,
-                local_arena,
-            )
-        }
+        fn builder(&self) -> super::GraphBuilder { super::GraphBuilder::new() }
     }
 
     fn cat(lines: &[&str]) -> String {

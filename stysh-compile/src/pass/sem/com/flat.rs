@@ -17,9 +17,9 @@ use super::tbl::Table;
 ///
 /// A Flat Model for Patterns and Values.
 #[derive(Clone, Debug, Default)]
-pub struct ValueContext<'b> {
+pub struct ValueContext {
     children: Table<Gvn, ValueChildren>,
-    types: Table<Gvn, Type<'b>>,
+    types: Table<Gvn, Type>,
 }
 
 /// ValueHandle.
@@ -27,8 +27,8 @@ pub struct ValueContext<'b> {
 /// A handle to manipulate the state attached to a given GVN without having
 /// to manually thread it in each time.
 #[derive(Clone, Copy, Debug)]
-pub struct ValueHandle<'a, 'b: 'a> {
-    context: &'a cell::RefCell<ValueContext<'b>>,
+pub struct ValueHandle<'a> {
+    context: &'a cell::RefCell<ValueContext>,
     gvn: Gvn,
 }
 
@@ -47,7 +47,7 @@ pub enum ValueChildren {
 //  Public interface of ValueContext
 //
 
-impl<'b> ValueContext<'b> {
+impl ValueContext {
     /// Notifies the ValueContext of the creation of a new value.
     pub fn register(&mut self, gvn: Gvn) {
         debug_assert!(gvn.0 as usize == self.children.len());
@@ -67,9 +67,9 @@ impl<'b> ValueContext<'b> {
 //  Public interface of ValueHandle
 //
 
-impl<'a, 'b: 'a> ValueHandle<'a, 'b> {
+impl<'a> ValueHandle<'a> {
     /// Creates an instance of ValueHandle.
-    pub fn new(context: &'a cell::RefCell<ValueContext<'b>>, gvn: Gvn) -> Self {
+    pub fn new(context: &'a cell::RefCell<ValueContext>, gvn: Gvn) -> Self {
         assert!(gvn != Default::default(), "A Default GVN is invalid.");
         assert!(
             gvn.0 < context.borrow().children.len() as u32,
@@ -94,14 +94,14 @@ impl<'a, 'b: 'a> ValueHandle<'a, 'b> {
     ///
     /// Note:   Return Type::Unresolved(Default) unless the type was previously
     ///         set.
-    pub fn type_(&self) -> Type<'b> {
+    pub fn type_(&self) -> Type {
         self.borrow().types.get(self.gvn)
     }
 
     /// Sets the type of a GVN, inserting or updating as appropriate.
     ///
     /// Note:   Automatically set when inserting a binding.
-    pub fn set_type(&self, ty: Type<'b>) {
+    pub fn set_type(&self, ty: Type) {
         self.borrow_mut().types.set(self.gvn, ty);
     }
 }
@@ -110,12 +110,12 @@ impl<'a, 'b: 'a> ValueHandle<'a, 'b> {
 //  Implementation of ValueHandle
 //
 
-impl<'a, 'b: 'a> ValueHandle<'a, 'b> {
-    fn borrow(&self) -> cell::Ref<'a, ValueContext<'b>> {
+impl<'a> ValueHandle<'a> {
+    fn borrow(&self) -> cell::Ref<'a, ValueContext> {
         self.context.borrow()
     }
 
-    fn borrow_mut(&self) -> cell::RefMut<'a, ValueContext<'b>> {
+    fn borrow_mut(&self) -> cell::RefMut<'a, ValueContext> {
         self.context.borrow_mut()
     }
 }

@@ -13,7 +13,7 @@ use super::{
 /// InternId
 ///
 /// The unique ID associated with an identifier or literal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct InternId(u32);
 
 /// Interner
@@ -254,8 +254,15 @@ fn magic_string_of(id: InternId) -> Option<&'static [u8]> {
 }
 
 //
-//  Implementation of traits for Interner
+//  Implementation of traits
 //
+
+impl std::fmt::Debug for InternId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl Default for Interner {
     fn default() -> Self { Interner::new() }
 }

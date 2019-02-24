@@ -7,49 +7,32 @@ use basic::com::Span;
 
 use model::{ast, hir};
 
-use super::{fin, nef, tup, Context};
+use super::{nef, tup, Context};
 use super::sym::{self, scp};
 
 /// The Stysh ASG builder.
 ///
 /// Builds the Abstract Semantic Graph.
-pub struct GraphBuilder<'a, 'g, 'local>
-    where 'g: 'a
-{
-    scope: &'a scp::Scope<'g>,
-    registry: &'a hir::Registry<'g>,
-    context: &'a Context<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
+pub struct GraphBuilder<'a> {
+    scope: &'a scp::Scope,
+    registry: &'a hir::Registry,
+    context: &'a Context,
 }
 
-impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
-    where 'g: 'a
-{
+impl<'a> GraphBuilder<'a> {
     /// Creates a new instance of the graph builder.
-    ///
-    /// The global arena sets the lifetime of the returned objects, while the
-    /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
-        scope: &'a scp::Scope<'g>,
-        registry: &'a hir::Registry<'g>,
-        context: &'a Context<'g>,
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena
+        scope: &'a scp::Scope,
+        registry: &'a hir::Registry,
+        context: &'a Context,
     )
-        -> GraphBuilder<'a, 'g, 'local>
+        -> GraphBuilder<'a>
     {
-        GraphBuilder {
-            scope,
-            registry,
-            context,
-            global_arena,
-            local_arena,
-        }
+        GraphBuilder { scope, registry, context }
     }
 
     /// Extracts the prototypes of an item.
-    pub fn prototype(&mut self, item: &ast::Item) -> hir::Prototype<'g> {
+    pub fn prototype(&mut self, item: &ast::Item) -> hir::Prototype {
         match *item {
             ast::Item::Enum(e) => self.enum_prototype(e),
             ast::Item::Fun(fun) => self.fun_prototype(fun),
@@ -58,13 +41,13 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
     }
 
     /// Translates a stand-alone expression.
-    pub fn expression(&mut self, e: &ast::Expression) -> hir::Value<'g> {
+    pub fn expression(&mut self, e: &ast::Expression) -> hir::Value {
         self.mapper(self.scope).value_of(e)
     }
 
     /// Translates a full-fledged item.
-    pub fn item(&mut self, proto: &'g hir::Prototype<'g>, item: &ast::Item)
-        -> hir::Item<'g>
+    pub fn item(&mut self, proto: hir::Prototype, item: &ast::Item)
+        -> hir::Item
     {
         use model::ast::Item;
         use model::hir::Prototype::*;
@@ -77,12 +60,12 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         );
 
         match (*item, proto) {
-            (Item::Enum(i), &Enum(ref p)) => self.enum_item(i, p),
-            (Item::Fun(i), &Fun(ref p)) => self.fun_item(i, p),
-            (Item::Rec(r), &Rec(ref p)) => self.rec_item(r, p),
-            (Item::Enum(_), &p) => panic!("Expected enum {:?}", p),
-            (Item::Fun(_), &p) => panic!("Expected function {:?}", p),
-            (Item::Rec(_), &p) => panic!("Expected record {:?}", p),
+            (Item::Enum(i), Enum(p)) => self.enum_item(i, p),
+            (Item::Fun(i), Fun(p)) => self.fun_item(i, p),
+            (Item::Rec(r), Rec(p)) => self.rec_item(r, p),
+            (Item::Enum(_), p) => panic!("Expected enum {:?}", p),
+            (Item::Fun(_), p) => panic!("Expected function {:?}", p),
+            (Item::Rec(_), p) => panic!("Expected record {:?}", p),
         }
     }
 }
@@ -90,10 +73,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 //
 //  Implementation Details
 //
-impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
-    where 'g: 'a
-{
-    fn enum_prototype(&mut self, e: ast::Enum) -> hir::Prototype<'g> {
+impl<'a> GraphBuilder<'a> {
+    fn enum_prototype(&mut self, e: ast::Enum) -> hir::Prototype {
         hir::Prototype::Enum(
             hir::EnumProto {
                 name: e.name.into(),
@@ -102,9 +83,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         )
     }
 
-    fn fun_prototype(&mut self, fun: ast::Function) -> hir::Prototype<'g> {
-        let mut arguments =
-            mem::Array::with_capacity(fun.arguments.len(), self.global_arena);
+    fn fun_prototype(&mut self, fun: ast::Function) -> hir::Prototype {
+        let arguments = mem::DynArray::with_capacity(fun.arguments.len());
 
         for a in fun.arguments {
             arguments.push(hir::Argument {
@@ -122,13 +102,13 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
                     fun.keyword as usize,
                     fun.result.span().end_offset() - (fun.keyword as usize)
                 ),
-                arguments: arguments.into_slice(),
+                arguments: arguments,
                 result: self.mapper(self.scope).type_of(&fun.result),
             }
         )
     }
 
-    fn rec_prototype(&mut self, r: ast::Record) -> hir::Prototype<'g> {
+    fn rec_prototype(&mut self, r: ast::Record) -> hir::Prototype {
         hir::Prototype::Rec(hir::RecordProto {
             name: r.name().into(),
             range: r.span(),
@@ -136,11 +116,10 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         })
     }
 
-    fn enum_item(&mut self, e: ast::Enum, p: &'g hir::EnumProto)
-        -> hir::Item<'g>
+    fn enum_item(&mut self, e: ast::Enum, prototype: hir::EnumProto)
+        -> hir::Item
     {
-        let mut variants =
-            mem::Array::with_capacity(e.variants.len(), self.global_arena);
+        let variants = mem::DynArray::with_capacity(e.variants.len());
 
         for ev in e.variants {
             use self::ast::InnerRecord::*;
@@ -148,31 +127,28 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
             match *ev {
                 Tuple(..) => unimplemented!("InnerRecord::Tuple"),
                 Unit(name) => variants.push(hir::Record {
-                    prototype: self.global_arena.insert(hir::RecordProto {
+                    prototype: hir::RecordProto {
                         name: name.into(),
                         range: ev.span(),
-                        enum_: p.name.into()
-                    }),
+                        enum_: prototype.name.into()
+                    },
                     definition: hir::Tuple::unit(),
                 }),
                 Missing(_) | Unexpected(_) => (),
             }
         }
 
-        hir::Item::Enum(hir::Enum {
-            prototype: p,
-            variants: variants.into_slice(),
-        })
+        hir::Item::Enum(hir::Enum { prototype, variants })
     }
 
-    fn fun_item(&mut self, fun: ast::Function, p: &'g hir::FunctionProto<'g>)
-        -> hir::Item<'g>
+    fn fun_item(&mut self, fun: ast::Function, p: hir::FunctionProto)
+        -> hir::Item
     {
-        for a in p.arguments{
+        for a in &p.arguments {
             self.context.insert_value(a.name, a.type_);
         }
 
-        let scope = self.function_scope(self.scope, p);
+        let scope = self.function_scope(self.scope, p.clone());
         let mut body =
             self.mapper(&scope)
                 .value_of(&ast::Expression::Block(&fun.body));
@@ -182,9 +158,7 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
             self.nested().fetch_all();
 
-            body = self.finalizer().finalize_value(body).entity;
-
-            let res = self.unifier().unify_value(body, p.result);
+            let res = self.unifier().unify_value(body, p.result.clone());
             body = res.entity;
 
             if res.altered == 0 && self.context.unfetched() == 0 { break; }
@@ -193,8 +167,8 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
         hir::Item::Fun(hir::Function { prototype: p, body: body })
     }
 
-    fn rec_item(&mut self, r: ast::Record, p: &'g hir::RecordProto)
-        -> hir::Item<'g>
+    fn rec_item(&mut self, r: ast::Record, p: hir::RecordProto)
+        -> hir::Item
     {
         use self::ast::InnerRecord::*;
 
@@ -214,30 +188,26 @@ impl<'a, 'g, 'local> GraphBuilder<'a, 'g, 'local>
 
     fn function_scope<'b>(
         &'b self,
-        parent: &'b scp::Scope<'g>,
-        p: &'b hir::FunctionProto<'b>,
+        parent: &'b scp::Scope,
+        p: hir::FunctionProto,
     )
-        -> scp::FunctionScope<'b, 'g>
+        -> scp::FunctionScope<'b>
     {
-        scp::FunctionScope::new(parent, p, self.local_arena)
+        scp::FunctionScope::new(parent, p)
     }
 
-    fn mapper<'b>(&'b self, scope: &'b scp::Scope<'g>)
-        -> sym::SymbolMapper<'b, 'g, 'local>
+    fn mapper<'b>(&'b self, scope: &'b scp::Scope)
+        -> sym::SymbolMapper<'b>
     {
-        sym::SymbolMapper::new(scope, self.context, self.global_arena, self.local_arena)
+        sym::SymbolMapper::new(scope, self.context)
     }
 
-    fn finalizer(&self) -> fin::GraphFinalizer<'a, 'g> {
-        fin::GraphFinalizer::new(self.context, self.global_arena)
+    fn nested(&self) -> nef::NestedEntityFetcher<'a> {
+        nef::NestedEntityFetcher::new(self.context, self.registry)
     }
 
-    fn nested(&self) -> nef::NestedEntityFetcher<'a, 'g> {
-        nef::NestedEntityFetcher::new(self.context, self.registry, self.global_arena)
-    }
-
-    fn unifier(&self) -> tup::TypeUnifier<'a, 'g> {
-        tup::TypeUnifier::new(self.registry, self.context, self.global_arena)
+    fn unifier(&self) -> tup::TypeUnifier<'a> {
+        tup::TypeUnifier::new(self.context, self.registry)
     }
 }
 
@@ -264,7 +234,7 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p) = (hir.item(), hir.proto());
 
         assert_eq!(
@@ -285,14 +255,14 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p) = (hir.item(), hir.proto());
 
-        let e = p.enum_(i.id(6, 6)).build();
+        let e: EnumProto = p.enum_(i.id(6, 6)).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Enum(e),
+                Prototype::Enum(e.clone()),
                 &ast.item()
                     .enum_(6, 6)
                     .push_unit(15, 3)
@@ -309,7 +279,7 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
 
         assert_eq!(
             env.proto_of(&ast.item().record(5, 6).build()),
@@ -323,14 +293,14 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p) = (hir.item(), hir.proto());
 
-        let r = p.rec(i.id(5, 6), 0).range(0, 12).build();
+        let r: RecordProto = p.rec(i.id(5, 6), 0).range(0, 12).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Rec(r),
+                Prototype::Rec(r.clone()),
                 &ast.item().record(5, 6).build(),
             ),
             i.rec(r).build().into()
@@ -343,14 +313,14 @@ mod tests {
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p, t) = (hir.item(), hir.proto(), hir.type_());
 
-        let r = p.rec(i.id(5, 3), 0).range(0, 22).build();
+        let r: RecordProto = p.rec(i.id(5, 3), 0).range(0, 22).build();
 
         assert_eq!(
             env.item_of(
-                &Prototype::Rec(r),
+                Prototype::Rec(r.clone()),
                 &ast.item()
                     .record(5, 3)
                     .tuple(
@@ -373,7 +343,7 @@ mod tests {
         );
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         assert_eq!(
@@ -399,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn item_fun() {
+    fn item_fun_add() {
         let global_arena = mem::Arena::new();
         let env = Env::new(
             b":fun add(a: Int, b: Int) -> Int { a + b }",
@@ -410,7 +380,7 @@ mod tests {
 
         let ast = SynFactory::new(&global_arena);
         let e = ast.expr();
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let f =
@@ -429,7 +399,7 @@ mod tests {
 
         assert_eq!(
             env.item_of(
-                &Prototype::Fun(f),
+                Prototype::Fun(f.clone()),
                 &ast.item().function(
                     5,
                     3,
@@ -455,7 +425,7 @@ mod tests {
 
         let ast = SynFactory::new(&global_arena);
         let e = ast.expr();
-        let hir = SemFactory::new(&global_arena);
+        let hir = SemFactory::new();
         let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
 
         let f =
@@ -467,7 +437,7 @@ mod tests {
 
         assert_eq!(
             env.item_of(
-                &Prototype::Fun(f),
+                Prototype::Fun(f.clone()),
                 &ast.item().function(
                     5,
                     3,
@@ -486,56 +456,45 @@ mod tests {
     }
 
     struct Env<'g> {
-        scope: MockScope<'g>,
-        registry: MockRegistry<'g>,
-        context: Context<'g>,
+        scope: MockScope,
+        registry: MockRegistry,
+        context: Context,
         resolver: ast::interning::Resolver<'g>,
-        scrubber: Scrubber<'g>,
-        arena: &'g mem::Arena,
+        scrubber: Scrubber,
     }
 
     impl<'g> Env<'g> {
         fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
             let interner = rc::Rc::new(mem::Interner::new());
             Env {
-                scope: MockScope::new(arena),
-                registry: MockRegistry::new(arena),
+                scope: MockScope::new(),
+                registry: MockRegistry::new(),
                 context: Context::default(),
                 resolver: ast::interning::Resolver::new(fragment, interner, arena),
-                scrubber: Scrubber::new(arena),
-                arena: arena,
+                scrubber: Scrubber::new(),
             }
         }
 
-        fn builder<'a, 'local>(&'a self, local: &'local mem::Arena)
-            -> super::GraphBuilder<'a, 'g, 'local>
-        {
+        fn builder<'a>(&'a self) -> super::GraphBuilder<'a> {
             super::GraphBuilder::new(
                 &self.scope,
                 &self.registry,
                 &self.context,
-                self.arena, 
-                local
             )
         }
 
-        fn proto_of(&self, item: &ast::Item) -> Prototype<'g> {
+        fn proto_of(&self, item: &ast::Item) -> Prototype {
             let item = self.resolver.resolve_item(*item);
 
-            let mut local_arena = mem::Arena::new();
-            let result = self.builder(&local_arena).prototype(&item);
-            local_arena.recycle();
+            let result = self.builder().prototype(&item);
             self.scrubber.scrub_prototype(result)
         }
 
-        fn item_of(&self, proto: &Prototype, item: &ast::Item) -> Item<'g> {
+        fn item_of(&self, proto: Prototype, item: &ast::Item) -> Item {
             let item = self.resolver.resolve_item(*item);
-            let proto = self.arena.intern_ref(proto);
 
-            let mut local_arena = mem::Arena::new();
-            let result = self.builder(&local_arena).item(proto, &item);
-            let result = self.unnumber_item(result, &local_arena);
-            local_arena.recycle();
+            let result = self.builder().item(proto, &item);
+            let result = self.unnumber_item(result);
             self.scrubber.scrub_item(result)
         }
 
@@ -543,13 +502,11 @@ mod tests {
             self.resolver.interner().lookup(raw).expect("Known identifier")
         }
 
-        fn unnumber_item(&self, item: Item<'g>, local_arena: &mem::Arena)
-            -> Item<'g>
-        {
-            let gvn = GlobalNumberer::new(self.arena, local_arena);
+        fn unnumber_item(&self, item: Item) -> Item {
+            let gvn = GlobalNumberer::new();
 
             match item {
-                Item::Fun(f) => Item::Fun(gvn.unnumber_function(&f)),
+                Item::Fun(f) => Item::Fun(gvn.unnumber_function(f)),
                 i => i,
             }
         }

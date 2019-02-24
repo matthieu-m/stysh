@@ -5,18 +5,16 @@ use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::{self, scp};
 
-pub fn interpret<'g>(
-    raw: &'g [u8],
-    interner: &'g mem::Interner,
-    arena: &'g mem::Arena
+pub fn interpret(
+    raw: &[u8],
+    interner: &mem::Interner,
 )
-    -> hir::Value<'g>
+    -> hir::Value
 {
-    let scope_arena = mem::Arena::new();
     let builtin = scp::BuiltinScope::new();
-    let mut scope = scp::BlockScope::new(&builtin, arena, &scope_arena);
-    let mut def_registry = hir::mocks::MockRegistry::new(arena);
-    let mut cfg_registry = int::SimpleRegistry::new(arena);
+    let mut scope = scp::BlockScope::new(&builtin);
+    let mut def_registry = hir::mocks::MockRegistry::new();
+    let mut cfg_registry = int::SimpleRegistry::new();
 
     interpret_impl(
         raw,
@@ -24,28 +22,23 @@ pub fn interpret<'g>(
         &mut def_registry,
         &mut cfg_registry,
         interner,
-        arena,
     )
 }
 
 //
 //  Implementation Details
 //
-fn interpret_impl<'a, 'g, 's>(
-    raw: &'g [u8],
-    scope: &mut scp::BlockScope<'a, 'g, 's>,
-    def_registry: &mut hir::mocks::MockRegistry<'g>,
-    cfg_registry: &mut int::SimpleRegistry<'g>,
-    interner: &'g mem::Interner,
-    arena: &'g mem::Arena,
+fn interpret_impl<'a>(
+    raw: &[u8],
+    scope: &mut scp::BlockScope<'a>,
+    def_registry: &mut hir::mocks::MockRegistry,
+    cfg_registry: &mut int::SimpleRegistry,
+    interner: &mem::Interner,
 )
-    -> hir::Value<'g>
-where
-    'g: 'a + 's
+    -> hir::Value
 {
-    let mut local_arena = mem::Arena::new();
-
-    let nodes = create_ast(raw, interner, arena, &mut local_arena);
+    let global_arena = mem::Arena::new();
+    let nodes = create_ast(raw, interner, &global_arena);
 
     //  Gather prototypes
     let mut prototypes = Vec::new();
@@ -56,9 +49,8 @@ where
             ast::Node::Item(i) => {
                 use self::hir::Prototype::*;
 
-                let prototype =
-                    create_prototype(&i, scope, def_registry, arena, &mut local_arena);
-                prototypes.push((i, arena.insert(prototype)));
+                let prototype = create_prototype(&i, scope, def_registry);
+                prototypes.push((i, prototype.clone()));
 
                 match prototype {
                     Enum(_) => unimplemented!(),
@@ -81,17 +73,13 @@ where
     for (i, p) in prototypes {
         use self::hir::Item::*;
 
-        let item = create_item(&i, p, scope, def_registry, arena, &mut local_arena);
+        let item = create_item(&i, &p, scope, def_registry);
 
         match item {
             Enum(_) => unimplemented!(),
             Fun(ref fun) => {
-                let c = create_cfg_from_function(
-                    fun,
-                    arena,
-                    &mut local_arena,
-                );
-                cfg_registry.insert(fun.prototype.name, c);
+                let cfg = create_cfg_from_function(fun);
+                cfg_registry.insert(fun.prototype.name, cfg);
             },
             Rec(_) => unimplemented!(),
         }
@@ -102,146 +90,118 @@ where
         &expression.expect("One expression is necessary!"),
         scope,
         def_registry,
-        arena,
-        &mut local_arena
     );
 
-    let cfg = create_cfg_from_value(&value, arena, &mut local_arena);
-    evaluate(&cfg, cfg_registry, arena, &mut local_arena)
+    let cfg = create_cfg_from_value(&value);
+    evaluate(&cfg, cfg_registry)
 }
 
 fn create_ast<'g>(
     raw: &[u8],
     interner: &'g mem::Interner,
     global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena,
 )
     -> ast::List<'g>
 {
     use stysh_compile::pass::syn::Parser;
 
-    let result = Parser::new(global_arena, local_arena).parse(raw, interner);
+    let mut local_arena = mem::Arena::new();
+    let result = Parser::new(global_arena, &local_arena).parse(raw, interner);
     local_arena.recycle();
 
     result
 }
 
-fn create_prototype<'a, 'g>(
+fn create_prototype(
     item: &ast::Item,
-    scope: &'a scp::Scope<'g>,
-    registry: &'a hir::Registry<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena
+    scope: &scp::Scope,
+    registry: &hir::Registry,
 )
-    -> hir::Prototype<'g>
+    -> hir::Prototype
 {
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
-        .prototype(item);
-    local_arena.recycle();
+    let result = GraphBuilder::new(scope, registry, &context).prototype(item);
 
-    println!("create_prototype => {:?}", result);
+    println!("create_prototype - {:?}", result);
+    println!("");
 
     result
 }
 
-fn create_item<'g>(
+fn create_item(
     item: &ast::Item,
-    proto: &'g hir::Prototype<'g>,
-    scope: &scp::Scope<'g>,
-    registry: &hir::Registry<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena
+    proto: &hir::Prototype,
+    scope: &scp::Scope,
+    registry: &hir::Registry,
 )
-    -> hir::Item<'g>
+    -> hir::Item
 {
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
-        .item(proto, item);
-    local_arena.recycle();
+    let result = GraphBuilder::new(scope, registry, &context)
+        .item(proto.clone(), item);
 
-    println!("create_item => {:?}", result);
+    println!("create_item - {:?}", result);
+    println!("");
 
     result
 }
 
-fn create_value<'a, 'g>(
+fn create_value(
     expr: &ast::Expression,
-    scope: &'a scp::Scope<'g>,
-    registry: &'a hir::Registry<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena
+    scope: &scp::Scope,
+    registry: &hir::Registry,
 )
-    -> hir::Value<'g>
+    -> hir::Value
 {
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context, global_arena, local_arena)
-        .expression(expr);
-    local_arena.recycle();
+    let result = GraphBuilder::new(scope, registry, &context).expression(expr);
 
-    println!("create_value => {:?}", result);
-
-    result
-}
-
-fn create_cfg_from_value<'g>(
-    value: &hir::Value<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena,
-)
-    -> sir::ControlFlowGraph<'g>
-{
-    use stysh_compile::pass::ssa::GraphBuilder;
-
-    let result =
-        GraphBuilder::new(global_arena, local_arena).from_value(&value);
-    local_arena.recycle();
-
-    println!("create_cfg_from_value => {}", result);
+    println!("create_value - {:?}", result);
+    println!("");
 
     result
 }
 
-fn create_cfg_from_function<'g>(
-    fun: &hir::Function<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena,
-)
-    -> sir::ControlFlowGraph<'g>
-{
+fn create_cfg_from_value(value: &hir::Value) -> sir::ControlFlowGraph {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result =
-        GraphBuilder::new(global_arena, local_arena).from_function(&fun);
-    local_arena.recycle();
+    let result = GraphBuilder::new().from_value(value);
+
+    println!("create_cfg_from_value - {}", result);
+    println!("");
+
+    result
+}
+
+fn create_cfg_from_function(fun: &hir::Function) -> sir::ControlFlowGraph {
+    use stysh_compile::pass::ssa::GraphBuilder;
+
+    let result = GraphBuilder::new().from_function(fun);
 
     println!(
-        "create_cfg_from_function {:?} =>\n{}",
+        "create_cfg_from_function - {:?} =>\n{}",
         fun.prototype.name, result
     );
+    println!("");
 
     result
 }
 
-fn evaluate<'a, 'g>(
-    cfg: &sir::ControlFlowGraph<'g>,
-    registry: &int::Registry<'g>,
-    global_arena: &'g mem::Arena,
-    local_arena: &mut mem::Arena,
+fn evaluate(
+    cfg: &sir::ControlFlowGraph,
+    registry: &int::Registry,
 )
-    -> hir::Value<'g>
+    -> hir::Value
 {
     use stysh_compile::pass::int::Interpreter;
 
-    let result = Interpreter::new(registry, global_arena, local_arena)
-        .evaluate(cfg, &[]);
-    local_arena.recycle();
+    let result = Interpreter::new(registry).evaluate(cfg, Default::default());
 
     result
 }

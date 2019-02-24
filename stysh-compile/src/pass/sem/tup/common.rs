@@ -1,6 +1,6 @@
 //! Common Type Unifier.
 
-use basic::mem;
+use basic::mem::DynArray;
 
 use model::hir::*;
 
@@ -8,121 +8,82 @@ use super::{Alteration, Context};
 
 /// Core Unifier
 #[derive(Clone, Copy, Debug)]
-pub struct CoreUnifier<'a, 'g>
-    where 'g: 'a
-{
-    /// Registry.
-    pub registry: &'a Registry<'g>,
+pub struct CoreUnifier<'a> {
     /// Context.
-    pub context: &'a Context<'g>,
-    /// Arena.
-    pub global_arena: &'g mem::Arena,
+    pub context: &'a Context,
+    /// Registry.
+    pub registry: &'a Registry,
 }
 
 //
 //  Public interface of CoreUnifier
 //
 
-impl<'a, 'g> CoreUnifier<'a, 'g>
-    where 'g: 'a 
-{
+impl<'a> CoreUnifier<'a> {
     /// Creates a new instance.
-    pub fn new(
-        registry: &'a Registry<'g>,
-        context: &'a Context<'g>,
-        global_arena: &'g mem::Arena,
-    )
-        -> Self
-    {
-        CoreUnifier { registry, context, global_arena }
+    pub fn new(context: &'a Context, registry: &'a Registry) -> Self {
+        CoreUnifier { registry, context }
     }
-
-    /// Inserts into the global_arena.
-    pub fn insert<T: 'g>(&self, t: T) -> &'g T { self.global_arena.insert(t) }
 
     /// Returns the type of a known GVN.
     ///
     /// Panics: If the GVN is unknown.
-    pub fn type_of(&self, gvn: Gvn) -> Type<'g> {
+    pub fn type_of(&self, gvn: Gvn) -> Type {
         self.context.value(gvn).type_()
     }
 
     /// Unifies an option.
-    pub fn unify_option<T, U, F>(&self, o: Option<T>, f: F)
+    pub fn unify_option<T, U, F>(&self, o: Option<T>, fun: F)
         -> Alteration<Option<U>>
         where
             F: FnOnce(T) -> Alteration<U>,
     {
         match o {
             None => Alteration::forward(None),
-            Some(t) => f(t).map(Some),
+            Some(t) => fun(t).map(Some),
         }
     }
 
-    /// Unifies a slice.
-    pub fn unify_slice<T, F>(&self, slice: &'g [T], mut f: F)
-        -> Alteration<&'g [T]>
+    /// Unifies an array.
+    pub fn unify_array<T, F>(&self, array: DynArray<T>, mut fun: F)
+        -> Alteration<DynArray<T>>
         where
-            T: Copy + 'g,
+            T: Default,
             F: FnMut(usize, T) -> Alteration<T>,
     {
-        let mut found = None;
+        let mut altered = 0;
 
-        for (i, e) in slice.iter().enumerate() {
-            let r = f(i, *e);
+        for i in 0..array.len() {
+            let element = array.replace_with_default(i);
 
-            if r.altered > 0 {
-                found = Some((i, r));
-                break;
-            }
+            let alteration = fun(i, element);
+
+            altered += alteration.altered;
+            array.replace(i, alteration.entity);
         }
 
-        if found.is_none() {
-            return Alteration::forward(slice);
-        }
-
-        let found = found.unwrap();
-
-        let length = slice.len();
-        let mut result = mem::Array::with_capacity(length, self.global_arena);
-
-        for e in &slice[..(found.0 as usize)] {
-            result.push(*e);
-        }
-
-        let mut altered = found.1.altered;
-        result.push(found.1.entity);
-
-        if found.0 as usize + 1 < length {
-            for (i, e) in slice[(found.0 as usize + 1)..].iter().enumerate() {
-                let r = f(i + found.0 as usize, *e);
-
-                altered += r.altered;
-
-                result.push(r.entity);
-            }
-        }
-
-        let entity = result.into_slice();
-        Alteration { entity, altered }
+        Alteration { entity: array, altered }
     }
 
     /// Unifies a tuple.
-    pub fn unify_tuple<T, F>(&self, t: Tuple<'g, T>, ty: Type<'g>, mut f: F)
-        -> Alteration<Tuple<'g, T>>
+    pub fn unify_tuple<T, F>(&self, t: Tuple<T>, ty: Type, mut fun: F)
+        -> Alteration<Tuple<T>>
         where
-            T: Copy + 'g,
-            F: FnMut(T, Type<'g>) -> Alteration<T>,
+            T: Default,
+            F: FnMut(T, Type) -> Alteration<T>,
     {
         let fields = if let Type::Tuple(ty, ..) = ty {
-            self.unify_slice(t.fields, |i, e| {
-                ty.fields.get(i).map(|ty| f(e, *ty))
-                    .unwrap_or(Alteration::forward(e))
+            self.unify_array(t.fields.clone(), |i, e| {
+                if let Some(ty) = ty.fields.get(i) {
+                    fun(e, ty)
+                } else {
+                    Alteration::forward(e)
+                }
             })
         } else {
-            self.unify_slice(t.fields, |_, e| f(e, Type::unresolved()))
+            self.unify_array(t.fields.clone(), |_, e| fun(e, Type::unresolved()))
         };
-        fields.combine(t, |f| Tuple { fields: f, names: t.names })
+        fields.combine(t, |t, f| Tuple { fields: f, names: t.names })
     }
 }
 
@@ -143,57 +104,51 @@ pub mod tests {
     use super::{Context, CoreUnifier};
 
     #[derive(Default)]
-    pub struct Env {
-        global_arena: mem::Arena,
-    }
+    pub struct Env;
 
     pub struct LocalEnv<'g> {
-        global_arena: &'g mem::Arena,
-        local_arena: mem::Arena,
-        registry: mocks::MockRegistry<'g>,
-        context: Context<'g>,
+        registry: mocks::MockRegistry,
+        context: Context,
         resolver: Resolver<'g>,
     }
 
     impl Env {
-        pub fn local<'g>(&'g self, raw: &'g [u8]) -> LocalEnv<'g> {
+        pub fn local<'g>(&self, raw: &'g [u8]) -> LocalEnv<'g> {
             let interner = rc::Rc::new(mem::Interner::new());
             LocalEnv {
-                global_arena: &self.global_arena,
-                local_arena: Default::default(),
-                registry: mocks::MockRegistry::new(&self.global_arena),
+                registry: mocks::MockRegistry::new(),
                 context: Context::default(),
-                resolver: Resolver::new(raw, interner, &self.global_arena),
+                resolver: Resolver::new(raw, interner),
             }
         }
 
-        pub fn factories<'g>(&'g self) -> (
-            ItemFactory<'g>,
-            PatternFactory<'g>,
-            PrototypeFactory<'g>,
-            StmtFactory<'g>,
-            TypeFactory<'g>,
-            ValueFactory<'g>
+        pub fn factories(&self) -> (
+            ItemFactory,
+            PatternFactory,
+            PrototypeFactory,
+            StmtFactory,
+            TypeFactory,
+            ValueFactory
         )
         {
-            let f = Factory::new(&self.global_arena);
+            let f = Factory::new();
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
         }
     }
 
     impl<'g> LocalEnv<'g> {
-        pub fn core<'a>(&'a self) -> CoreUnifier<'a, 'g> {
-            CoreUnifier::new(&self.registry, &self.context, self.global_arena)
+        pub fn core<'a>(&'a self) -> CoreUnifier<'a> {
+            CoreUnifier::new(&self.context, &self.registry)
         }
 
-        pub fn numberer<'a>(&'a self) -> GlobalNumberer<'g, 'a> {
-            GlobalNumberer::new(self.global_arena, &self.local_arena)
+        pub fn numberer(&self) -> GlobalNumberer {
+            GlobalNumberer::new()
         }
 
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }
 
-        pub fn scrubber(&self) -> Scrubber<'g> {
-            Scrubber::new(self.global_arena)
+        pub fn scrubber(&self) -> Scrubber {
+            Scrubber::new()
         }
 
         #[allow(dead_code)]

@@ -5,36 +5,32 @@ use super::{common, typ, Alteration};
 
 /// Pattern Unifier.
 #[derive(Clone, Debug)]
-pub struct PatternUnifier<'a, 'g>
-    where 'g: 'a
-{
-    core: common::CoreUnifier<'a, 'g>,
+pub struct PatternUnifier<'a> {
+    core: common::CoreUnifier<'a>,
 }
 
 //
 //  Public interface of PatternUnifier
 //
 
-impl<'a, 'g> PatternUnifier<'a, 'g>
-    where 'g: 'a
-{
+impl<'a> PatternUnifier<'a> {
     /// Creates a new instance.
-    pub fn new(core: common::CoreUnifier<'a, 'g>) -> Self {
+    pub fn new(core: common::CoreUnifier<'a>) -> Self {
         PatternUnifier { core }
     }
 
     /// Unifies the inner entities (of p), recursively.
-    pub fn unify(&self, p: Pattern<'g>, ty: Type<'g>)
-        -> Alteration<Pattern<'g>>
+    pub fn unify(&self, p: Pattern, ty: Type)
+        -> Alteration<Pattern>
     {
         use self::Pattern::*;
 
-        match p {
+        match p.clone() {
             Ignored(_) => Alteration::forward(p),
             Constructor(c, g)
-                => self.unify_constructor(c, ty).combine(p, |c| Constructor(c, g)),
+                => self.unify_constructor(c, ty).combine(p, |_, c| Constructor(c, g)),
             Tuple(t, r, g)
-                => self.unify_tuple(t, ty).combine(p, |t| Tuple(t, r, g)),
+                => self.unify_tuple(t, ty).combine(p, |_, t| Tuple(t, r, g)),
             Var(_, g) => {
                 self.unify_variable(g, ty);
                 Alteration::forward(p)
@@ -47,34 +43,33 @@ impl<'a, 'g> PatternUnifier<'a, 'g>
 //  Implementation Details
 //
 
-impl<'a, 'g> PatternUnifier<'a, 'g>
-    where 'g: 'a
-{
-    fn unify_constructor(&self, c: Constructor<'g, Pattern<'g>>, ty: Type<'g>)
-        -> Alteration<Constructor<'g, Pattern<'g>>>
+impl<'a> PatternUnifier<'a> {
+    fn unify_constructor(&self, c: Constructor<Pattern>, ty: Type)
+        -> Alteration<Constructor<Pattern>>
     {
         let type_ = self.select(c.type_, ty);
-        let arguments = self.unify_tuple(c.arguments, type_);
+        let arguments = self.unify_tuple(c.arguments, type_.clone());
         let range = c.range;
 
-        arguments.combine(c, |arguments| {
-            Constructor { type_, arguments, range }
-        })
+        Alteration {
+            entity: Constructor { type_, arguments: arguments.entity, range },
+            altered: arguments.altered,
+        }
     }
 
-    fn unify_tuple(&self, t: Tuple<'g, Pattern<'g>>, ty: Type<'g>)
-        -> Alteration<Tuple<'g, Pattern<'g>>>
+    fn unify_tuple(&self, t: Tuple<Pattern>, ty: Type)
+        -> Alteration<Tuple<Pattern>>
     {
         self.core.unify_tuple(t, ty, |p, ty| self.unify(p, ty))
     }
 
-    fn unify_variable(&self, gvn: Gvn, ty: Type<'g>) {
+    fn unify_variable(&self, gvn: Gvn, ty: Type) {
         let known = self.core.type_of(gvn);
         let ty = self.select(known, ty);
         self.core.context.value(gvn).set_type(ty);
     }
 
-    fn select(&self, t0: Type<'g>, t1: Type<'g>) -> Type<'g> {
+    fn select(&self, t0: Type, t1: Type) -> Type {
         typ::TypeUnifier::new(self.core).select(t0, t1)
     }
 }
@@ -104,10 +99,10 @@ mod tests {
     fn unify<'g>(
         local: &LocalEnv<'g>,
         altered: u32,
-        pat: Pattern<'g>,
-        ty: Type<'g>,
+        pat: Pattern,
+        ty: Type,
     )
-        -> Pattern<'g>
+        -> Pattern
     {
         let pat = local.resolver().resolve_pattern(pat);
         let pat = local.numberer().number_pattern(pat);

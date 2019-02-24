@@ -1,5 +1,6 @@
 //! Lexical scopes for name resolution
 
+use std::collections::HashMap;
 use std::fmt;
 
 use basic::mem;
@@ -7,23 +8,23 @@ use basic::mem;
 use model::hir::*;
 
 /// A Lexical Scope trait.
-pub trait Scope<'g>: fmt::Debug {
+pub trait Scope: fmt::Debug {
     /// Find the definition of a binding, if known.
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier>;
 
     /// Find the definition of a function, if known.
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g>;
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable;
 
     /// Find the definition of a type, if known.
-    fn lookup_type(&self, name: ItemIdentifier) -> Type<'g>;
+    fn lookup_type(&self, name: ItemIdentifier) -> Type;
 
     /// Returns an unresolved reference.
-    fn unresolved_function(&self, name: ValueIdentifier) -> Callable<'g> {
+    fn unresolved_function(&self, name: ValueIdentifier) -> Callable {
         Callable::Unknown(name)
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_type(&self, name: ItemIdentifier) -> Type<'g> {
+    fn unresolved_type(&self, name: ItemIdentifier) -> Type {
         Type::Unresolved(name, Path::default(), Gin::default())
     }
 }
@@ -38,24 +39,15 @@ impl BuiltinScope {
 }
 
 /// A Function Prototype Scope.
-pub struct FunctionScope<'a, 'g>
-    where 'g: 'a
-{
-    parent: &'a Scope<'g>,
-    arguments: IdMap<'a, ValueIdentifier>,
+pub struct FunctionScope<'a> {
+    parent: &'a Scope,
+    arguments: IdMap<ValueIdentifier>,
 }
 
-impl<'a, 'g> FunctionScope<'a, 'g> {
+impl<'a> FunctionScope<'a> {
     /// Creates an instance of FunctionScope.
-    pub fn new(
-        parent: &'a Scope<'g>,
-        fun: &'a FunctionProto<'a>,
-        local_arena: &'a mem::Arena,
-    )
-        -> FunctionScope<'a, 'g>
-    {
-        let mut arguments =
-            IdMap::with_capacity(fun.arguments.len(), local_arena);
+    pub fn new(parent: &'a Scope, fun: FunctionProto) -> FunctionScope {
+        let mut arguments = IdMap::new();
 
         for a in fun.arguments {
             arguments.insert(a.name.id(), a.name);
@@ -66,31 +58,21 @@ impl<'a, 'g> FunctionScope<'a, 'g> {
 }
 
 /// A Block Scope.
-pub struct BlockScope<'a, 'g, 'local>
-    where 'g: 'a + 'local
-{
-    parent: &'a Scope<'g>,
-    functions: IdMap<'local, Callable<'g>>,
-    types: IdMap<'local, Type<'g>>,
-    values: IdMap<'local, ValueIdentifier>,
-    global_arena: &'g mem::Arena,
+pub struct BlockScope<'a> {
+    parent: &'a Scope,
+    functions: IdMap<Callable>,
+    types: IdMap<Type>,
+    values: IdMap<ValueIdentifier>,
 }
 
-impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
+impl<'a> BlockScope<'a> {
     /// Create a new instance of BlockScope.
-    pub fn new(
-        parent: &'a Scope<'g>,
-        global_arena: &'g mem::Arena,
-        local_arena: &'local mem::Arena,
-    )
-        -> BlockScope<'a, 'g, 'local>
-    {
+    pub fn new(parent: &'a Scope) -> BlockScope<'a> {
         BlockScope {
             parent: parent,
-            functions: IdMap::new(local_arena),
-            types: IdMap::new(local_arena),
-            values: IdMap::new(local_arena),
-            global_arena: global_arena
+            functions: IdMap::new(),
+            types: IdMap::new(),
+            values: IdMap::new(),
         }
     }
 
@@ -103,12 +85,12 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
     }
 
     /// Adds a new function identifier to the scope.
-    pub fn add_function(&mut self, proto: FunctionProto<'g>) {
+    pub fn add_function(&mut self, proto: FunctionProto) {
         self.functions.insert(proto.name.id(), Callable::Function(proto));
     }
 
     /// Adds a new pattern to the scope.
-    pub fn add_pattern(&mut self, pat: Pattern<'g>) {
+    pub fn add_pattern(&mut self, pat: Pattern) {
         let tuple = match pat {
             Pattern::Ignored(..) => return,
             Pattern::Var(id, ..) => {
@@ -118,7 +100,7 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
             Pattern::Constructor(c, ..) => c.arguments,
             Pattern::Tuple(tuple, ..) => tuple,
         };
-        for p in tuple.fields { self.add_pattern(*p); }
+        for p in tuple.fields { self.add_pattern(p); }
     }
 
     /// Adds a new value identifier to the scope.
@@ -130,16 +112,16 @@ impl<'a, 'g, 'local> BlockScope<'a, 'g, 'local> {
 //
 //  Implementations of Scope
 //
-impl<'g> Scope<'g> for BuiltinScope {
+impl Scope for BuiltinScope {
     fn lookup_binding(&self, _: ValueIdentifier) -> Option<ValueIdentifier> {
         None
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
         self.unresolved_function(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
         use model::hir::BuiltinType::*;
 
         let builtin = match name.id() {
@@ -153,7 +135,7 @@ impl<'g> Scope<'g> for BuiltinScope {
     }
 }
 
-impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
+impl<'a> Scope for FunctionScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
         self.arguments
             .get(&name.id())
@@ -161,16 +143,16 @@ impl<'a, 'g> Scope<'g> for FunctionScope<'a, 'g> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
         self.parent.lookup_callable(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
         self.parent.lookup_type(name)
     }
 }
 
-impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
+impl<'a> Scope for BlockScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
         self.values
             .get(&name.id())
@@ -178,19 +160,19 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
+    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
         use model::hir::Callable::*;
 
-        let mut collection = mem::Array::new(self.functions.arena());
+        let collection = mem::DynArray::default();
 
         match self.parent.lookup_callable(name) {
             Unknown(_) => (),
             Builtin(fun) => collection.push(Builtin(fun)),
             Function(fun) => collection.push(Function(fun)),
-            Unresolved(slice) => collection.extend(slice),
+            Unresolved(callables) => collection.extend(callables),
         }
 
-        if let Some(&callable) = self.functions.get(&name.id()) {
+        if let Some(callable) = self.functions.get(&name.id()).cloned() {
             if collection.is_empty() {
                 return callable;
             }
@@ -199,13 +181,13 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
 
         match collection.len() {
             0 => Unknown(name),
-            1 => collection[0],
-            _ => Unresolved(self.global_arena.insert_slice(&*collection))
+            1 => collection.at(0),
+            _ => Unresolved(collection)
         }
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
-        if let Some(&type_) = self.types.get(&name.id()) {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
+        if let Some(type_) = self.types.get(&name.id()).cloned() {
             return type_;
         }
 
@@ -216,9 +198,9 @@ impl<'a, 'g, 'local> Scope<'g> for BlockScope<'a, 'g, 'local> {
 //
 //  Implementation Details
 //
-type IdMap<'a, V> = mem::ArrayMap<'a, mem::InternId, V>;
+type IdMap<V> = HashMap<mem::InternId, V>;
 
-impl<'a, 'g> fmt::Debug for FunctionScope<'a, 'g> {
+impl<'a> fmt::Debug for FunctionScope<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
@@ -229,7 +211,7 @@ impl<'a, 'g> fmt::Debug for FunctionScope<'a, 'g> {
     }
 }
 
-impl<'a, 'g, 'local> fmt::Debug for BlockScope<'a, 'g, 'local> {
+impl<'a> fmt::Debug for BlockScope<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
@@ -245,31 +227,32 @@ impl<'a, 'g, 'local> fmt::Debug for BlockScope<'a, 'g, 'local> {
 /// Mocks for the traits.
 #[cfg(test)]
 pub mod mocks {
-    use basic::mem;
+    use std::collections::HashMap;
+
     use model::hir::*;
 
     use super::{BuiltinScope, IdMap, Scope};
 
     /// A mock for the Scope trait.
     #[derive(Debug)]
-    pub struct MockScope<'g> {
+    pub struct MockScope {
         /// Map of callables for lookup_callable.
-        pub callables: mem::ArrayMap<'g, ValueIdentifier, Callable<'g>>,
+        pub callables: HashMap<ValueIdentifier, Callable>,
         /// Map of types for lookup_type.
-        pub types: mem::ArrayMap<'g, ItemIdentifier, Type<'g>>,
+        pub types: HashMap<ItemIdentifier, Type>,
         /// Map of values for lookup_binding.
-        values: IdMap<'g, ValueIdentifier>,
+        values: IdMap<ValueIdentifier>,
         /// Parent scope, automatically get all builtins.
         pub parent: BuiltinScope,
     }
 
-    impl<'g> MockScope<'g> {
+    impl MockScope {
         /// Creates a new MockScope.
-        pub fn new(arena: &'g mem::Arena) -> MockScope<'g> {
+        pub fn new() -> MockScope {
             MockScope {
-                callables: mem::ArrayMap::new(arena),
-                types: mem::ArrayMap::new(arena),
-                values: mem::ArrayMap::new(arena),
+                callables: HashMap::new(),
+                types: HashMap::new(),
+                values: HashMap::new(),
                 parent: BuiltinScope::new(),
             }
         }
@@ -280,22 +263,22 @@ pub mod mocks {
         }
     }
 
-    impl<'g> Scope<'g> for MockScope<'g> {
+    impl Scope for MockScope {
         fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
             self.values.get(&name.id()).cloned()
         }
 
-        fn lookup_callable(&self, name: ValueIdentifier) -> Callable<'g> {
-            if let Some(&v) = self.callables.get(&name) {
-                return v;
+        fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
+            if let Some(v) = self.callables.get(&name) {
+                return v.clone();
             }
 
             self.parent.lookup_callable(name)
         }
 
-        fn lookup_type(&self, name: ItemIdentifier) -> Type<'g> {
-            if let Some(&v) = self.types.get(&name) {
-                return v;
+        fn lookup_type(&self, name: ItemIdentifier) -> Type {
+            if let Some(v) = self.types.get(&name) {
+                return v.clone();
             }
 
             self.parent.lookup_type(name)
@@ -320,14 +303,13 @@ mod tests {
         let interner = mem::Interner::new();
         let a = interner.insert(b"a");
 
-        let arena = mem::Arena::new();
-        let f = Factory::new(&arena);
+        let f = Factory::new();
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
         let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
 
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, &prot, &arena);
+        let scope = FunctionScope::new(&builtin, prot);
 
         assert_eq!(
             scope.lookup_binding(v.id(23, 1).with_id(a)),
@@ -344,8 +326,7 @@ mod tests {
         let b = interner.insert(b"b");
         let c = interner.insert(b"c");
 
-        let arena = mem::Arena::new();
-        let f = Factory::new(&arena);
+        let f = Factory::new();
         let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
 
         let prot =
@@ -355,7 +336,7 @@ mod tests {
                 .build();
 
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, &prot, &arena);
+        let scope = FunctionScope::new(&builtin, prot);
 
         assert_eq!(
             scope.lookup_binding(v.id(42, 1).with_id(c)),

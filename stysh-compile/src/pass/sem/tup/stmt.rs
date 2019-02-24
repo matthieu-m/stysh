@@ -5,32 +5,28 @@ use super::{common, pat, val, Alteration};
 
 /// Statement Unifier.
 #[derive(Clone, Debug)]
-pub struct StatementUnifier<'a, 'g>
-    where 'g: 'a
-{
-    core: common::CoreUnifier<'a, 'g>,
+pub struct StatementUnifier<'a,> {
+    core: common::CoreUnifier<'a>,
 }
 
 //
 //  Public interface of StatementUnifier
 //
 
-impl<'a, 'g> StatementUnifier<'a, 'g>
-    where 'g: 'a
-{
+impl<'a> StatementUnifier<'a> {
     /// Creates a new instance.
-    pub fn new(core: common::CoreUnifier<'a, 'g>) -> Self {
+    pub fn new(core: common::CoreUnifier<'a>) -> Self {
         StatementUnifier { core }
     }
 
     /// Unifies the inner entities, recursively.
-    pub fn unify(&self, s: Stmt<'g>) -> Alteration<Stmt<'g>> {
+    pub fn unify(&self, s: Stmt) -> Alteration<Stmt> {
         use self::Stmt::*;
 
-        match s {
-            Return(r) => self.unify_return(r).combine(s, |r| Return(r)),
-            Set(r) => self.unify_rebinding(r).combine(s, |r| Set(r)),
-            Var(b) => self.unify_binding(b).combine(s, |b| Var(b)),
+        match s.clone() {
+            Return(r) => self.unify_return(r).combine(s, |_, r| Return(r)),
+            Set(r) => self.unify_rebinding(r).combine(s, |_, r| Set(r)),
+            Var(b) => self.unify_binding(b).combine(s, |_, b| Var(b)),
         }
     }
 }
@@ -39,43 +35,47 @@ impl<'a, 'g> StatementUnifier<'a, 'g>
 //  Implementation Details of StatementUnifier
 //
 
-impl<'a, 'g> StatementUnifier<'a, 'g>
-    where 'g: 'a
-{
-    fn unify_binding(&self, b: Binding<'g>) -> Alteration<Binding<'g>> {
-        let right = self.unify_value(b.right, Type::unresolved());
-        let left = self.unify_pattern(b.left, right.entity.type_);
-        let range = b.range;
+impl<'a> StatementUnifier<'a> {
+    fn unify_binding(&self, b: Binding) -> Alteration<Binding> {
+        let clone = b.clone();
 
-        left.combine2(b, right, |left, right| Binding { left, right, range })
+        let right = self.unify_value(clone.right, Type::unresolved());
+        let left = self.unify_pattern(clone.left, right.entity.type_.clone());
+        let range = clone.range;
+
+        left.combine2(b, right, |_, left, right| Binding { left, right, range })
     }
 
-    fn unify_rebinding(&self, r: ReBinding<'g>) -> Alteration<ReBinding<'g>> {
-        let right = self.unify_value(r.right, r.left.type_);
+    fn unify_rebinding(&self, r: ReBinding) -> Alteration<ReBinding> {
+        let left_clone = r.left.clone();
+        let right_clone = r.right.clone();
+        let range = r.range;
+
+        let right = self.unify_value(right_clone, r.left.type_.clone());
         let left = if r.left.type_ != right.entity.type_ {
-            Alteration::forward(right.entity.type_)
+            Alteration::forward(right.entity.type_.clone())
         } else {
-            Alteration::forward(r.left.type_)
-        }.map(|t| r.left.with_type(t));
-        let range = r.range;
+            Alteration::forward(r.left.type_.clone())
+        }.map(|t| left_clone.with_type(t));
 
-        left.combine2(r, right, |left, right| ReBinding { left, right, range })
+        left.combine2(r, right, |_, left, right| ReBinding { left, right, range })
     }
 
-    fn unify_return(&self, r: Return<'g>) -> Alteration<Return<'g>> {
-        let value = self.unify_value(r.value, Type::unresolved());
-        let range = r.range;
+    fn unify_return(&self, r: Return) -> Alteration<Return> {
+        let clone = r.clone();
+        let value = self.unify_value(clone.value, Type::unresolved());
+        let range = clone.range;
 
-        value.combine(r, |value| Return { value, range })
+        value.combine(r, |_, value| Return { value, range })
     }
 
-    fn unify_pattern(&self, p: Pattern<'g>, ty: Type<'g>)
-        -> Alteration<Pattern<'g>>
+    fn unify_pattern(&self, p: Pattern, ty: Type)
+        -> Alteration<Pattern>
     {
         pat::PatternUnifier::new(self.core).unify(p, ty)
     }
 
-    fn unify_value(&self, v: Value<'g>, ty: Type<'g>) -> Alteration<Value<'g>> {
+    fn unify_value(&self, v: Value, ty: Type) -> Alteration<Value> {
         val::ValueUnifier::new(self.core).unify(v, ty)
     }
 }

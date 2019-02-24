@@ -2,50 +2,49 @@
 
 use std::{convert, fmt};
 
-use basic::{com, mem};
-use basic::com::Span;
-use basic::mem::CloneInto;
+use basic::com::{self, Span};
+use basic::mem::{self, DynArray, Ptr};
 
 use model::ast;
 use model::hir::*;
 
 /// A Value.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Value<'a> {
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Value {
     /// Type of the value.
-    pub type_: Type<'a>,
+    pub type_: Type,
     /// Range of the expression evaluating to the value.
     pub range: com::Range,
     /// Expression evaluating to the value.
-    pub expr: Expr<'a>,
+    pub expr: Expr,
     /// Unique identifier of this value within the context;
     /// or at least, it is unique *after* the GVN pass.
-    pub gvn: Gvn,
+    pub gvn: Gvn
 }
 
 /// An Expression.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Expr<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Expr {
     /// A block expression.
-    Block(&'a [Stmt<'a>], Option<&'a Value<'a>>),
+    Block(DynArray<Stmt>, Option<Ptr<Value>>),
     /// A built-in value.
-    BuiltinVal(BuiltinValue<'a>),
+    BuiltinVal(BuiltinValue),
     /// A function call.
-    Call(Callable<'a>, &'a [Value<'a>]),
+    Call(Callable, DynArray<Value>),
     /// A constructor call.
-    Constructor(Constructor<'a , Value<'a>>),
+    Constructor(Constructor<Value>),
     /// A field access.
-    FieldAccess(&'a Value<'a>, Field),
+    FieldAccess(Ptr<Value>, Field),
     /// A if expression (condition, true-branch, false-branch).
-    If(&'a Value<'a>, &'a Value<'a>, &'a Value<'a>),
+    If(Ptr<Value>, Ptr<Value>, Ptr<Value>),
     /// An implicit cast (variant to enum, anonymous to named, ...).
-    Implicit(Implicit<'a>),
+    Implicit(Implicit),
     /// A loop.
-    Loop(&'a [Stmt<'a>]),
+    Loop(DynArray<Stmt>),
     /// A reference to an existing binding.
     Ref(ValueIdentifier, Gvn),
     /// A tuple.
-    Tuple(Tuple<'a, Value<'a>>),
+    Tuple(Tuple<Value>),
     /// An unresolved reference.
     UnresolvedRef(ValueIdentifier),
 }
@@ -84,47 +83,47 @@ pub enum BuiltinFunction {
 }
 
 /// A built-in value, the type is implicit.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum BuiltinValue<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum BuiltinValue {
     /// A boolean.
     Bool(bool),
     /// An integral.
     Int(i64),
     /// A String.
-    String(&'a [u8]),
+    String(Vec<u8>),
 }
 
 /// A Callable.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Callable<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Callable {
     /// A built-in function.
     Builtin(BuiltinFunction),
     /// A static user-defined function.
-    Function(FunctionProto<'a>),
+    Function(FunctionProto),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),
     /// An unresolved callable binding.
     ///
     /// Note: this variant only contains possible resolutions.
     /// Note: this variant contains at least two possible resolutions.
-    Unresolved(&'a [Callable<'a>]),
+    Unresolved(DynArray<Callable>),
 }
 
 /// A global value number.
 ///
 /// Defaults to 0, which is considered an invalid value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Gvn(pub u32);
 
 /// An Implicit cast.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Implicit<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Implicit {
     /// An enumerator to enum cast.
-    ToEnum(EnumProto, &'a Value<'a>),
+    ToEnum(EnumProto, Ptr<Value>),
 }
 
 /// A value identifier.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueIdentifier(pub mem::InternId, pub com::Range);
 
 //
@@ -142,7 +141,7 @@ impl BuiltinFunction {
     }
 
     /// Returns the type of the result of the function.
-    pub fn result_type(&self) -> Type<'static> {
+    pub fn result_type(&self) -> Type {
         use self::BuiltinFunction::*;
 
         let type_ = match *self {
@@ -154,9 +153,9 @@ impl BuiltinFunction {
     }
 }
 
-impl<'a> BuiltinValue<'a> {
+impl BuiltinValue {
     /// Returns the type of the built-in value.
-    pub fn result_type(&self) -> Type<'static> {
+    pub fn result_type(&self) -> Type {
         use self::BuiltinValue::*;
 
         Type::Builtin(match *self {
@@ -167,20 +166,20 @@ impl<'a> BuiltinValue<'a> {
     }
 }
 
-impl<'a> Callable<'a> {
+impl Callable {
     /// Returns the type of the result of the function.
-    pub fn result_type(&self) -> Type<'a> {
+    pub fn result_type(&self) -> Type {
         use self::Callable::*;
 
-        match *self {
+        match self {
             Builtin(fun) => fun.result_type(),
-            Function(fun) => fun.result,
+            Function(fun) => fun.result.clone(),
             Unknown(_) | Unresolved(_) => Type::unresolved(),
         }
     }
 }
 
-impl Expr<'static> {
+impl Expr {
     /// Returns a builtin Bool expr.
     pub fn bool_(b: bool) -> Self { Expr::BuiltinVal(BuiltinValue::Bool(b)) }
 
@@ -188,9 +187,9 @@ impl Expr<'static> {
     pub fn int(i: i64) -> Self { Expr::BuiltinVal(BuiltinValue::Int(i)) }
 }
 
-impl<'a> Value<'a> {
+impl Value {
     /// Sets the gvn the value refers to.
-    pub fn ref_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
+    pub fn ref_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value {
         use self::Expr::*;
 
         self.expr = match self.expr {
@@ -202,43 +201,43 @@ impl<'a> Value<'a> {
     }
 
     /// Sets the expression of the value.
-    pub fn with_expr(mut self, expr: Expr<'a>) -> Value<'a> {
+    pub fn with_expr(mut self, expr: Expr) -> Value {
         self.expr = expr;
         self
     }
 
     /// Sets the gin of the value type..
-    pub fn with_gin<G: convert::Into<Gin>>(mut self, gin: G) -> Value<'a> {
+    pub fn with_gin<G: convert::Into<Gin>>(mut self, gin: G) -> Value {
         self.type_ = self.type_.with_gin(gin.into());
         self
     }
 
     /// Sets the gvn of the value.
-    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value<'a> {
+    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Value {
         self.gvn = gvn.into();
         self
     }
 
     /// Sets the range.
-    pub fn with_range(mut self, pos: usize, len: usize) -> Value<'a> {
+    pub fn with_range(mut self, pos: usize, len: usize) -> Value {
         self.range = com::Range::new(pos, len);
         self
     }
 
     /// Sets the type.
-    pub fn with_type(mut self, t: Type<'a>) -> Value<'a> {
+    pub fn with_type(mut self, t: Type) -> Value {
         self.type_ = t;
         self
     }
 
     /// Strips the type.
-    pub fn without_type(mut self) -> Value<'a> {
+    pub fn without_type(mut self) -> Value {
         self.type_ = Type::unresolved();
         self
     }
 }
 
-impl Value<'static> {
+impl Value {
     /// Returns a Bool Value.
     pub fn bool_(b: bool) -> Self {
         Value {
@@ -286,105 +285,10 @@ impl ValueIdentifier {
 }
 
 //
-//  CloneInto implementations
-//
-
-impl<'a, 'target> CloneInto<'target> for BuiltinValue<'a> {
-    type Output = BuiltinValue<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::BuiltinValue::*;
-
-        match *self {
-            Bool(b) => Bool(b),
-            Int(i) => Int(i),
-            String(s) => String(arena.insert_slice(s)),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Callable<'a> {
-    type Output = Callable<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Callable::*;
-
-        match *self {
-            Builtin(f) => Builtin(f),
-            Function(ref f) => Function(arena.intern(f)),
-            Unknown(v) => Unknown(v),
-            Unresolved(c) => Unresolved(CloneInto::clone_into(c, arena)),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Expr<'a> {
-    type Output = Expr<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Expr::*;
-
-        match *self {
-            Block(stmts, v) => Block(
-                CloneInto::clone_into(stmts, arena),
-                v.map(|v| arena.intern_ref(v)),
-            ),
-            BuiltinVal(v) => BuiltinVal(arena.intern(&v)),
-            Call(c, args) => Call(
-                arena.intern(&c),
-                CloneInto::clone_into(args, arena),
-            ),
-            Constructor(c) => Constructor(arena.intern(&c)),
-            If(c, t, f) => If(
-                arena.intern_ref(c),
-                arena.intern_ref(t),
-                arena.intern_ref(f),
-            ),
-            Implicit(i) => Implicit(arena.intern(&i)),
-            Loop(stmts) => Loop(CloneInto::clone_into(stmts, arena)),
-            Ref(v, gvn) => Ref(v, gvn),
-            Tuple(t) => Tuple(arena.intern(&t)),
-            _ => panic!("not yet implement for {:?}", self),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Implicit<'a> {
-    type Output = Implicit<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Implicit::*;
-
-        match *self {
-            ToEnum(e, v) => ToEnum(e, arena.intern_ref(v)),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Value<'a> {
-    type Output = Value<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Value {
-            type_: arena.intern(&self.type_),
-            range: self.range,
-            expr: arena.intern(&self.expr),
-            gvn: Default::default(),
-        }
-    }
-}
-
-impl<'target> CloneInto<'target> for ValueIdentifier {
-    type Output = ValueIdentifier;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
-}
-
-//
 //  Span Implementations
 //
 
-impl<'a> Span for Value<'a> {
+impl Span for Value {
     /// Returns the range spanned by the value.
     fn span(&self) -> com::Range { self.range }
 }
@@ -395,11 +299,39 @@ impl Span for ValueIdentifier {
 }
 
 //
+//  Debug Implementations
+//
+
+impl std::fmt::Debug for Gvn {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "Gvn({})", self.0)
+    }
+}
+
+impl std::fmt::Debug for ValueIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "ValueIdentifier({:?}, {})", self.0, self.1)
+    }
+}
+
+//
+//  Default Implementations
+//
+
+impl Default for Callable {
+    fn default() -> Callable { Callable::Unknown(Default::default()) }
+}
+
+impl Default for Expr {
+    fn default() -> Expr { Expr::UnresolvedRef(Default::default()) }
+}
+
+//
 //  From Implementations
 //
 
-impl<'a> convert::From<BuiltinValue<'a>> for bool {
-    fn from(value: BuiltinValue<'a>) -> Self {
+impl convert::From<BuiltinValue> for bool {
+    fn from(value: BuiltinValue) -> Self {
         match value {
             BuiltinValue::Bool(b) => b,
             _ => panic!("{} is not a boolean", value),
@@ -407,8 +339,8 @@ impl<'a> convert::From<BuiltinValue<'a>> for bool {
     }
 }
 
-impl<'a> convert::From<BuiltinValue<'a>> for i64 {
-    fn from(value: BuiltinValue<'a>) -> Self {
+impl convert::From<BuiltinValue> for i64 {
+    fn from(value: BuiltinValue) -> Self {
         match value {
             BuiltinValue::Int(i) => i,
             _ => panic!("{} is not an integer", value),
@@ -416,22 +348,22 @@ impl<'a> convert::From<BuiltinValue<'a>> for i64 {
     }
 }
 
-impl<'a> convert::From<Constructor<'a, Value<'a>>> for Expr<'a> {
-    fn from(c: Constructor<'a, Value<'a>>) -> Self { Expr::Constructor(c) }
+impl convert::From<Constructor<Value>> for Expr {
+    fn from(c: Constructor<Value>) -> Self { Expr::Constructor(c) }
 }
 
-impl<'a> convert::From<Tuple<'a, Value<'a>>> for Expr<'a> {
-    fn from(t: Tuple<'a, Value<'a>>) -> Self { Expr::Tuple(t) }
+impl convert::From<Tuple<Value>> for Expr {
+    fn from(t: Tuple<Value>) -> Self { Expr::Tuple(t) }
 }
 
 impl convert::From<u32> for Gvn {
     fn from(v: u32) -> Gvn { Gvn(v) }
 }
 
-impl<'a> convert::From<Constructor<'a, Value<'a>>> for Value<'a> {
-    fn from(c: Constructor<'a, Value<'a>>) -> Self {
+impl convert::From<Constructor<Value>> for Value {
+    fn from(c: Constructor<Value>) -> Self {
         Value {
-            type_: c.type_,
+            type_: c.type_.clone(),
             range: c.span(),
             expr: Expr::Constructor(c),
             gvn: Default::default(),
@@ -449,13 +381,13 @@ impl convert::From<ast::VariableIdentifier> for ValueIdentifier {
 //  Implementation Details
 //
 
-impl<'a> fmt::Display for BuiltinValue<'a> {
+impl fmt::Display for BuiltinValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match *self {
+        match self {
             BuiltinValue::Bool(b) =>
-                write!(f, "{}", if b { "true" } else { "false" }),
+                write!(f, "{}", if *b { "true" } else { "false" }),
             BuiltinValue::Int(i) => write!(f, "{:x}", i),
-            BuiltinValue::String(s) => write!(f, "{}", com::Slice(s)),
+            BuiltinValue::String(s) => write!(f, "{}", com::Slice(&*s)),
         }
     }
 }
@@ -483,11 +415,11 @@ impl fmt::Display for BuiltinFunction {
     }
 }
 
-impl<'a> fmt::Display for Callable<'a> {
+impl fmt::Display for Callable {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::Callable::*;
 
-        match *self {
+        match self {
             Builtin(b) => write!(f, "{}", b),
             Function(fun) => write!(f, "{}", fun.name),
             Unknown(_) => write!(f, "<unknown>"),

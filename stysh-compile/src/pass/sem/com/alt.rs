@@ -34,12 +34,12 @@ impl<T> Alteration<T> {
     }
 
     /// Transforms the entity.
-    pub fn map<R, F>(self, f: F) -> Alteration<R>
+    pub fn map<R, F>(self, fun: F) -> Alteration<R>
         where
             F: FnOnce(T) -> R
     {
         let altered = self.altered;
-        let entity = f(self.entity);
+        let entity = fun(self.entity);
 
         Alteration { entity, altered }
     }
@@ -51,10 +51,10 @@ impl<T> Alteration<T> {
     /// -   altered: the sum of altered references.
     pub fn combine<R, F>(self, r: R, f: F) -> Alteration<R>
         where
-            F: FnOnce(T) -> R
+            F: FnOnce(R, T) -> R
     {
         let altered = self.altered;
-        let entity = if altered == 0 { r } else { f(self.entity) };
+        let entity = if altered == 0 { r } else { f(r, self.entity) };
 
         Alteration { entity, altered }
     }
@@ -67,11 +67,11 @@ impl<T> Alteration<T> {
     pub fn combine2<T1, R, F>(self, r: R, t1: Alteration<T1>, f: F)
         -> Alteration<R>
         where
-            F: FnOnce(T, T1) -> R
+            F: FnOnce(R, T, T1) -> R
     {
         let altered = self.altered + t1.altered;
         let entity =
-            if altered == 0 { r } else { f(self.entity, t1.entity) };
+            if altered == 0 { r } else { f(r, self.entity, t1.entity) };
 
         Alteration { entity, altered }
     }
@@ -90,13 +90,13 @@ impl<T> Alteration<T> {
     )
         -> Alteration<R>
         where
-            F: FnOnce(T, T1, T2) -> R
+            F: FnOnce(R, T, T1, T2) -> R
     {
         let altered = self.altered + t1.altered + t2.altered;
         let entity = if altered == 0 {
             r
         } else {
-            f(self.entity, t1.entity, t2.entity)
+            f(r, self.entity, t1.entity, t2.entity)
         };
 
         Alteration { entity, altered }

@@ -6,38 +6,39 @@
 //! This modules also defines a `SimpleRegistry` structure, a simple
 //! implementation of the `Registry` trait.
 
+use std::collections::HashMap;
+
 use basic::com::Span;
-use basic::mem;
 use model::{hir, sir};
 
 /// Registry
 ///
 /// A `Registry` is used by the interpreter to look-up the implementation
 /// corresponding to a function.
-pub trait Registry<'a> {
+pub trait Registry {
     /// Look-up a ControlFlowGraph.
     fn lookup_cfg(&self, key: hir::ItemIdentifier)
-        -> Option<sir::ControlFlowGraph<'a>>;
+        -> Option<sir::ControlFlowGraph>;
 }
 
 /// SimpleRegistry
 ///
 /// A simple implementation of a `Registry`.
-pub struct SimpleRegistry<'a> {
-    cfgs: mem::ArrayMap<'a, hir::ItemIdentifier, sir::ControlFlowGraph<'a>>,
+pub struct SimpleRegistry {
+    cfgs: HashMap<hir::ItemIdentifier, sir::ControlFlowGraph>,
 }
 
-impl<'a> SimpleRegistry<'a> {
+impl SimpleRegistry {
     /// Creates an instance of the `SimpleRegistry`.
-    pub fn new(arena: &'a mem::Arena) -> SimpleRegistry<'a> {
-        SimpleRegistry { cfgs: mem::ArrayMap::new(arena) }
+    pub fn new() -> SimpleRegistry {
+        SimpleRegistry { cfgs: HashMap::new() }
     }
 
     /// Adds a cfg to the registry.
     pub fn insert(
         &mut self,
         id: hir::ItemIdentifier,
-        cfg: sir::ControlFlowGraph<'a>
+        cfg: sir::ControlFlowGraph,
     )
     {
         assert!(
@@ -47,9 +48,9 @@ impl<'a> SimpleRegistry<'a> {
     }
 }
 
-impl<'a> Registry<'a> for SimpleRegistry<'a> {
+impl Registry for SimpleRegistry {
     fn lookup_cfg(&self, key: hir::ItemIdentifier)
-        -> Option<sir::ControlFlowGraph<'a>>
+        -> Option<sir::ControlFlowGraph>
     {
         self.cfgs.get(&key).cloned()
     }

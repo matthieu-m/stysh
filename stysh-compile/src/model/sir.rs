@@ -32,53 +32,55 @@
 
 use std;
 
-use basic::{com, mem};
+use basic::com;
+use basic::mem::DynArray;
+
 use model::hir;
 
 /// A Control Flow Graph.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ControlFlowGraph<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ControlFlowGraph {
     /// The list of basic blocks of this graph.
     ///
     /// Note: the basic block refer to each others by indices in this list.
-    pub blocks: &'a [BasicBlock<'a>]
+    pub blocks: DynArray<BasicBlock>
 }
 
 /// A Basic Block.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct BasicBlock<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct BasicBlock {
     /// The list of arguments of this basic block.
-    pub arguments: &'a [hir::Type<'a>],
+    pub arguments: DynArray<hir::Type>,
     /// The list of instructions of this basic block.
-    pub instructions: &'a [Instruction<'a>],
+    pub instructions: DynArray<Instruction>,
     /// The last instruction of this basic block.
-    pub exit: TerminatorInstruction<'a>,
+    pub exit: TerminatorInstruction,
 }
 
 /// A unique identifier for a basic block in a control flow graph.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BlockId(u32);
 
 /// A unique identifier for an argument or instruction result in a basic block.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ValueId(u16);
 
 /// An instruction.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Instruction<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Instruction {
     /// A function call.
-    Call(hir::Callable<'a>, &'a [ValueId], com::Range),
+    Call(hir::Callable, DynArray<ValueId>, com::Range),
     /// A field load.
-    Field(hir::Type<'a>, ValueId, u16, com::Range),
+    Field(hir::Type, ValueId, u16, com::Range),
     /// A value load.
-    Load(hir::BuiltinValue<'a>, com::Range),
+    Load(hir::BuiltinValue, com::Range),
     /// A composite creation.
-    New(hir::Type<'a>, &'a [ValueId], com::Range),
+    New(hir::Type, DynArray<ValueId>, com::Range),
 }
 
 /// An instruction.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum TerminatorInstruction<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum TerminatorInstruction {
     /// Branch instruction, the destination of which is determined by the value
     /// of its ValueId which MUST represent a valid index into the array.
     ///
@@ -88,9 +90,9 @@ pub enum TerminatorInstruction<'a> {
     ///
     /// Note:   for ease of use, a boolean can be used to index a 2 elements
     ///         array, in which case "true" maps to 0 and "false" to 1.
-    Branch(ValueId, &'a [Jump<'a>]),
+    Branch(ValueId, DynArray<Jump>),
     /// Unconditional jump to another block.
-    Jump(Jump<'a>),
+    Jump(Jump),
     /// Return the control to the caller.
     Return(ValueId),
     /// Unreachable, this may occur as a result of optimizations.
@@ -98,33 +100,33 @@ pub enum TerminatorInstruction<'a> {
 }
 
 /// A jump to another block.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Jump<'a> {
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Jump {
     /// ID of the block to jump to.
     pub dest: BlockId,
     /// Arguments to pass to the block.
-    pub arguments: &'a [ValueId],
+    pub arguments: DynArray<ValueId>,
 }
 
-impl<'a> ControlFlowGraph<'a> {
+impl ControlFlowGraph {
     /// Returns the range spanned by the graph.
     pub fn range(&self) -> com::Range {
-        let initial = self.blocks[0].range();
+        let initial = self.blocks.at(0).range();
         self.blocks.iter().fold(initial, |acc, b| acc.extend(b.range()))
     }
 }
 
-impl<'a> BasicBlock<'a> {
+impl BasicBlock {
     /// Returns the range spanned by the block.
     pub fn range(&self) -> com::Range {
-        let initial = self.instructions[0].range();
+        let initial = self.instructions.at(0).range();
         self.instructions
             .iter()
             .fold(initial, |acc, instr| acc.extend(instr.range()))
     }
 }
 
-impl<'a> Instruction<'a> {
+impl Instruction {
     /// Returns the range spanned by the instruction.
     pub fn range(&self) -> com::Range {
         use self::Instruction::*;
@@ -138,14 +140,14 @@ impl<'a> Instruction<'a> {
     }
 
     /// Returns the resulting type of the instruction.
-    pub fn result_type(&self) -> hir::Type<'a> {
+    pub fn result_type(&self) -> hir::Type {
         use self::Instruction::*;
 
-        match *self {
+        match self {
             Call(fun, _, _) => fun.result_type(),
-            Field(type_, _, _, _) => type_,
+            Field(type_, _, _, _) => type_.clone(),
             Load(builtin, _) => builtin.result_type(),
-            New(type_, _, _) => type_,
+            New(type_, _, _) => type_.clone(),
         }
     }
 }
@@ -197,90 +199,7 @@ impl ValueId {
 //
 const VALUE_ID_ARGUMENT_MASK: u16 = 1u16 << 15;
 
-impl<'a, 'target> mem::CloneInto<'target> for ControlFlowGraph<'a> {
-    type Output = ControlFlowGraph<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        ControlFlowGraph {
-            blocks: mem::CloneInto::clone_into(self.blocks, arena)
-        }
-    }
-}
-
-impl<'a, 'target> mem::CloneInto<'target> for BasicBlock<'a> {
-    type Output = BasicBlock<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        BasicBlock {
-            arguments: mem::CloneInto::clone_into(self.arguments, arena),
-            instructions: mem::CloneInto::clone_into(self.instructions, arena),
-            exit: arena.intern(&self.exit),
-        }
-    }
-}
-
-impl<'a, 'target> mem::CloneInto<'target> for Instruction<'a> {
-    type Output = Instruction<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Instruction::*;
-
-        match *self {
-            Call(f, a, r) => Call(
-                arena.intern(&f),
-                mem::CloneInto::clone_into(a, arena),
-                r
-            ),
-            Field(t, v, f, r) => Field(arena.intern(&t), v, f, r),
-            Load(v, r) => Load(arena.intern(&v), r),
-            New(t, a, r) => New(
-                arena.intern(&t),
-                mem::CloneInto::clone_into(a, arena),
-                r
-            ),
-        }
-    }
-}
-
-impl<'a, 'target> mem::CloneInto<'target> for TerminatorInstruction<'a> {
-    type Output = TerminatorInstruction<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::TerminatorInstruction::*;
-
-        match *self {
-            Branch(v, j) => Branch(v, mem::CloneInto::clone_into(j, arena)),
-            Jump(j) => Jump(arena.intern(&j)),
-            Return(v) => Return(v),
-            Unreachable => Unreachable,
-        }
-    }
-}
-
-impl<'a, 'target> mem::CloneInto<'target> for Jump<'a> {
-    type Output = Jump<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Jump {
-            dest: self.dest,
-            arguments: mem::CloneInto::clone_into(self.arguments, arena),
-        }
-    }
-}
-
-impl<'target> mem::CloneInto<'target> for BlockId {
-    type Output = BlockId;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
-}
-
-impl<'target> mem::CloneInto<'target> for ValueId {
-    type Output = ValueId;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
-}
-
-impl<'a> std::fmt::Display for ControlFlowGraph<'a> {
+impl std::fmt::Display for ControlFlowGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         for (index, block) in self.blocks.iter().enumerate() {
             write!(f, "{} (", index)?;
@@ -296,7 +215,7 @@ impl<'a> std::fmt::Display for ControlFlowGraph<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for BasicBlock<'a> {
+impl std::fmt::Display for BasicBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "\n")?;
         for (index, instr) in self.instructions.iter().enumerate() {
@@ -306,9 +225,9 @@ impl<'a> std::fmt::Display for BasicBlock<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for Instruction<'a> {
+impl std::fmt::Display for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        match *self {
+        match self {
             Instruction::Call(fun, vals, r) => {
                 write!(f, "{}(", fun)?;
                 for (i, v) in vals.iter().enumerate() {
@@ -335,11 +254,11 @@ impl<'a> std::fmt::Display for Instruction<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for TerminatorInstruction<'a> {
+impl std::fmt::Display for TerminatorInstruction {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         use self::TerminatorInstruction::*;
 
-        match *self {
+        match self {
             Branch(value, jumps) => {
                 write!(f, "branch {} in [", value)?;
                 for (i, j) in jumps.iter().enumerate() {
@@ -355,7 +274,7 @@ impl<'a> std::fmt::Display for TerminatorInstruction<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for Jump<'a> {
+impl std::fmt::Display for Jump {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "<{}> (", self.dest.0)?;
         for (i, a) in self.arguments.iter().enumerate() {

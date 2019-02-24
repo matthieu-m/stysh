@@ -1,7 +1,5 @@
 //! Semantic pass: Nested Entity Fetching.
 
-use basic::mem;
-
 use model::hir::Registry;
 
 use super::{flat, fld, typ, Context};
@@ -9,26 +7,18 @@ use super::com::*;
 
 /// NestedEntityFetcher.
 #[derive(Clone)]
-pub struct NestedEntityFetcher<'a, 'g: 'a> {
-    core: CoreFetcher<'a, 'g>,
+pub struct NestedEntityFetcher<'a> {
+    core: CoreFetcher<'a>,
 }
 
 //
 //  Public interface of NestedEntityFetcher
 //
 
-impl<'a, 'g> NestedEntityFetcher<'a, 'g> {
+impl<'a> NestedEntityFetcher<'a> {
     /// Creates a new instance.
-    pub fn new(
-        context: &'a Context<'g>,
-        registry: &'a Registry<'g>,
-        global_arena: &'g mem::Arena,
-    )
-        -> Self
-    {
-        NestedEntityFetcher {
-            core: CoreFetcher::new(context, registry, global_arena)
-        }
+    pub fn new(context: &'a Context, registry: &'a Registry) -> Self {
+        NestedEntityFetcher { core: CoreFetcher::new(context, registry) }
     }
 
     /// Fetch nested entities from the context.
@@ -47,17 +37,17 @@ impl<'a, 'g> NestedEntityFetcher<'a, 'g> {
 //  Implementation of NestedEntityFetcher
 //
 
-impl<'a, 'g> NestedEntityFetcher<'a, 'g> {
-    fn fetch_entity(&self, e: flat::ValueHandle<'a, 'g>) -> Status {
+impl<'a> NestedEntityFetcher<'a> {
+    fn fetch_entity(&self, e: flat::ValueHandle<'a>) -> Status {
         self.fetch_type(e)
             .combine(self.fetch_field(e))
     }
 
-    fn fetch_field(&self, e: flat::ValueHandle<'a, 'g>) -> Status {
+    fn fetch_field(&self, e: flat::ValueHandle<'a>) -> Status {
         fld::FieldFetcher::new(self.core, e).fetch()
     }
 
-    fn fetch_type(&self, e: flat::ValueHandle<'a, 'g>) -> Status {
+    fn fetch_type(&self, e: flat::ValueHandle<'a>) -> Status {
         typ::TypeFetcher::new(self.core, e).fetch()
     }
 }

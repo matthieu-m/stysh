@@ -9,6 +9,7 @@
 mod arena;
 mod array;
 mod arraymap;
+mod heap;
 mod interner;
 mod jaggedarray;
 mod jaggedhashmap;
@@ -16,6 +17,7 @@ mod jaggedhashmap;
 pub use self::arena::{Arena, CloneInto};
 pub use self::array::Array;
 pub use self::arraymap::ArrayMap;
+pub use self::heap::{DynArray, Ptr};
 pub use self::interner::{Interner, InternerSnapshot, InternId};
 pub use self::jaggedarray::{JaggedArray, JaggedArrayIterator, JaggedArraySnapshot};
 pub use self::jaggedhashmap::{JaggedHashMap, JaggedHashMapSnapshot};

@@ -2,40 +2,39 @@
 
 use std::{convert, fmt};
 
-use basic::{com, mem};
-use basic::com::Span;
-use basic::mem::CloneInto;
+use basic::com::{self, Span};
+use basic::mem::{self, DynArray};
 
 use model::ast;
 use model::hir::*;
 
 /// A registry of the definitions
-pub trait Registry<'a>: fmt::Debug {
+pub trait Registry: fmt::Debug {
     /// Get the definition of the enum.
-    fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'a>>;
+    fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum>;
 
     /// Get the definition of the record.
-    fn lookup_record(&self, id: ItemIdentifier) -> Option<Record<'a>>;
+    fn lookup_record(&self, id: ItemIdentifier) -> Option<Record>;
 }
 
 /// A full-fledged item.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Item<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Item {
     /// A full-fledged enum definition.
-    Enum(Enum<'a>),
+    Enum(Enum),
     /// A full-fledged function definition.
-    Fun(Function<'a>),
+    Fun(Function),
     /// A full-fledged record definition.
-    Rec(Record<'a>),
+    Rec(Record),
 }
 
 /// A function argument.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Argument<'a> {
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Argument {
     /// The name.
     pub name: ValueIdentifier,
     /// The type.
-    pub type_: Type<'a>,
+    pub type_: Type,
     /// The range.
     pub range: com::Range,
     /// The GVN.
@@ -56,12 +55,12 @@ pub enum BuiltinType {
 }
 
 /// An enum.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Enum<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Enum {
     /// The prototype.
-    pub prototype: &'a EnumProto,
+    pub prototype: EnumProto,
     /// The variants.
-    pub variants: &'a [Record<'a>],
+    pub variants: DynArray<Record>,
 }
 
 /// An enum prototype.
@@ -74,62 +73,62 @@ pub struct EnumProto {
 }
 
 /// A function.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Function<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Function {
     /// The prototype.
-    pub prototype: &'a FunctionProto<'a>,
+    pub prototype: FunctionProto,
     /// The body.
-    pub body: Value<'a>,
+    pub body: Value,
 }
 
 /// A function prototype.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct FunctionProto<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct FunctionProto {
     /// The function identifier.
     pub name: ItemIdentifier,
     /// The function prototype range.
     pub range: com::Range,
     /// The function arguments (always arguments).
-    pub arguments: &'a [Argument<'a>],
+    pub arguments: DynArray<Argument>,
     /// The return type of the function.
-    pub result: Type<'a>,
+    pub result: Type,
 }
 
 /// A global item number.
 ///
 /// Defaults to 0, which is considered an invalid value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Gin(pub u32);
 
 /// A Path.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Path<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Path {
     /// The path components, in order; possibly empty.
-    pub components: &'a [Type<'a>],
+    pub components: DynArray<Type>,
 }
 
 /// An annotated prototype.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Prototype<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Prototype {
     /// An enum prototype.
     Enum(EnumProto),
     /// A function prototype.
-    Fun(FunctionProto<'a>),
+    Fun(FunctionProto),
     /// A record prototype.
     Rec(RecordProto),
 }
 
 /// A record.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Record<'a> {
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Record {
     /// The prototype.
-    pub prototype: &'a RecordProto,
+    pub prototype: RecordProto,
     /// The definition.
-    pub definition: Tuple<'a, Type<'a>>,
+    pub definition: Tuple<Type>,
 }
 
 /// A record prototype.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct RecordProto {
     /// The record identifier.
     pub name: ItemIdentifier,
@@ -140,35 +139,35 @@ pub struct RecordProto {
 }
 
 /// A Type.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Type<'a> {
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Type {
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
-    Enum(&'a Enum<'a>, Path<'a>, Gin),
+    Enum(Enum, Path, Gin),
     /// A record type, possibly nested.
-    Rec(&'a Record<'a>, Path<'a>, Gin),
+    Rec(Record, Path, Gin),
     /// A tuple type.
-    Tuple(Tuple<'a, Type<'a>>, Gin),
+    Tuple(Tuple<Type>, Gin),
     /// An unresolved type, possibly nested.
-    Unresolved(ItemIdentifier, Path<'a>, Gin),
+    Unresolved(ItemIdentifier, Path, Gin),
     /// An unresolved enum type, possibly nested.
-    UnresolvedEnum(EnumProto, Path<'a>, Gin),
+    UnresolvedEnum(EnumProto, Path, Gin),
     /// An unresolved record type, possibly nested.
-    UnresolvedRec(RecordProto, Path<'a>, Gin),
+    UnresolvedRec(RecordProto, Path, Gin),
 }
 
 /// An item identifier.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ItemIdentifier(pub mem::InternId, pub com::Range);
 
 //
 //  Public interface
 //
 
-impl<'a> Argument<'a> {
+impl Argument {
     /// Sets the gvn of the binding.
-    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Argument<'a> {
+    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Argument {
         self.gvn = gvn.into();
         self
     }
@@ -209,7 +208,7 @@ impl ItemIdentifier {
     pub fn unresolved() -> ItemIdentifier { Default::default() }
 }
 
-impl Type<'static> {
+impl Type {
     /// Returns a Bool type.
     pub fn bool_() -> Self { Type::Builtin(BuiltinType::Bool) }
 
@@ -233,42 +232,39 @@ impl Type<'static> {
             Gin::default(),
         )
     }
-}
 
-impl<'a> Type<'a> {
     /// Returns the type of the field, or Unresolved if unknown.
-    pub fn field(&self, field: Field) -> Type<'a> {
+    pub fn field(&self, field: Field) -> Type {
         self.fields().field(field).unwrap_or(Type::unresolved())
     }
 
     /// Returns the fields of the type, as a Tuple.
     ///
     /// Note:   unless the type is a Rec or Tuple, the Tuple will be empty.
-    pub fn fields(&self) -> Tuple<'a, Type<'a>> {
-        match *self {
-            Type::Rec(r, ..) => r.definition,
-            Type::Tuple(t, ..) => t,
+    pub fn fields(&self) -> Tuple<Type> {
+        match self {
+            Type::Rec(r, ..) => r.definition.clone(),
+            Type::Tuple(t, ..) => t.clone(),
             _ => Tuple::unit(),
         }
     }
-
     /// Returns the gin associated to the type.
     pub fn gin(&self) -> Gin {
         use self::Type::*;
 
-        match *self {
+        match self {
             Builtin(b) => b.gin(),
             Enum(_, _, gin) | Rec(_, _, gin) | Tuple(_, gin)
                 | Unresolved(_, _, gin) | UnresolvedEnum(_, _, gin)
                 | UnresolvedRec(_, _, gin)
-                    => gin,
+                    => *gin,
         }
     }
 
     /// Switches the gin of the type.
     ///
     /// Panics: If the type is a built-in.
-    pub fn with_gin(self, gin: Gin) -> Type<'a> {
+    pub fn with_gin(self, gin: Gin) -> Type {
         use self::Type::*;
 
         match self {
@@ -282,10 +278,11 @@ impl<'a> Type<'a> {
         }
     }
 
+
     /// Switches the path of the type.
     ///
     /// Panics: If this variant has no path.
-    pub fn with_path(self, p: Path<'a>) -> Type<'a> {
+    pub fn with_path(self, p: Path) -> Type {
         use self::Type::*;
 
         match self {
@@ -300,137 +297,10 @@ impl<'a> Type<'a> {
 }
 
 //
-//  CloneInto implementations
-//
-
-impl<'a, 'target> CloneInto<'target> for Argument<'a> {
-    type Output = Argument<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Argument {
-            name: self.name,
-            type_: arena.intern(&self.type_),
-            range: self.range,
-            gvn: self.gvn,
-        }
-    }
-}
-
-impl<'target> CloneInto<'target> for EnumProto {
-    type Output = EnumProto;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output {
-        *self
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Enum<'a> {
-    type Output = Enum<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Enum {
-            prototype: arena.intern_ref(self.prototype),
-            variants: CloneInto::clone_into(self.variants, arena),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Function<'a> {
-    type Output = Function<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Function {
-            prototype: arena.intern_ref(self.prototype),
-            body: arena.intern(&self.body),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for FunctionProto<'a> {
-    type Output = FunctionProto<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        FunctionProto {
-            name: self.name,
-            range: self.range,
-            arguments: CloneInto::clone_into(self.arguments, arena),
-            result: arena.intern(&self.result),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Prototype<'a> {
-    type Output = Prototype<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Prototype::*;
-
-        match *self {
-            Enum(e) => Enum(e),
-            Rec(r) => Rec(r),
-            Fun(fun) => Fun(arena.intern(&fun)),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Path<'a> {
-    type Output = Path<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Path {
-            components: CloneInto::clone_into(self.components, arena),
-        }
-    }
-}
-
-impl<'target> CloneInto<'target> for RecordProto {
-    type Output = RecordProto;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output {
-        *self
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Record<'a> {
-    type Output = Record<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        Record {
-            prototype: arena.intern_ref(self.prototype),
-            definition: arena.intern(&self.definition),
-        }
-    }
-}
-
-impl<'a, 'target> CloneInto<'target> for Type<'a> {
-    type Output = Type<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Type::*;
-
-        match *self {
-            Builtin(t) => Builtin(t),
-            Enum(e, p, g) => Enum(arena.intern_ref(e), arena.intern(&p), g),
-            Rec(r, p, g) => Rec(arena.intern_ref(r), arena.intern(&p), g),
-            Tuple(t, g) => Tuple(arena.intern(&t), g),
-            Unresolved(n, p, g) => Unresolved(n, arena.intern(&p), g),
-            UnresolvedEnum(e, p, g) => UnresolvedEnum(e, arena.intern(&p), g),
-            UnresolvedRec(r, p, g) => UnresolvedRec(r, arena.intern(&p), g),
-        }
-    }
-}
-
-impl<'target> CloneInto<'target> for ItemIdentifier {
-    type Output = ItemIdentifier;
-
-    fn clone_into(&self, _: &'target mem::Arena) -> Self::Output { *self }
-}
-
-//
 //  Span Implementations
 //
 
-impl<'a> Span for Argument<'a> {
+impl Span for Argument {
     /// Range spanned by the binding.
     fn span(&self) -> com::Range { self.range }
 }
@@ -440,12 +310,12 @@ impl Span for ItemIdentifier {
     fn span(&self) -> com::Range { self.1 }
 }
 
-impl<'a> Span for Prototype<'a> {
+impl Span for Prototype {
     /// Returns the range spanned by the prototype.
     fn span(&self) -> com::Range {
         use self::Prototype::*;
 
-        match *self {
+        match self {
             Enum(e) => e.range,
             Fun(fun) => fun.range,
             Rec(r) => r.range,
@@ -453,18 +323,18 @@ impl<'a> Span for Prototype<'a> {
     }
 }
 
-impl<'a> Span for Type<'a> {
+impl Span for Type {
     /// Returns the range this type would cover if it was anchored at 0.
     fn span(&self) -> com::Range {
         use self::Type::*;
         use self::BuiltinType::*;
 
-        fn len(i: ItemIdentifier, p: Path) -> usize {
+        fn len(i: ItemIdentifier, p: &Path) -> usize {
             p.components.iter().map(|c| c.span().length() + 2).sum::<usize>()
                 + i.span().length()
         }
 
-        let len = match *self {
+        let len = match self {
             Builtin(Bool) => 4,
             Builtin(Int) => 3,
             Builtin(String) => 6,
@@ -472,12 +342,28 @@ impl<'a> Span for Type<'a> {
             Enum(e, p, _) => len(e.prototype.name, p),
             Rec(r, p, _) => len(r.prototype.name, p),
             Tuple(t, _) => t.fields.iter().map(|t| t.span().length()).sum(),
-            Unresolved(i, p, _) => len(i, p),
+            Unresolved(i, p, _) => len(*i, p),
             UnresolvedEnum(e, p, _) => len(e.name, p),
             UnresolvedRec(r, p, _) => len(r.name, p),
         };
 
         com::Range::new(0, len)
+    }
+}
+
+//
+//  Debug Implementations
+//
+
+impl std::fmt::Debug for Gin {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "Gin({})", self.0)
+    }
+}
+
+impl std::fmt::Debug for ItemIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "ItemIdentifier({:?}, {})", self.0, self.1)
     }
 }
 
@@ -489,16 +375,16 @@ impl convert::From<u32> for Gin {
     fn from(i: u32) -> Gin { Gin(i) }
 }
 
-impl<'a> convert::From<Enum<'a>> for Item<'a> {
-    fn from(e: Enum<'a>) -> Self { Item::Enum(e) }
+impl convert::From<Enum> for Item {
+    fn from(e: Enum) -> Self { Item::Enum(e) }
 }
 
-impl<'a> convert::From<Function<'a>> for Item<'a> {
-    fn from(f: Function<'a>) -> Self { Item::Fun(f) }
+impl convert::From<Function> for Item {
+    fn from(f: Function) -> Self { Item::Fun(f) }
 }
 
-impl<'a> convert::From<Record<'a>> for Item<'a> {
-    fn from(r: Record<'a>) -> Self { Item::Rec(r) }
+impl convert::From<Record> for Item {
+    fn from(r: Record) -> Self { Item::Rec(r) }
 }
 
 impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
@@ -507,43 +393,43 @@ impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
     }
 }
 
-impl convert::From<EnumProto> for Prototype<'static> {
+impl convert::From<EnumProto> for Prototype {
     fn from(e: EnumProto) -> Self { Prototype::Enum(e) }
 }
 
-impl<'a> convert::From<FunctionProto<'a>> for Prototype<'a> {
-    fn from(f: FunctionProto<'a>) -> Self { Prototype::Fun(f) }
+impl convert::From<FunctionProto> for Prototype {
+    fn from(f: FunctionProto) -> Self { Prototype::Fun(f) }
 }
 
-impl convert::From<RecordProto> for Prototype<'static> {
+impl convert::From<RecordProto> for Prototype {
     fn from(r: RecordProto) -> Self { Prototype::Rec(r) }
 }
 
-impl convert::From<EnumProto> for Type<'static> {
+impl convert::From<EnumProto> for Type {
     fn from(e: EnumProto) -> Self {
         Type::UnresolvedEnum(e, Path::default(), Gin::default())
     }
 }
 
-impl convert::From<RecordProto> for Type<'static> {
+impl convert::From<RecordProto> for Type {
     fn from(r: RecordProto) -> Self {
         Type::UnresolvedRec(r, Path::default(), Gin::default())
     }
 }
 
-impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
-    fn from(t: Tuple<'a, Type<'a>>) -> Self { Type::Tuple(t, Gin::default()) }
+impl convert::From<Tuple<Type>> for Type {
+    fn from(t: Tuple<Type>) -> Self { Type::Tuple(t, Gin::default()) }
 }
 
 //
 //  Implementation Details
 //
 
-impl Default for Path<'static> {
-    fn default() -> Self { Path { components: &[] } }
+impl Default for Path {
+    fn default() -> Self { Path { components: Default::default() } }
 }
 
-impl Default for Type<'static> {
+impl Default for Type {
     fn default() -> Self { Type::unresolved() }
 }
 
@@ -553,15 +439,15 @@ impl fmt::Display for BuiltinType {
     }
 }
 
-impl<'a> fmt::Display for ItemIdentifier {
+impl fmt::Display for ItemIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "<{}>", self.span())
     }
 }
 
-impl<'a> fmt::Display for Path<'a> {
+impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        for c in self.components {
+        for c in &self.components {
             write!(f, "{}::", c)?;
         }
 
@@ -569,11 +455,11 @@ impl<'a> fmt::Display for Path<'a> {
     }
 }
 
-impl<'a> fmt::Display for Type<'a> {
+impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use self::Type::*;
 
-        match *self {
+        match self {
             Builtin(t) => write!(f, "{}", t),
             Enum(e, p, _) => write!(f, "{}{}", p, e.prototype.name),
             Rec(r, p, _) => write!(f, "{}{}", p, r.prototype.name),
@@ -587,52 +473,53 @@ impl<'a> fmt::Display for Type<'a> {
 
 /// Mocks for the traits.
 pub mod mocks {
-    use basic::mem;
+    use std::collections::HashMap;
+
     use basic::com::{self, Span};
 
     use super::{Enum, ItemIdentifier, Record, Registry};
 
     /// A mock for the Regitry trait.
     #[derive(Debug)]
-    pub struct MockRegistry<'g> {
+    pub struct MockRegistry {
         /// Map of enums to be returned from lookup_enum.
-        pub enums: mem::ArrayMap<'g, com::Range, Enum<'g>>,
+        pub enums: HashMap<com::Range, Enum>,
         /// Map of records to be returned from lookup_record.
-        pub records: mem::ArrayMap<'g, com::Range, Record<'g>>,
+        pub records: HashMap<com::Range, Record>,
     }
 
-    impl<'g> MockRegistry<'g> {
+    impl MockRegistry {
         /// Creates a new instance of MockRegistry.
-        pub fn new(arena: &'g mem::Arena) -> MockRegistry<'g> {
+        pub fn new() -> MockRegistry {
             MockRegistry { 
-                enums: mem::ArrayMap::new(arena),
-                records: mem::ArrayMap::new(arena),
+                enums: HashMap::new(),
+                records: HashMap::new(),
             }
         }
 
         /// Inserts an enum, indexing it by the span of its identifier.
         ///
         /// Note:   Also inserts all records it contains.
-        pub fn insert_enum(&mut self, e: Enum<'g>) {
-            self.enums.insert(e.prototype.name.span(), e);
+        pub fn insert_enum(&mut self, e: Enum) {
+            self.enums.insert(e.prototype.name.span(), e.clone());
 
             for r in e.variants {
-                self.insert_record(*r);
+                self.insert_record(r.clone());
             }
         }
 
         /// Inserts a record, indexing it by the span of its identifier.
-        pub fn insert_record(&mut self, r: Record<'g>) {
+        pub fn insert_record(&mut self, r: Record) {
             self.records.insert(r.prototype.name.span(), r);
         }
     }
 
-    impl<'g> Registry<'g> for MockRegistry<'g> {
-        fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum<'g>> {
+    impl Registry for MockRegistry {
+        fn lookup_enum(&self, id: ItemIdentifier) -> Option<Enum> {
             self.enums.get(&id.span()).cloned()
         }
 
-        fn lookup_record(&self, id: ItemIdentifier) -> Option<Record<'g>> {
+        fn lookup_record(&self, id: ItemIdentifier) -> Option<Record> {
             self.records.get(&id.span()).cloned()
         }
     }

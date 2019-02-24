@@ -370,7 +370,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
     }
 
     fn parse_string_impl(&self, f: &[StringFragment])
-        -> (&'g [StringFragment], &'g [u8])
+        -> (&'g [StringFragment], mem::InternId)
     {
         use self::StringFragment::*;
 
@@ -388,7 +388,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
         (
             self.raw.global().insert_slice(f),
-            self.raw.global().insert_slice(buffer.into_slice()),
+            self.raw.intern_bytes(buffer.into_slice()),
         )
     }
 }
@@ -797,7 +797,7 @@ mod tests {
 
         assert_eq!(
             exprit(&env, b"b'1 + 2'"),
-            e.literal(0, 8).push_text(2, 5).bytes(b"1 + 2").build()
+            e.literal(0, 8).push_text(2, 5).bytes().build()
         );
     }
 
@@ -887,7 +887,7 @@ mod tests {
 
         assert_eq!(
             exprit(&env, b"'1 + 2'"),
-            e.literal(0, 7).push_text(1, 5).string(b"1 + 2").build()
+            e.literal(0, 7).push_text(1, 5).string().build()
         );
     }
 

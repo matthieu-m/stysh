@@ -356,16 +356,14 @@ impl<'a> SymbolMapper<'a> {
         }
     }
 
-    fn value_of_literal_bytes(&self, bytes: &[u8], range: com::Range)
+    fn value_of_literal_bytes(&self, bytes: mem::InternId, range: com::Range)
         -> hir::Value
     {
-        let value = bytes.iter().cloned().collect();
-
         //  TODO(matthieum): Fix type, should be Array[[Byte]].
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(bytes)),
             gvn: self.context.gvn(),
         }
     }
@@ -381,15 +379,13 @@ impl<'a> SymbolMapper<'a> {
         }
     }
 
-    fn value_of_literal_string(&self, string: &[u8], range: com::Range)
+    fn value_of_literal_string(&self, string: mem::InternId, range: com::Range)
         -> hir::Value
     {
-        let value = string.iter().cloned().collect();
-
         hir::Value {
             type_: hir::Type::Builtin(hir::BuiltinType::String),
             range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
+            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(string)),
             gvn: self.context.gvn(),
         }
     }
@@ -584,10 +580,11 @@ mod tests {
         let v = HirFactory::new().value();
 
         let env = Env::new(b"'Hello, World!'", &global_arena);
+        let id = env.intern(b"Hello, World!");
 
         assert_eq!(
-            env.value_of(&e.literal(0, 15).push_text(1, 13).string(b"Hello, World!").build()),
-            v.string("Hello, World!", 0)
+            env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
+            v.string(id, 0, 15)
         );
     }
 
@@ -1213,6 +1210,10 @@ mod tests {
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
                 scrubber: hir::interning::Scrubber::new(),
             }
+        }
+
+        fn intern(&self, bytes: &[u8]) -> mem::InternId {
+            self.hir_resolver.interner().insert(bytes)
         }
 
         fn insert_enum(&mut self, enum_: hir::EnumProto, positions: &[usize]) {

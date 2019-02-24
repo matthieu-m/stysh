@@ -93,7 +93,7 @@ fn interpret_impl<'a>(
     );
 
     let cfg = create_cfg_from_value(&value);
-    evaluate(&cfg, cfg_registry)
+    evaluate(&cfg, interner.snapshot(), cfg_registry)
 }
 
 fn create_ast<'g>(
@@ -195,13 +195,15 @@ fn create_cfg_from_function(fun: &hir::Function) -> sir::ControlFlowGraph {
 
 fn evaluate(
     cfg: &sir::ControlFlowGraph,
+    interner: mem::InternerSnapshot<'_>,
     registry: &int::Registry,
 )
     -> int::Value
 {
     use stysh_compile::pass::int::Interpreter;
 
-    let result = Interpreter::new(registry).evaluate(cfg, Default::default());
+    let result = Interpreter::new(interner, registry)
+        .evaluate(cfg, Default::default());
 
     result
 }

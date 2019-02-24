@@ -21,7 +21,7 @@ fn fibonacci_recursive() {
             fib(0, 1, 8)
             "
         ),
-        "Builtin(Int(21))"
+        "Int(21)"
     )
 }
 
@@ -44,7 +44,7 @@ fn fibonnacci_iterative() {
             fib(8)
             "
         ),
-        "Builtin(Int(21))"
+        "Int(21)"
     )
 }
 

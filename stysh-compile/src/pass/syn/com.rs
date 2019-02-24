@@ -13,7 +13,7 @@ use pass::lex;
 pub struct RawParser<'a, 'g, 'local> {
     state: ParserState<'a>,
     source: &'a [u8],
-    interner: mem::InternerSnapshot<'g>,
+    interner: &'g mem::Interner,
     global_arena: &'g mem::Arena,
     local_arena: &'local mem::Arena,
 }
@@ -113,7 +113,7 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
         RawParser {
             state: ParserState::new(lexer.parse(raw)),
             source: raw,
-            interner: interner.snapshot(),
+            interner: interner,
             global_arena: global,
             local_arena: local,
         }
@@ -140,6 +140,10 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
         } else {
             panic!("Unknown token {:?}: {:?}", token, raw);
         }
+    }
+
+    pub fn intern_bytes(&self, bytes: &[u8]) -> mem::InternId {
+        self.interner.insert(bytes)
     }
 
     pub fn source(&self, token: tt::Token) -> &'a [u8] {

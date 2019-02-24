@@ -4,7 +4,7 @@ use std::{self, convert};
 
 use basic::com;
 use basic::com::Span;
-use basic::mem::{DynArray, Ptr};
+use basic::mem::{self, DynArray, Ptr};
 
 use model::hir::*;
 
@@ -741,11 +741,11 @@ impl ValueFactory {
     }
 
     /// Shortcut: creates a string Value.
-    pub fn string(&self, s: &'static str, pos: usize) -> Value {
+    pub fn string(&self, s: mem::InternId, pos: usize, len: usize) -> Value {
         value(
             Type::Builtin(BuiltinType::String),
             Expr::BuiltinVal(self.builtin().string(s))
-        ).with_range(pos, s.len() + 2)
+        ).with_range(pos, len)
     }
 
     /// Creates a CallBuilder.
@@ -890,8 +890,8 @@ impl BuiltinValueBuilder {
     }
 
     /// Creates a string.
-    pub fn string(&self, value: &'static str) -> BuiltinValue {
-        BuiltinValue::String(value.as_bytes().iter().cloned().collect())
+    pub fn string(&self, id: mem::InternId) -> BuiltinValue {
+        BuiltinValue::String(id)
     }
 }
 

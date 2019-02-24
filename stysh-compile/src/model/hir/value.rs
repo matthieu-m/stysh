@@ -83,14 +83,14 @@ pub enum BuiltinFunction {
 }
 
 /// A built-in value, the type is implicit.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum BuiltinValue {
     /// A boolean.
     Bool(bool),
     /// An integral.
     Int(i64),
     /// A String.
-    String(Vec<u8>),
+    String(mem::InternId),
 }
 
 /// A Callable.
@@ -387,7 +387,7 @@ impl fmt::Display for BuiltinValue {
             BuiltinValue::Bool(b) =>
                 write!(f, "{}", if *b { "true" } else { "false" }),
             BuiltinValue::Int(i) => write!(f, "{:x}", i),
-            BuiltinValue::String(s) => write!(f, "{}", com::Slice(&*s)),
+            BuiltinValue::String(i) => write!(f, "{:?}", i),
         }
     }
 }

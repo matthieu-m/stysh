@@ -2,7 +2,7 @@
 //!
 //! This module defines the entry point of the interpreter.
 
-use basic::mem::DynArray;
+use basic::mem::{DynArray, InternerSnapshot};
 use model::{hir, sir};
 use super::reg::Registry;
 
@@ -12,13 +12,16 @@ use super::reg::Registry;
 /// either a value, or an error if the interpretation cannot succeed (missing
 /// definitions, FFI call, ...).
 pub struct Interpreter<'a> {
+    interner: InternerSnapshot<'a>,
     registry: &'a Registry,
 }
 
 impl<'a> Interpreter<'a> {
     /// Creates a new instance of an interpreter.
-    pub fn new(registry: &'a Registry) -> Interpreter<'a> {
-        Interpreter { registry }
+    pub fn new(interner: InternerSnapshot<'a>, registry: &'a Registry)
+        -> Interpreter<'a>
+    {
+        Interpreter { interner, registry }
     }
 
     /// Returns the value evaluated from the SIR.
@@ -29,7 +32,7 @@ impl<'a> Interpreter<'a> {
     )
         -> Value
     {
-        let frame = FrameInterpreter::new(self.registry);
+        let frame = FrameInterpreter::new(self.interner, self.registry);
         frame.evaluate(cfg, arguments)
     }
 }
@@ -41,8 +44,12 @@ impl<'a> Interpreter<'a> {
 /// A value.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Value {
-    /// Builtin value.
-    Builtin(hir::BuiltinValue),
+    /// Boolean.
+    Bool(bool),
+    /// Integral.
+    Int(i64),
+    /// String.
+    String(Vec<u8>),
     /// A constructor call.
     Constructor(hir::Constructor<Value>),
     /// A tuple.
@@ -53,12 +60,15 @@ pub enum Value {
 //  Implementation Details
 //
 struct FrameInterpreter<'a> {
+    interner: InternerSnapshot<'a>,
     registry: &'a Registry,
 }
 
 impl<'a> FrameInterpreter<'a> {
-    fn new(registry: &'a Registry) -> FrameInterpreter<'a> {
-        FrameInterpreter { registry }
+    fn new(interner: InternerSnapshot<'a>, registry: &'a Registry)
+        -> FrameInterpreter<'a>
+    {
+        FrameInterpreter { interner, registry }
     }
 
     fn evaluate(
@@ -71,13 +81,14 @@ impl<'a> FrameInterpreter<'a> {
         use self::BlockResult::*;
 
         fn interpret_block<'a>(
+            interner: InternerSnapshot<'a>,
             registry: &'a Registry,
             block: &sir::BasicBlock,
             arguments: DynArray<Value>,
         )
             -> BlockResult
         {
-            let mut interpreter = BlockInterpreter::new(registry, arguments);
+            let mut interpreter = BlockInterpreter::new(interner, registry, arguments);
             interpreter.evaluate(block)
         }
 
@@ -87,6 +98,7 @@ impl<'a> FrameInterpreter<'a> {
         //  TODO(matthieum): add way to parameterize fuel.
         for _ in 0..1000 {
             let (i, args) = match interpret_block(
+                self.interner,
                 self.registry,
                 &cfg.blocks.at(index),
                 arguments
@@ -104,20 +116,22 @@ impl<'a> FrameInterpreter<'a> {
 }
 
 struct BlockInterpreter<'a> {
+    interner: InternerSnapshot<'a>,
     registry: &'a Registry,
     arguments: DynArray<Value>,
     bindings: DynArray<Value>,
 }
 
 impl<'a> BlockInterpreter<'a> {
-    fn new(registry: &'a Registry, arguments: DynArray<Value>)
+    fn new(
+        interner: InternerSnapshot<'a>,
+        registry: &'a Registry,
+        arguments: DynArray<Value>
+    )
         -> BlockInterpreter<'a>
     {
-        BlockInterpreter {
-            registry: registry,
-            arguments: arguments,
-            bindings: DynArray::new(vec!()),
-        }
+        let bindings = Default::default();
+        BlockInterpreter { interner, registry, arguments, bindings }
     }
 
     fn evaluate(&mut self, block: &sir::BasicBlock)
@@ -162,7 +176,7 @@ impl<'a> BlockInterpreter<'a> {
     fn eval_builtin(&self, fun: &hir::BuiltinFunction, args: DynArray<sir::ValueId>)
         -> Value
     {
-        self.eval_binary_fun(fun, args)
+        self.eval_builtin_fun(fun, args)
     }
 
     fn eval_field(&self, value: sir::ValueId, index: u16) -> Value {
@@ -185,7 +199,7 @@ impl<'a> BlockInterpreter<'a> {
         -> Value
     {
         let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
-        let interpreter = FrameInterpreter::new(self.registry);
+        let interpreter = FrameInterpreter::new(self.interner, self.registry);
 
         let arguments = DynArray::with_capacity(args.len());
         for a in args {
@@ -195,7 +209,7 @@ impl<'a> BlockInterpreter<'a> {
         interpreter.evaluate(&cfg, arguments)
     }
 
-    fn eval_binary_fun(
+    fn eval_builtin_fun(
         &self,
         fun: &hir::BuiltinFunction,
         args: DynArray<sir::ValueId>,
@@ -203,48 +217,41 @@ impl<'a> BlockInterpreter<'a> {
         -> Value
     {
         use model::hir::BuiltinFunction::*;
-        use model::hir::BuiltinValue::{Bool, Int};
+        use self::Value::{Bool, Int};
 
-        assert_eq!(args.len(), 2);
+        let left = args.get(0).map(|v| self.get_value(v));
+        let right = args.get(1).map(|v| self.get_value(v));
 
-        fn get_builtin(value: Value) -> hir::BuiltinValue {
-            if let Value::Builtin(b) = value {
-                return b.clone();
+        fn to_bool(value: Option<Value>) -> bool {
+            if let Some(Bool(b)) = value {
+                return b;
             }
-            unreachable!("Cannot get builtin value out of {:?}", value);
+            unreachable!("Expected boolean, got: {:?}", value);
         }
 
-        fn to_bool(value: hir::BuiltinValue) -> bool {
-            use std::convert::Into;
-            Into::<bool>::into(value)
+        fn to_int(value: Option<Value>) -> i64 {
+            if let Some(Int(i)) = value {
+                return i;
+            }
+            unreachable!("Expected integral, got: {:?}", value);
         }
 
-        fn to_int(value: hir::BuiltinValue) -> i64 {
-            use std::convert::Into;
-            Into::<i64>::into(value)
+        match fun {
+            And => Bool(to_bool(left) && to_bool(right)),
+            Add => Int(to_int(left) + to_int(right)),
+            Differ => Bool(left != right),
+            Equal => Bool(left == right),
+            FloorDivide => Int(to_int(left) / to_int(right)),
+            GreaterThan => Bool(left > right),
+            GreaterThanOrEqual => Bool(left >= right),
+            LessThan => Bool(left < right),
+            LessThanOrEqual => Bool(left <= right),
+            Multiply => Int(to_int(left) * to_int(right)),
+            Not => Bool(!to_bool(left)),
+            Or => Bool(to_bool(left) || to_bool(right)),
+            Substract => Int(to_int(left) - to_int(right)),
+            Xor => Bool(to_bool(left) ^ to_bool(right)),
         }
-
-        let left = || get_builtin(self.get_value(args.at(0)));
-        let right = || get_builtin(self.get_value(args.at(1)));
-
-        let value = match fun {
-            And => Bool(to_bool(left()) && to_bool(right())),
-            Add => Int(to_int(left()) + to_int(right())),
-            Differ => Bool(left() != right()),
-            Equal => Bool(left() == right()),
-            FloorDivide => Int(to_int(left()) / to_int(right())),
-            GreaterThan => Bool(left() > right()),
-            GreaterThanOrEqual => Bool(left() >= right()),
-            LessThan => Bool(left() < right()),
-            LessThanOrEqual => Bool(left() <= right()),
-            Multiply => Int(to_int(left()) * to_int(right())),
-            Not => Bool(!to_bool(left())),
-            Or => Bool(to_bool(left()) || to_bool(right())),
-            Substract => Int(to_int(left()) - to_int(right())),
-            Xor => Bool(to_bool(left()) ^ to_bool(right())),
-        };
-
-        Value::Builtin(value)
     }
 
     fn eval_new(
@@ -270,7 +277,16 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn load(&self, v: &hir::BuiltinValue) -> Value {
-        Value::Builtin(v.clone())
+        use model::hir::BuiltinValue::*;
+
+        match v {
+            Bool(b) => Value::Bool(*b),
+            Int(i) => Value::Int(*i),
+            String(id) => {
+                let slice = self.interner.get(*id).expect("Unknown InternId");
+                Value::String(slice.iter().cloned().collect())
+            },
+        }
     }
 
     fn get_value(&self, id: sir::ValueId) -> Value {
@@ -291,9 +307,8 @@ impl<'a> BlockInterpreter<'a> {
 
     fn get_branch(&self, index: sir::ValueId) -> usize {
         match self.get_value(index) {
-            Value::Builtin(hir::BuiltinValue::Int(i)) => i as usize,
-            Value::Builtin(hir::BuiltinValue::Bool(cond))
-                => if cond { 0 } else { 1 },
+            Value::Int(i) => i as usize,
+            Value::Bool(cond) => if cond { 0 } else { 1 },
             _ => unreachable!(),
         }
     }
@@ -320,7 +335,7 @@ enum BlockResult {
 #[cfg(test)]
 mod tests {
     use basic::com;
-    use basic::mem::DynArray;
+    use basic::mem::{DynArray, InternId, Interner, InternerSnapshot};
     use model::{hir, sir};
     use super::Value;
     use super::super::reg::{Registry, SimpleRegistry};
@@ -337,7 +352,7 @@ mod tests {
 
         assert_eq!(
             eval(&[], &cfg),
-            Value::Builtin(hir::BuiltinValue::Int(3))
+            Value::Int(3)
         );
     }
 
@@ -399,6 +414,7 @@ mod tests {
 
     #[test]
     fn call_user_defined_function() {
+        let interner = Interner::new();
         let mut registry = SimpleRegistry::new();
 
         let id = hir::ItemIdentifier(Default::default(), range(42, 5));
@@ -434,6 +450,7 @@ mod tests {
 
         assert_eq!(
             eval_with_registry(
+                interner.snapshot(),
                 &registry,
                 &[],
                 &cfg
@@ -515,14 +532,21 @@ mod tests {
 
     #[test]
     fn return_helloworld() {
+        let interner = Interner::new();
+        let registry = SimpleRegistry::new();
+
+        let id = interner.insert(b"Hello, World!");
+
         assert_eq!(
-            eval(
+            eval_with_registry(
+                interner.snapshot(),
+                &registry,
                 &[],
                 &cfg(&[
                     block_return(
                         &[],
                         &[
-                            instr_load_string(b"Hello, World!")
+                            instr_load_string(id)
                         ]
                     ),
                 ]),
@@ -537,11 +561,13 @@ mod tests {
     )
         -> Value
     {
+        let interner = Interner::new();
         let registry = SimpleRegistry::new();
-        eval_with_registry(&registry, arguments, cfg)
+        eval_with_registry(interner.snapshot(), &registry, arguments, cfg)
     }
 
     fn eval_with_registry(
+        interner: InternerSnapshot<'_>,
         registry: &Registry,
         arguments: &[Value],
         cfg: &sir::ControlFlowGraph,
@@ -550,14 +576,14 @@ mod tests {
     {
         use super::Interpreter;
 
-        Interpreter::new(registry).evaluate(cfg, dyn_array(arguments))
+        Interpreter::new(interner, registry).evaluate(cfg, dyn_array(arguments))
     }
 
-    fn val_int(i: i64) -> Value { Value::Builtin(hir::BuiltinValue::Int(i)) }
+    fn val_int(i: i64) -> Value { Value::Int(i) }
 
     fn val_string(s: &[u8]) -> Value {
         let value = s.iter().cloned().collect();
-        Value::Builtin(hir::BuiltinValue::String(value))
+        Value::String(value)
     }
 
     fn val_arg(index: usize) -> sir::ValueId {
@@ -588,9 +614,8 @@ mod tests {
         sir::Instruction::Load(hir::BuiltinValue::Int(i), range(0, 0))
     }
 
-    fn instr_load_string(s: &[u8]) -> sir::Instruction {
-        let value = s.iter().cloned().collect();
-        sir::Instruction::Load(hir::BuiltinValue::String(value), range(0, 0))
+    fn instr_load_string(s: InternId) -> sir::Instruction {
+        sir::Instruction::Load(hir::BuiltinValue::String(s), range(0, 0))
     }
 
     fn instr_new(type_: hir::Type, values: &[sir::ValueId])

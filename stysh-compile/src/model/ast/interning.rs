@@ -66,7 +66,7 @@ impl<'g> Resolver<'g> {
             FieldAccess(f) => FieldAccess(self.resolve_field_access(f)),
             FunctionCall(f) => FunctionCall(self.resolve_function_call(f)),
             If(i) => If(self.insert(self.resolve_if(*i))),
-            Lit(l) => Lit(self.global_arena.intern(&l)),
+            Lit(l) => Lit(self.resolve_literal(l)),
             Loop(l) => Loop(self.insert(self.resolve_loop(*l))),
             PreOp(op, pos, e)
                 => PreOp(op, pos, self.insert(self.resolve_expr(*e))),
@@ -179,7 +179,7 @@ impl<'g> Scrubber<'g> {
             FieldAccess(f) => FieldAccess(self.scrub_field_access(f)),
             FunctionCall(f) => FunctionCall(self.scrub_function_call(f)),
             If(i) => If(self.insert(self.scrub_if(*i))),
-            Lit(l) => Lit(self.global_arena.intern(&l)),
+            Lit(l) => Lit(self.scrub_literal(l)),
             Loop(l) => Loop(self.insert(self.scrub_loop(*l))),
             PreOp(op, pos, e)
                 => PreOp(op, pos, self.insert(self.scrub_expr(*e))),
@@ -393,6 +393,18 @@ impl<'g> Resolver<'g> {
         }
     }
 
+    fn resolve_literal(&self, l: Literal) -> Literal<'g> {
+        use self::Literal::*;
+
+        let resolved = match l {
+            Bytes(f, _, r) => Bytes(f, self.from_fragments(f), r),
+            String(f, _, r) => String(f, self.from_fragments(f), r),
+            other => other,
+        };
+
+        self.global_arena.intern(&resolved)
+    }
+
     fn resolve_loop(&self, l: Loop) -> Loop<'g> {
         let mut stmts = self.array(l.statements.len());
         for s in l.statements {
@@ -521,6 +533,25 @@ impl<'g> Resolver<'g> {
         }
     }
 
+    fn from_fragments(&self, fragments: &[StringFragment]) -> mem::InternId {
+        use self::StringFragment::*;
+
+        let mut buffer = vec!();
+
+        for f in fragments {
+            match f {
+                Text(tok) => buffer.extend_from_slice(&self.source[tok.span()]),
+                SpecialCharacter(tok) => match &self.source[tok.span()] {
+                    b"N" => buffer.push(b'\n'),
+                    _ => unimplemented!(),
+                },
+                _ => unimplemented!(),
+            }
+        }
+
+        self.interner.insert(&*buffer)
+    }
+
     fn from_range(&self, range: com::Range) -> mem::InternId {
         let raw = &self.source[range];
         self.interner.insert(raw)
@@ -616,6 +647,18 @@ impl<'g> Scrubber<'g> {
             Unexpected(r) => Unexpected(r),
             Unit(t) => Unit(t.with_id(Default::default())),
         }
+    }
+
+    fn scrub_literal(&self, l: Literal) -> Literal<'g> {
+        use self::Literal::*;
+
+        let scrubbed = match l {
+            Bytes(f, _, r) => Bytes(f, Default::default(), r),
+            String(f, _, r) => String(f, Default::default(), r),
+            other => other,
+        };
+
+        self.global_arena.intern(&scrubbed)
     }
 
     fn scrub_loop(&self, l: Loop) -> Loop<'g> {

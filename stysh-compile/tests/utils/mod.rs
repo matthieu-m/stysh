@@ -9,7 +9,7 @@ pub fn interpret(
     raw: &[u8],
     interner: &mem::Interner,
 )
-    -> hir::Value
+    -> int::Value
 {
     let builtin = scp::BuiltinScope::new();
     let mut scope = scp::BlockScope::new(&builtin);
@@ -35,7 +35,7 @@ fn interpret_impl<'a>(
     cfg_registry: &mut int::SimpleRegistry,
     interner: &mem::Interner,
 )
-    -> hir::Value
+    -> int::Value
 {
     let global_arena = mem::Arena::new();
     let nodes = create_ast(raw, interner, &global_arena);
@@ -197,7 +197,7 @@ fn evaluate(
     cfg: &sir::ControlFlowGraph,
     registry: &int::Registry,
 )
-    -> hir::Value
+    -> int::Value
 {
     use stysh_compile::pass::int::Interpreter;
 

@@ -69,13 +69,22 @@ pub struct ValueId(u16);
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Instruction {
     /// A function call.
-    Call(hir::Callable, DynArray<ValueId>, com::Range),
+    Call(Callable, DynArray<ValueId>, com::Range),
     /// A field load.
     Field(hir::Type, ValueId, u16, com::Range),
     /// A value load.
     Load(hir::BuiltinValue, com::Range),
     /// A composite creation.
     New(hir::Type, DynArray<ValueId>, com::Range),
+}
+
+/// A Callable.
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Callable {
+    /// A Builtin.
+    Builtin(hir::BuiltinFunction),
+    /// User-defined.
+    Function(hir::FunctionProto),
 }
 
 /// An instruction.
@@ -148,6 +157,18 @@ impl Instruction {
             Field(type_, _, _, _) => type_.clone(),
             Load(builtin, _) => builtin.result_type(),
             New(type_, _, _) => type_.clone(),
+        }
+    }
+}
+
+impl Callable {
+    /// Returns the type of the result of the function.
+    pub fn result_type(&self) -> hir::Type {
+        use self::Callable::*;
+
+        match self {
+            Builtin(fun) => fun.result_type(),
+            Function(fun) => fun.result.clone(),
         }
     }
 }
@@ -250,6 +271,17 @@ impl std::fmt::Display for Instruction {
                 }
                 write!(f, ") ; {}", r)
             },
+        }
+    }
+}
+
+impl std::fmt::Display for Callable {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        use self::Callable::*;
+
+        match self {
+            Builtin(b) => write!(f, "{}", b),
+            Function(fun) => write!(f, "{}", fun.name),
         }
     }
 }

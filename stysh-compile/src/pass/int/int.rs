@@ -2,7 +2,6 @@
 //!
 //! This module defines the entry point of the interpreter.
 
-use basic::com;
 use basic::mem::DynArray;
 use model::{hir, sir};
 use super::reg::Registry;
@@ -26,13 +25,28 @@ impl<'a> Interpreter<'a> {
     pub fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph,
-        arguments: DynArray<hir::Value>,
+        arguments: DynArray<Value>,
     )
-        -> hir::Value
+        -> Value
     {
         let frame = FrameInterpreter::new(self.registry);
         frame.evaluate(cfg, arguments)
     }
+}
+
+//
+//  Values
+//
+
+/// A value.
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Value {
+    /// Builtin value.
+    Builtin(hir::BuiltinValue),
+    /// A constructor call.
+    Constructor(hir::Constructor<Value>),
+    /// A tuple.
+    Tuple(hir::Tuple<Value>),
 }
 
 //
@@ -50,16 +64,16 @@ impl<'a> FrameInterpreter<'a> {
     fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph,
-        arguments: DynArray<hir::Value>,
+        arguments: DynArray<Value>,
     )
-        -> hir::Value
+        -> Value
     {
         use self::BlockResult::*;
 
         fn interpret_block<'a>(
             registry: &'a Registry,
             block: &sir::BasicBlock,
-            arguments: DynArray<hir::Value>,
+            arguments: DynArray<Value>,
         )
             -> BlockResult
         {
@@ -79,12 +93,7 @@ impl<'a> FrameInterpreter<'a> {
             ) 
             {
                 Jump(index, args) => (index, args),
-                Return(v) => return hir::Value {
-                    type_: v.type_,
-                    range: com::Range::new(0, 0),
-                    expr: v.expr,
-                    gvn: Default::default(),
-                },
+                Return(v) => return v,
             };
             index = i.index();
             arguments = args;
@@ -96,15 +105,12 @@ impl<'a> FrameInterpreter<'a> {
 
 struct BlockInterpreter<'a> {
     registry: &'a Registry,
-    arguments: DynArray<hir::Value>,
-    bindings: DynArray<hir::Value>,
+    arguments: DynArray<Value>,
+    bindings: DynArray<Value>,
 }
 
 impl<'a> BlockInterpreter<'a> {
-    fn new(
-        registry: &'a Registry,
-        arguments: DynArray<hir::Value>,
-    )
+    fn new(registry: &'a Registry, arguments: DynArray<Value>)
         -> BlockInterpreter<'a>
     {
         BlockInterpreter {
@@ -132,42 +138,39 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn eval_instr(&self, instr: &sir::Instruction) -> hir::Value
+    fn eval_instr(&self, instr: &sir::Instruction) -> Value
     {
         use model::sir::Instruction::*;
 
         match instr {
             Call(fun, args, _) => self.eval_call(fun, args.clone()),
             Field(_, value, index, _) => self.eval_field(*value, *index),
-            Load(value, range) => self.load(value, *range),
-            New(type_, fields, range) => self.eval_new(type_.clone(), fields.clone(), *range),
+            Load(value, _) => self.load(value),
+            New(type_, fields, _) => self.eval_new(type_.clone(), fields.clone()),
         }
     }
 
-    fn eval_call(&self, fun: &hir::Callable, args: DynArray<sir::ValueId>)
-        -> hir::Value
+    fn eval_call(&self, fun: &sir::Callable, args: DynArray<sir::ValueId>)
+        -> Value
     {
         match fun {
-            hir::Callable::Builtin(b) => self.eval_builtin(b, args),
-            hir::Callable::Function(ref f) => self.eval_function(f, args),
-            _ => panic!("unimplemented - eval_call - {:?}", fun),
+            sir::Callable::Builtin(b) => self.eval_builtin(b, args),
+            sir::Callable::Function(f) => self.eval_function(f, args),
         }
     }
 
     fn eval_builtin(&self, fun: &hir::BuiltinFunction, args: DynArray<sir::ValueId>)
-        -> hir::Value
+        -> Value
     {
         self.eval_binary_fun(fun, args)
     }
 
-    fn eval_field(&self, value: sir::ValueId, index: u16)
-        -> hir::Value
-    {
-        use self::hir::Expr::*;
+    fn eval_field(&self, value: sir::ValueId, index: u16) -> Value {
+        use self::Value::*;
 
         let index = index as usize;
 
-        match self.get_value(value).expr {
+        match self.get_value(value) {
             Constructor(c) => c.arguments.fields.at(index),
             Tuple(tup) => tup.fields.at(index),
             _ => unreachable!(),
@@ -179,7 +182,7 @@ impl<'a> BlockInterpreter<'a> {
         fun: &hir::FunctionProto,
         args: DynArray<sir::ValueId>,
     )
-        -> hir::Value
+        -> Value
     {
         let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
         let interpreter = FrameInterpreter::new(self.registry);
@@ -197,18 +200,18 @@ impl<'a> BlockInterpreter<'a> {
         fun: &hir::BuiltinFunction,
         args: DynArray<sir::ValueId>,
     )
-        -> hir::Value
+        -> Value
     {
         use model::hir::BuiltinFunction::*;
         use model::hir::BuiltinValue::{Bool, Int};
 
         assert_eq!(args.len(), 2);
 
-        fn get_builtin(value: hir::Value) -> hir::BuiltinValue {
-            match value.expr {
-                hir::Expr::BuiltinVal(b) => b.clone(),
-                _ => unreachable!(),
+        fn get_builtin(value: Value) -> hir::BuiltinValue {
+            if let Value::Builtin(b) = value {
+                return b.clone();
             }
+            unreachable!("Cannot get builtin value out of {:?}", value);
         }
 
         fn to_bool(value: hir::BuiltinValue) -> bool {
@@ -241,59 +244,36 @@ impl<'a> BlockInterpreter<'a> {
             Xor => Bool(to_bool(left()) ^ to_bool(right())),
         };
 
-        hir::Value {
-            type_: fun.result_type(),
-            range: com::Range::new(0, 0),
-            expr: hir::Expr::BuiltinVal(value),
-            gvn: Default::default(),
-        }
+        Value::Builtin(value)
     }
 
     fn eval_new(
         &self,
         type_: hir::Type,
-        fields: DynArray<sir::ValueId>,
-        range: com::Range
+        elements: DynArray<sir::ValueId>,
     )
-        -> hir::Value
+        -> Value
     {
-        let elements = DynArray::with_capacity(fields.len());
+        let fields = DynArray::with_capacity(elements.len());
 
-        for id in fields {
-            elements.push(self.get_value(id))
+        for id in elements {
+            fields.push(self.get_value(id))
         }
 
-        hir::Value {
-            type_: type_,
-            range: range,
-            expr: hir::Expr::Tuple(hir::Tuple{
-                fields: elements,
-                names: DynArray::default(),
-            }),
-            gvn: Default::default(),
-        }
-    }
-
-    fn load(&self, v: &hir::BuiltinValue, range: com::Range)
-        -> hir::Value
-    {
-        let type_ = match v {
-            hir::BuiltinValue::Bool(_) => hir::BuiltinType::Bool,
-            hir::BuiltinValue::Int(_) => hir::BuiltinType::Int,
-            hir::BuiltinValue::String(_) => hir::BuiltinType::String,
+        let names = match type_ {
+            hir::Type::Rec(rec, _, _) => rec.definition.names,
+            hir::Type::Tuple(tuple, _) => tuple.names,
+            t => unreachable!("Expected tuple, got {:?}", t),
         };
 
-        let value = hir::Value {
-            type_: hir::Type::Builtin(type_),
-            range: range,
-            expr: hir::Expr::BuiltinVal(v.clone()),
-            gvn: Default::default(),
-        };
-
-        value
+        Value::Tuple(hir::Tuple{ fields, names })
     }
 
-    fn get_value(&self, id: sir::ValueId) -> hir::Value {
+    fn load(&self, v: &hir::BuiltinValue) -> Value {
+        Value::Builtin(v.clone())
+    }
+
+    fn get_value(&self, id: sir::ValueId) -> Value {
         if let Some(i) = id.as_instruction() {
             debug_assert!(
                 i < self.bindings.len(), "{} not in {:?}", i, self.bindings
@@ -310,9 +290,9 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn get_branch(&self, index: sir::ValueId) -> usize {
-        match self.get_value(index).expr {
-            hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)) => i as usize,
-            hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(cond))
+        match self.get_value(index) {
+            Value::Builtin(hir::BuiltinValue::Int(i)) => i as usize,
+            Value::Builtin(hir::BuiltinValue::Bool(cond))
                 => if cond { 0 } else { 1 },
             _ => unreachable!(),
         }
@@ -330,8 +310,8 @@ impl<'a> BlockInterpreter<'a> {
 }
 
 enum BlockResult {
-    Jump(sir::BlockId, DynArray<hir::Value>),
-    Return(hir::Value),
+    Jump(sir::BlockId, DynArray<Value>),
+    Return(Value),
 }
 
 //
@@ -342,6 +322,7 @@ mod tests {
     use basic::com;
     use basic::mem::DynArray;
     use model::{hir, sir};
+    use super::Value;
     use super::super::reg::{Registry, SimpleRegistry};
 
     #[test]
@@ -356,7 +337,7 @@ mod tests {
 
         assert_eq!(
             eval(&[], &cfg),
-            sem_int(3)
+            Value::Builtin(hir::BuiltinValue::Int(3))
         );
     }
 
@@ -366,7 +347,7 @@ mod tests {
 
         assert_eq!(
             eval(
-                &[sem_int(1), sem_int(2)],
+                &[val_int(1), val_int(2)],
                 &cfg(&[
                     block_return(
                         &[int.clone(), int],
@@ -379,7 +360,7 @@ mod tests {
                     )
                 ])
             ),
-            sem_int(3)
+            val_int(3)
         );
     }
 
@@ -387,7 +368,7 @@ mod tests {
     fn branch_if() {
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
 
-        for &(condition, ref result) in &[(true, sem_int(1)), (false, sem_int(2))] {
+        for &(condition, ref result) in &[(true, val_int(1)), (false, val_int(2))] {
             assert_eq!(
                 eval(
                     &[],
@@ -438,7 +419,7 @@ mod tests {
                 &[],
                 &[
                     sir::Instruction::Call(
-                        hir::Callable::Function(hir::FunctionProto {
+                        sir::Callable::Function(hir::FunctionProto {
                             name: id,
                             range: range(0, 0),
                             arguments: DynArray::default(),
@@ -457,7 +438,7 @@ mod tests {
                 &[],
                 &cfg
             ),
-            sem_int(1)
+            val_int(1)
         );
     }
 
@@ -487,26 +468,27 @@ mod tests {
                     )
                 ]),
             ),
-            hir::Value {
-                type_: type_,
-                range: range(0, 0),
-                expr: hir::Expr::Tuple(hir::Tuple {
-                    fields: dyn_array(&[sem_int(1), sem_int(2)]),
-                    names: DynArray::default(),
-                }),
-                gvn: Default::default(),
-            }
+            Value::Tuple(hir::Tuple {
+                fields: dyn_array(&[val_int(1), val_int(2)]),
+                names: DynArray::default(),
+            })
         );
     }
 
     #[test]
     fn record_field() {
         let int = hir::Type::Builtin(hir::BuiltinType::Int);
-        let rec = hir::Type::UnresolvedRec(
-            hir::RecordProto {
-                name: hir::ItemIdentifier(Default::default(), range(5, 4)),
-                range: range(0, 20),
-                enum_: hir::ItemIdentifier::unresolved(),
+        let rec = hir::Type::Rec(
+            hir::Record {
+                prototype: hir::RecordProto {
+                    name: hir::ItemIdentifier(Default::default(), range(5, 4)),
+                    range: range(0, 20),
+                    enum_: hir::ItemIdentifier::unresolved(),
+                },
+                definition: hir::Tuple {
+                    fields: dyn_array(&[int.clone(), int.clone()]),
+                    names: DynArray::default(),
+                },
             },
             Default::default(),
             Default::default(),
@@ -527,7 +509,7 @@ mod tests {
                     )
                 ]),
             ),
-            sem_int(42)
+            val_int(42)
         );
     }
 
@@ -545,15 +527,15 @@ mod tests {
                     ),
                 ]),
             ),
-            sem_string(b"Hello, World!")
+            val_string(b"Hello, World!")
         );
     }
 
     fn eval(
-        arguments: &[hir::Value],
+        arguments: &[Value],
         cfg: &sir::ControlFlowGraph,
     )
-        -> hir::Value
+        -> Value
     {
         let registry = SimpleRegistry::new();
         eval_with_registry(&registry, arguments, cfg)
@@ -561,33 +543,21 @@ mod tests {
 
     fn eval_with_registry(
         registry: &Registry,
-        arguments: &[hir::Value],
+        arguments: &[Value],
         cfg: &sir::ControlFlowGraph,
     )
-        -> hir::Value
+        -> Value
     {
         use super::Interpreter;
 
         Interpreter::new(registry).evaluate(cfg, dyn_array(arguments))
     }
 
-    fn sem_int(i: i64) -> hir::Value {
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::Int),
-            range: range(0, 0),
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)),
-            gvn: Default::default(),
-        }
-    }
+    fn val_int(i: i64) -> Value { Value::Builtin(hir::BuiltinValue::Int(i)) }
 
-    fn sem_string(s: &[u8]) -> hir::Value {
+    fn val_string(s: &[u8]) -> Value {
         let value = s.iter().cloned().collect();
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::String),
-            range: range(0, 0),
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(value)),
-            gvn: Default::default(),
-        }
+        Value::Builtin(hir::BuiltinValue::String(value))
     }
 
     fn val_arg(index: usize) -> sir::ValueId {
@@ -601,7 +571,7 @@ mod tests {
     fn instr_builtin(fun: hir::BuiltinFunction, args: &[sir::ValueId])
         -> sir::Instruction
     {
-        sir::Instruction::Call(hir::Callable::Builtin(fun), dyn_array(args), range(0, 0))
+        sir::Instruction::Call(sir::Callable::Builtin(fun), dyn_array(args), range(0, 0))
     }
 
     fn instr_field(type_: hir::Type, value: sir::ValueId, index: u16)

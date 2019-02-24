@@ -21,7 +21,7 @@ fn fibonacci_recursive() {
             fib(0, 1, 8)
             "
         ),
-        "BuiltinVal(Int(21))"
+        "Builtin(Int(21))"
     )
 }
 
@@ -44,7 +44,7 @@ fn fibonnacci_iterative() {
             fib(8)
             "
         ),
-        "BuiltinVal(Int(21))"
+        "Builtin(Int(21))"
     )
 }
 
@@ -52,5 +52,5 @@ fn interpret(raw: &[u8]) -> String {
     let interner = mem::Interner::new();
     let value = utils::interpret(raw, &interner);
 
-    format!("{:?}", value.expr)
+    format!("{:?}", value)
 }

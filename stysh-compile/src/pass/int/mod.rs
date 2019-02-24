@@ -18,5 +18,5 @@
 mod int;
 mod reg;
 
-pub use self::int::Interpreter;
+pub use self::int::{Interpreter, Value};
 pub use self::reg::{Registry, SimpleRegistry};

@@ -201,12 +201,20 @@ impl GraphBuilderImpl {
             };
         }
 
+        let callable = if let hir::Callable::Builtin(b) = callable {
+            sir::Callable::Builtin(*b)
+        } else if let hir::Callable::Function(prototype) = callable {
+            sir::Callable::Function(prototype.clone())
+        } else {
+            unreachable!("Incomplete HIR: {:?}", callable);
+        };
+
         let (mut current, arguments) =
             self.convert_array_of_values(current, args);
 
         current.push_instr(
             gvn.into(),
-            sir::Instruction::Call(callable.clone(), arguments, range)
+            sir::Instruction::Call(callable, arguments, range)
         );
 
         current

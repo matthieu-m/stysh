@@ -192,7 +192,7 @@ impl<'a> Span for Argument<'a> {
     /// Returns the range spanned by the argument.
     fn span(&self) -> com::Range {
         let offset = self.name.span().offset();
-        let end_offset = self.comma as usize + 1;
+        let end_offset = self.type_.span().end_offset();
         com::Range::new(offset, end_offset - offset)
     }
 }

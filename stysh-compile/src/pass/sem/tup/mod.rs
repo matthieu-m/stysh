@@ -8,12 +8,11 @@
 
 mod common;
 mod tup;
+mod expr;
 mod pat;
-mod stmt;
 mod typ;
-mod val;
 
-use super::{Alteration, Context};
+use super::{Context, Relation};
 pub use self::tup::TypeUnifier;
 
 #[cfg(test)]

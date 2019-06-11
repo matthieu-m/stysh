@@ -82,6 +82,18 @@ impl<T> DynArray<T> {
     /// Clears the array.
     pub fn clear(&self) { self.0.borrow_mut().clear() }
 
+    /// Applies function, in place.
+    pub fn apply<R, F: FnOnce(&[T]) -> R>(&self, fun: F) -> R {
+        let guard = self.0.borrow();
+        fun(&*guard)
+    }
+
+    /// Applies function, in place.
+    pub fn apply_mut<R, F: FnOnce(&mut [T]) -> R>(&self, fun: F) -> R {
+        let mut guard = self.0.borrow_mut();
+        fun(&mut *guard)
+    }
+
     /// Finds first index matching predicate, if any.
     pub fn find<F: FnMut(&T) -> bool>(&self, mut fun: F) -> Option<usize> {
         let guard = self.0.borrow();

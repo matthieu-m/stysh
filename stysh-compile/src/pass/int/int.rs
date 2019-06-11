@@ -28,7 +28,7 @@ impl<'a> Interpreter<'a> {
     pub fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph,
-        arguments: DynArray<Value>,
+        arguments: Vec<Value>,
     )
         -> Value
     {
@@ -51,9 +51,9 @@ pub enum Value {
     /// String.
     String(Vec<u8>),
     /// A constructor call.
-    Constructor(hir::Constructor<Value>),
+    Constructor(hir::TypeDefinition, Vec<Value>),
     /// A tuple.
-    Tuple(hir::Tuple<Value>),
+    Tuple(Vec<Value>),
 }
 
 //
@@ -74,7 +74,7 @@ impl<'a> FrameInterpreter<'a> {
     fn evaluate(
         &self,
         cfg: &sir::ControlFlowGraph,
-        arguments: DynArray<Value>,
+        arguments: Vec<Value>,
     )
         -> Value
     {
@@ -84,7 +84,7 @@ impl<'a> FrameInterpreter<'a> {
             interner: InternerSnapshot<'a>,
             registry: &'a Registry,
             block: &sir::BasicBlock,
-            arguments: DynArray<Value>,
+            arguments: Vec<Value>,
         )
             -> BlockResult
         {
@@ -118,15 +118,15 @@ impl<'a> FrameInterpreter<'a> {
 struct BlockInterpreter<'a> {
     interner: InternerSnapshot<'a>,
     registry: &'a Registry,
-    arguments: DynArray<Value>,
-    bindings: DynArray<Value>,
+    arguments: Vec<Value>,
+    bindings: Vec<Value>,
 }
 
 impl<'a> BlockInterpreter<'a> {
     fn new(
         interner: InternerSnapshot<'a>,
         registry: &'a Registry,
-        arguments: DynArray<Value>
+        arguments: Vec<Value>
     )
         -> BlockInterpreter<'a>
     {
@@ -185,8 +185,7 @@ impl<'a> BlockInterpreter<'a> {
         let index = index as usize;
 
         match self.get_value(value) {
-            Constructor(c) => c.arguments.fields.at(index),
-            Tuple(tup) => tup.fields.at(index),
+            Constructor(_, tup) | Tuple(tup) => tup[index].clone(),
             _ => unreachable!(),
         }
     }
@@ -201,7 +200,7 @@ impl<'a> BlockInterpreter<'a> {
         let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
         let interpreter = FrameInterpreter::new(self.interner, self.registry);
 
-        let arguments = DynArray::with_capacity(args.len());
+        let mut arguments = Vec::with_capacity(args.len());
         for a in args {
             arguments.push(self.get_value(a));
         }
@@ -256,24 +255,22 @@ impl<'a> BlockInterpreter<'a> {
 
     fn eval_new(
         &self,
-        type_: hir::Type,
+        type_: hir::TypeDefinition,
         elements: DynArray<sir::ValueId>,
     )
         -> Value
     {
-        let fields = DynArray::with_capacity(elements.len());
+        let mut fields = Vec::with_capacity(elements.len());
 
         for id in elements {
             fields.push(self.get_value(id))
         }
 
-        let names = match type_ {
-            hir::Type::Rec(rec, _, _) => rec.definition.names,
-            hir::Type::Tuple(tuple, _) => tuple.names,
-            t => unreachable!("Expected tuple, got {:?}", t),
-        };
-
-        Value::Tuple(hir::Tuple{ fields, names })
+        if let hir::TypeDefinition::Tuple(_) = &type_ {
+            Value::Tuple(fields)
+        } else {
+            Value::Constructor(type_, fields)
+        }
     }
 
     fn load(&self, v: &hir::BuiltinValue) -> Value {
@@ -294,12 +291,12 @@ impl<'a> BlockInterpreter<'a> {
             debug_assert!(
                 i < self.bindings.len(), "{} not in {:?}", i, self.bindings
             );
-            self.bindings.at(i)
+            self.bindings[i].clone()
         } else if let Some(a) = id.as_argument() {
             debug_assert!(
                 a < self.arguments.len(), "{} not in {:?}", a, self.arguments
             );
-            self.arguments.at(a)
+            self.arguments[a].clone()
         } else {
             unreachable!()
         }
@@ -314,7 +311,7 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn jump(&self, jump: &sir::Jump) -> BlockResult {
-        let arguments = DynArray::with_capacity(jump.arguments.len());
+        let mut arguments = Vec::with_capacity(jump.arguments.len());
 
         for a in &jump.arguments {
             arguments.push(self.get_value(a));
@@ -325,7 +322,7 @@ impl<'a> BlockInterpreter<'a> {
 }
 
 enum BlockResult {
-    Jump(sir::BlockId, DynArray<Value>),
+    Jump(sir::BlockId, Vec<Value>),
     Return(Value),
 }
 
@@ -351,21 +348,21 @@ mod tests {
         let cfg = cfg( &[ block_return(&[], &instructions) ] );
 
         assert_eq!(
-            eval(&[], &cfg),
+            eval(vec![], &cfg),
             Value::Int(3)
         );
     }
 
     #[test]
     fn add_with_arguments() {
-        let int = hir::Type::Builtin(hir::BuiltinType::Int);
+        let int = || hir::TypeDefinition::int();
 
         assert_eq!(
             eval(
-                &[val_int(1), val_int(2)],
+                vec![val_int(1), val_int(2)],
                 &cfg(&[
                     block_return(
-                        &[int.clone(), int],
+                        &[int(), int()],
                         &[
                             instr_builtin(
                                 hir::BuiltinFunction::Add,
@@ -381,12 +378,12 @@ mod tests {
 
     #[test]
     fn branch_if() {
-        let int = hir::Type::Builtin(hir::BuiltinType::Int);
+        let int = || hir::TypeDefinition::int();
 
         for &(condition, ref result) in &[(true, val_int(1)), (false, val_int(2))] {
             assert_eq!(
                 eval(
-                    &[],
+                    vec![],
                     &cfg(&[
                         block_branch(
                             &[],
@@ -404,7 +401,7 @@ mod tests {
                             &[instr_load_int(2)],
                             exit_jump(3, &[val_instr(0)]),
                         ),
-                        block_return(&[int.clone()], &[]),
+                        block_return(&[int()], &[]),
                     ])
                 ),
                 result.clone()
@@ -418,7 +415,7 @@ mod tests {
         let mut registry = SimpleRegistry::new();
 
         let id = hir::ItemIdentifier(Default::default(), range(42, 5));
-        let int = hir::Type::Builtin(hir::BuiltinType::Int);
+        let int = || hir::TypeDefinition::int();
 
         registry.insert(
             id,
@@ -439,7 +436,7 @@ mod tests {
                             name: id,
                             range: range(0, 0),
                             arguments: DynArray::default(),
-                            result: int,
+                            result: int(),
                         }),
                         DynArray::default(),
                         range(0, 0),
@@ -452,7 +449,7 @@ mod tests {
             eval_with_registry(
                 interner.snapshot(),
                 &registry,
-                &[],
+                vec![],
                 &cfg
             ),
             val_int(1)
@@ -461,16 +458,15 @@ mod tests {
 
     #[test]
     fn new_tuple() {
-        let int = hir::Type::Builtin(hir::BuiltinType::Int);
-        let inner_type = [int.clone(), int];
-        let type_ = hir::Type::Tuple(
-            hir::Tuple { fields: dyn_array(&inner_type), names: DynArray::default() },
-            Default::default(),
+        let int = || hir::TypeDefinition::int();
+        let inner_type = [int(), int()];
+        let type_ = hir::TypeDefinition::Tuple(
+            hir::DynTuple { fields: dyn_array(&inner_type), names: DynArray::default() },
         );
 
         assert_eq!(
             eval(
-                &[],
+                vec![],
                 &cfg(&[
                     block_return(
                         &[],
@@ -485,35 +481,31 @@ mod tests {
                     )
                 ]),
             ),
-            Value::Tuple(hir::Tuple {
-                fields: dyn_array(&[val_int(1), val_int(2)]),
-                names: DynArray::default(),
-            })
+            Value::Tuple(vec![val_int(1), val_int(2)])
         );
     }
 
     #[test]
     fn record_field() {
-        let int = hir::Type::Builtin(hir::BuiltinType::Int);
-        let rec = hir::Type::Rec(
+        let int = || hir::TypeDefinition::int();
+        let rec = hir::TypeDefinition::Rec(
             hir::Record {
                 prototype: hir::RecordProto {
                     name: hir::ItemIdentifier(Default::default(), range(5, 4)),
                     range: range(0, 20),
                     enum_: hir::ItemIdentifier::unresolved(),
                 },
-                definition: hir::Tuple {
-                    fields: dyn_array(&[int.clone(), int.clone()]),
+                definition: hir::DynTuple {
+                    fields: dyn_array(&[int(), int()]),
                     names: DynArray::default(),
                 },
             },
-            Default::default(),
             Default::default(),
         );
 
         assert_eq!(
             eval(
-                &[],
+                vec![],
                 &cfg(&[
                     block_return(
                         &[],
@@ -521,7 +513,7 @@ mod tests {
                             instr_load_int(4),
                             instr_load_int(42),
                             instr_new(rec, &[val_instr(0), val_instr(1)]),
-                            instr_field(int, val_instr(2), 1)
+                            instr_field(int(), val_instr(2), 1)
                         ]
                     )
                 ]),
@@ -541,7 +533,7 @@ mod tests {
             eval_with_registry(
                 interner.snapshot(),
                 &registry,
-                &[],
+                vec![],
                 &cfg(&[
                     block_return(
                         &[],
@@ -556,7 +548,7 @@ mod tests {
     }
 
     fn eval(
-        arguments: &[Value],
+        arguments: Vec<Value>,
         cfg: &sir::ControlFlowGraph,
     )
         -> Value
@@ -569,14 +561,14 @@ mod tests {
     fn eval_with_registry(
         interner: InternerSnapshot<'_>,
         registry: &Registry,
-        arguments: &[Value],
+        arguments: Vec<Value>,
         cfg: &sir::ControlFlowGraph,
     )
         -> Value
     {
         use super::Interpreter;
 
-        Interpreter::new(interner, registry).evaluate(cfg, dyn_array(arguments))
+        Interpreter::new(interner, registry).evaluate(cfg, arguments)
     }
 
     fn val_int(i: i64) -> Value { Value::Int(i) }
@@ -600,7 +592,7 @@ mod tests {
         sir::Instruction::Call(sir::Callable::Builtin(fun), dyn_array(args), range(0, 0))
     }
 
-    fn instr_field(type_: hir::Type, value: sir::ValueId, index: u16)
+    fn instr_field(type_: hir::TypeDefinition, value: sir::ValueId, index: u16)
         -> sir::Instruction
     {
         sir::Instruction::Field(type_, value, index, range(0, 0))
@@ -618,7 +610,7 @@ mod tests {
         sir::Instruction::Load(hir::BuiltinValue::String(s), range(0, 0))
     }
 
-    fn instr_new(type_: hir::Type, values: &[sir::ValueId])
+    fn instr_new(type_: hir::TypeDefinition, values: &[sir::ValueId])
         -> sir::Instruction
     {
         sir::Instruction::New(type_, dyn_array(values), range(0, 0))
@@ -632,7 +624,7 @@ mod tests {
     }
 
     fn block_branch(
-        args: &[hir::Type],
+        args: &[hir::TypeDefinition],
         code: &[sir::Instruction],
         condition: sir::ValueId,
         jumps: &[sir::Jump],
@@ -647,7 +639,7 @@ mod tests {
     }
 
     fn block_jump(
-        args: &[hir::Type],
+        args: &[hir::TypeDefinition],
         code: &[sir::Instruction],
         jump: sir::Jump,
     )
@@ -661,7 +653,7 @@ mod tests {
     }
 
     fn block_return(
-        args: &[hir::Type],
+        args: &[hir::TypeDefinition],
         code: &[sir::Instruction]
     )
         -> sir::BasicBlock

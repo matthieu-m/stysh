@@ -144,7 +144,7 @@ fn create_item(
     let result = GraphBuilder::new(scope, registry, &context)
         .item(proto.clone(), item);
 
-    println!("create_item - {:?}", result);
+    println!("create_item - {:#?}", result);
     println!("");
 
     result
@@ -155,23 +155,29 @@ fn create_value(
     scope: &scp::Scope,
     registry: &hir::Registry,
 )
-    -> hir::Value
+    -> hir::Tree
 {
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
     let result = GraphBuilder::new(scope, registry, &context).expression(expr);
 
-    println!("create_value - {:?}", result);
+    println!("create_value - {:#?}", result);
     println!("");
 
     result
 }
 
-fn create_cfg_from_value(value: &hir::Value) -> sir::ControlFlowGraph {
+fn create_cfg_from_value(tree: &hir::Tree) -> sir::ControlFlowGraph {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result = GraphBuilder::new().from_value(value);
+    let id = if let Some(hir::Root::Expression(e)) = tree.get_root() {
+        e
+    } else {
+        unreachable!("Not an expression!");
+    };
+
+    let result = GraphBuilder::new().from_expression(tree, id);
 
     println!("create_cfg_from_value - {}", result);
     println!("");

@@ -1,8 +1,10 @@
 //! Semantic pass: Nested Entity Fetching.
 
-use model::hir::Registry;
+use std::cell;
 
-use super::{flat, fld, typ, Context};
+use model::hir::{Gvn, Registry, Tree};
+
+use super::{fld, typ, Context};
 use super::com::*;
 
 /// NestedEntityFetcher.
@@ -17,19 +19,30 @@ pub struct NestedEntityFetcher<'a> {
 
 impl<'a> NestedEntityFetcher<'a> {
     /// Creates a new instance.
-    pub fn new(context: &'a Context, registry: &'a Registry) -> Self {
-        NestedEntityFetcher { core: CoreFetcher::new(context, registry) }
+    pub fn new(
+        context: &'a Context,
+        registry: &'a Registry,
+        tree: &'a cell::RefCell<Tree>,
+    )
+        -> Self
+    {
+        NestedEntityFetcher { core: CoreFetcher::new(context, registry, tree) }
     }
 
-    /// Fetch nested entities from the context.
-    pub fn fetch_all(&self) {
-        while let Some(e) = self.core.context.pop_unfetched() {
-            let status = self.fetch_entity(e);
+    /// Attempts to fetch all entities for this iteration.
+    ///
+    /// Returns the number of entities successfully fetched.
+    pub fn fetch_all(&self) -> usize {
+        while let Some(gvn) = self.core.context.pop_unfetched() {
+            let status = self.fetch_entity(gvn);
 
-            if status != Status::Fetched {
-                self.core.context.push_unfetched(e);
+            if status == Status::Fetched {
+                self.core.context.push_fetched(gvn);
+            } else {
+                self.core.context.push_unfetched(gvn);
             }
         }
+        self.core.context.fetched()
     }
 }
 
@@ -38,16 +51,16 @@ impl<'a> NestedEntityFetcher<'a> {
 //
 
 impl<'a> NestedEntityFetcher<'a> {
-    fn fetch_entity(&self, e: flat::ValueHandle<'a>) -> Status {
-        self.fetch_type(e)
-            .combine(self.fetch_field(e))
+    fn fetch_entity(&self, gvn: Gvn) -> Status {
+        self.fetch_type(gvn)
+            .combine(self.fetch_field(gvn))
     }
 
-    fn fetch_field(&self, e: flat::ValueHandle<'a>) -> Status {
-        fld::FieldFetcher::new(self.core, e).fetch()
+    fn fetch_field(&self, gvn: Gvn) -> Status {
+        fld::FieldFetcher::new(self.core, gvn).fetch()
     }
 
-    fn fetch_type(&self, e: flat::ValueHandle<'a>) -> Status {
-        typ::TypeFetcher::new(self.core, e).fetch()
+    fn fetch_type(&self, gvn: Gvn) -> Status {
+        typ::TypeFetcher::new(self.core, gvn).fetch()
     }
 }

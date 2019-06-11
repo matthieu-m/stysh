@@ -1,10 +1,7 @@
 //! Semantic Pass: Common Elements
 
-mod alt;
 mod ctxt;
-mod tbl;
+mod rel;
 
-pub mod flat;
-
-pub use self::alt::Alteration;
 pub use self::ctxt::Context;
+pub use self::rel::Relation;

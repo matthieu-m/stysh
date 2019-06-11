@@ -13,20 +13,36 @@ pub trait Scope: fmt::Debug {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier>;
 
     /// Find the definition of a function, if known.
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable;
+    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate;
 
     /// Find the definition of a type, if known.
-    fn lookup_type(&self, name: ItemIdentifier) -> Type;
+    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition;
 
     /// Returns an unresolved reference.
-    fn unresolved_function(&self, name: ValueIdentifier) -> Callable {
-        Callable::Unknown(name)
+    fn unresolved_function(&self, name: ValueIdentifier) -> CallableCandidate {
+        CallableCandidate::Unknown(name)
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_type(&self, name: ItemIdentifier) -> Type {
-        Type::Unresolved(name, Path::default(), Gin::default())
+    fn unresolved_type(&self, name: ItemIdentifier) -> TypeDefinition {
+        TypeDefinition::Unresolved(name, Path::default())
     }
+}
+
+/// CallableCandidate.
+#[derive(Clone, Debug)]
+pub enum CallableCandidate {
+    /// A built-in function.
+    Builtin(BuiltinFunction),
+    /// A static user-defined function.
+    Function(FunctionProto),
+    /// An unknown callable binding.
+    Unknown(ValueIdentifier),
+    /// An unresolved callable binding.
+    ///
+    /// Note: this variant only contains possible resolutions.
+    /// Note: this variant contains at least two possible resolutions.
+    Unresolved(Vec<CallableCandidate>),
 }
 
 /// A Builtin Scope.
@@ -60,8 +76,8 @@ impl<'a> FunctionScope<'a> {
 /// A Block Scope.
 pub struct BlockScope<'a> {
     parent: &'a Scope,
-    functions: IdMap<Callable>,
-    types: IdMap<Type>,
+    functions: IdMap<CallableCandidate>,
+    types: IdMap<TypeDefinition>,
     values: IdMap<ValueIdentifier>,
 }
 
@@ -80,27 +96,28 @@ impl<'a> BlockScope<'a> {
     pub fn add_enum(&mut self, proto: EnumProto) {
         self.types.insert(
             proto.name.id(),
-            Type::UnresolvedEnum(proto, Path::default(), Gin::default()),
+            TypeDefinition::UnresolvedEnum(proto, Path::default()),
         );
     }
 
     /// Adds a new function identifier to the scope.
     pub fn add_function(&mut self, proto: FunctionProto) {
-        self.functions.insert(proto.name.id(), Callable::Function(proto));
+        self.functions.insert(proto.name.id(), CallableCandidate::Function(proto));
     }
 
     /// Adds a new pattern to the scope.
-    pub fn add_pattern(&mut self, pat: Pattern) {
-        let tuple = match pat {
+    pub fn add_pattern(&mut self, pattern: PatternId, tree: &Tree) {
+        let tuple = match *tree.get_pattern(pattern) {
             Pattern::Ignored(..) => return,
-            Pattern::Var(id, ..) => {
+            Pattern::Var(id) => {
                 self.add_value(id);
                 return;
             },
-            Pattern::Constructor(c, ..) => c.arguments,
-            Pattern::Tuple(tuple, ..) => tuple,
+            Pattern::Constructor(tuple) | Pattern::Tuple(tuple) => tuple,
         };
-        for p in tuple.fields { self.add_pattern(p); }
+
+        let fields = tree.get_patterns(tuple.fields);
+        for p in fields { self.add_pattern(*p, tree); }
     }
 
     /// Adds a new value identifier to the scope.
@@ -117,11 +134,11 @@ impl Scope for BuiltinScope {
         None
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
+    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
         self.unresolved_function(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type {
+    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
         use model::hir::BuiltinType::*;
 
         let builtin = match name.id() {
@@ -131,7 +148,7 @@ impl Scope for BuiltinScope {
             _ => None,
         };
 
-        builtin.map(|b| Type::Builtin(b)).unwrap_or(self.unresolved_type(name))
+        builtin.map(|b| TypeDefinition::Builtin(b)).unwrap_or(self.unresolved_type(name))
     }
 }
 
@@ -143,11 +160,11 @@ impl<'a> Scope for FunctionScope<'a> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
+    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
         self.parent.lookup_callable(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type {
+    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
         self.parent.lookup_type(name)
     }
 }
@@ -160,10 +177,10 @@ impl<'a> Scope for BlockScope<'a> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
-        use model::hir::Callable::*;
+    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
+        use self::CallableCandidate::*;
 
-        let collection = mem::DynArray::default();
+        let mut collection = vec!();
 
         match self.parent.lookup_callable(name) {
             Unknown(_) => (),
@@ -181,12 +198,12 @@ impl<'a> Scope for BlockScope<'a> {
 
         match collection.len() {
             0 => Unknown(name),
-            1 => collection.at(0),
+            1 => collection[0].clone(),
             _ => Unresolved(collection)
         }
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> Type {
+    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
         if let Some(type_) = self.types.get(&name.id()).cloned() {
             return type_;
         }
@@ -231,15 +248,15 @@ pub mod mocks {
 
     use model::hir::*;
 
-    use super::{BuiltinScope, IdMap, Scope};
+    use super::{BuiltinScope, CallableCandidate, IdMap, Scope};
 
     /// A mock for the Scope trait.
     #[derive(Debug)]
     pub struct MockScope {
         /// Map of callables for lookup_callable.
-        pub callables: HashMap<ValueIdentifier, Callable>,
+        pub callables: HashMap<ValueIdentifier, CallableCandidate>,
         /// Map of types for lookup_type.
-        pub types: HashMap<ItemIdentifier, Type>,
+        pub types: HashMap<ItemIdentifier, TypeDefinition>,
         /// Map of values for lookup_binding.
         values: IdMap<ValueIdentifier>,
         /// Parent scope, automatically get all builtins.
@@ -268,7 +285,7 @@ pub mod mocks {
             self.values.get(&name.id()).cloned()
         }
 
-        fn lookup_callable(&self, name: ValueIdentifier) -> Callable {
+        fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
             if let Some(v) = self.callables.get(&name) {
                 return v.clone();
             }
@@ -276,7 +293,7 @@ pub mod mocks {
             self.parent.lookup_callable(name)
         }
 
-        fn lookup_type(&self, name: ItemIdentifier) -> Type {
+        fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
             if let Some(v) = self.types.get(&name) {
                 return v.clone();
             }
@@ -303,8 +320,8 @@ mod tests {
         let interner = mem::Interner::new();
         let a = interner.insert(b"a");
 
-        let f = Factory::new();
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let f = Factory::new(Default::default());
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_definition(), f.value());
 
         let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
 
@@ -326,8 +343,8 @@ mod tests {
         let b = interner.insert(b"b");
         let c = interner.insert(b"c");
 
-        let f = Factory::new();
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_(), f.value());
+        let f = Factory::new(Default::default());
+        let (i, p, t, v) = (f.item(), f.proto(), f.type_definition(), f.value());
 
         let prot =
             p.fun(i.id(5, 3), t.int())

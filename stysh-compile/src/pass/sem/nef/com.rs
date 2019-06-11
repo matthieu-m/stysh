@@ -1,5 +1,7 @@
 //! Core Nested Entity Fetcher
 
+use std::cell;
+
 use model::hir::*;
 
 use super::Context;
@@ -11,6 +13,8 @@ pub struct CoreFetcher<'a> {
     pub context: &'a Context,
     /// Registry.
     pub registry: &'a Registry,
+    /// Tree.
+    pub tree: &'a cell::RefCell<Tree>,
 }
 
 /// Status
@@ -28,9 +32,21 @@ pub enum Status {
 
 impl<'a> CoreFetcher<'a> {
     /// Creates a new instance.
-    pub fn new(context: &'a Context, registry: &'a Registry) -> Self {
-        CoreFetcher { registry, context }
+    pub fn new(
+        context: &'a Context,
+        registry: &'a Registry,
+        tree: &'a cell::RefCell<Tree>,
+    )
+        -> Self 
+    {
+        CoreFetcher { context, registry, tree }
     }
+
+    /// Returns a reference to the Tree.
+    pub fn tree(&self) -> cell::Ref<'a, Tree> { self.tree.borrow() }
+
+    /// Returns a mutable reference to the Tree.
+    pub fn tree_mut(&self) -> cell::RefMut<'a, Tree> { self.tree.borrow_mut() }
 }
 
 //

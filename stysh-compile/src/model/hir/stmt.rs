@@ -2,12 +2,12 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
+use basic::com;
 
 use model::hir::*;
 
 /// A Statement.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Stmt {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A return statement.
@@ -19,32 +19,32 @@ pub enum Stmt {
 }
 
 /// A binding.
-#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Binding {
     /// The left-hand side pattern.
-    pub left: Pattern,
+    pub left: PatternId,
     /// The right-hand side value.
-    pub right: Value,
+    pub right: ExpressionId,
     /// The range of the statement.
     pub range: com::Range,
 }
 
 /// A re-binding.
-#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ReBinding {
     /// The left-hand side value.
-    pub left: Value,
+    pub left: ExpressionId,
     /// The right-hand side value.
-    pub right: Value,
+    pub right: ExpressionId,
     /// The range of the re-binding statement.
     pub range: com::Range,
 }
 
 /// A return statement.
-#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Return {
     /// The returned value.
-    pub value: Value,
+    pub value: ExpressionId,
     /// The range of the return statement.
     pub range: com::Range,
 }
@@ -71,22 +71,22 @@ impl Stmt {
 //  Span Implementations
 //
 
-impl Span for Binding {
+impl com::Span for Binding {
     /// Range spanned by the re-binding.
     fn span(&self) -> com::Range { self.range }
 }
 
-impl Span for ReBinding {
+impl com::Span for ReBinding {
     /// Range spanned by the re-binding.
     fn span(&self) -> com::Range { self.range }
 }
 
-impl Span for Return {
+impl com::Span for Return {
     /// Range spanned by the return statement.
     fn span(&self) -> com::Range { self.range }
 }
 
-impl Span for Stmt {
+impl com::Span for Stmt {
     /// Range spanned by the statement.
     fn span(&self) -> com::Range {
         use self::Stmt::*;

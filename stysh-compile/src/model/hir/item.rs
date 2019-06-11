@@ -3,9 +3,8 @@
 use std::{convert, fmt};
 
 use basic::com::{self, Span};
-use basic::mem::{self, DynArray};
+use basic::mem::DynArray;
 
-use model::ast;
 use model::hir::*;
 
 /// A registry of the definitions
@@ -18,7 +17,7 @@ pub trait Registry: fmt::Debug {
 }
 
 /// A full-fledged item.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     /// A full-fledged enum definition.
     Enum(Enum),
@@ -34,27 +33,12 @@ pub struct Argument {
     /// The name.
     pub name: ValueIdentifier,
     /// The type.
-    pub type_: Type,
+    pub type_: TypeDefinition,
     /// The range.
     pub range: com::Range,
-    /// The GVN.
-    pub gvn: Gvn,
 }
 
-/// A built-in Type.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum BuiltinType {
-    /// A boolean.
-    Bool,
-    /// A 64-bits signed integer.
-    Int,
-    /// A String.
-    String,
-    /// An uninhabited type.
-    Void,
-}
-
-/// An enum.
+/// An enum definition.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Enum {
     /// The prototype.
@@ -73,12 +57,12 @@ pub struct EnumProto {
 }
 
 /// A function.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Function {
     /// The prototype.
     pub prototype: FunctionProto,
     /// The body.
-    pub body: Value,
+    pub body: Tree,
 }
 
 /// A function prototype.
@@ -91,20 +75,14 @@ pub struct FunctionProto {
     /// The function arguments (always arguments).
     pub arguments: DynArray<Argument>,
     /// The return type of the function.
-    pub result: Type,
+    pub result: TypeDefinition,
 }
-
-/// A global item number.
-///
-/// Defaults to 0, which is considered an invalid value.
-#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Gin(pub u32);
 
 /// A Path.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Path {
     /// The path components, in order; possibly empty.
-    pub components: DynArray<Type>,
+    pub components: DynArray<TypeDefinition>,
 }
 
 /// An annotated prototype.
@@ -124,7 +102,7 @@ pub struct Record {
     /// The prototype.
     pub prototype: RecordProto,
     /// The definition.
-    pub definition: Tuple<Type>,
+    pub definition: DynTuple<TypeDefinition>,
 }
 
 /// A record prototype.
@@ -140,157 +118,94 @@ pub struct RecordProto {
 
 /// A Type.
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Type {
+pub enum TypeDefinition {
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
-    Enum(Enum, Path, Gin),
+    Enum(Enum, Path),
     /// A record type, possibly nested.
-    Rec(Record, Path, Gin),
+    Rec(Record, Path),
     /// A tuple type.
-    Tuple(Tuple<Type>, Gin),
+    Tuple(DynTuple<TypeDefinition>),
     /// An unresolved type, possibly nested.
-    Unresolved(ItemIdentifier, Path, Gin),
+    Unresolved(ItemIdentifier, Path),
     /// An unresolved enum type, possibly nested.
-    UnresolvedEnum(EnumProto, Path, Gin),
+    UnresolvedEnum(EnumProto, Path),
     /// An unresolved record type, possibly nested.
-    UnresolvedRec(RecordProto, Path, Gin),
+    UnresolvedRec(RecordProto, Path),
 }
-
-/// An item identifier.
-#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ItemIdentifier(pub mem::InternId, pub com::Range);
 
 //
 //  Public interface
 //
 
-impl Argument {
-    /// Sets the gvn of the binding.
-    pub fn with_gvn<G: convert::Into<Gvn>>(mut self, gvn: G) -> Argument {
-        self.gvn = gvn.into();
-        self
-    }
-}
-
-impl BuiltinType {
-    /// Returns the gin associated to the type.
-    pub fn gin(&self) -> Gin {
-        use self::BuiltinType::*;
-
-        match *self {
-            Bool => Gin(1),
-            Int => Gin(2),
-            String => Gin(3),
-            Void => Gin(4),
-        }
-    }
-
-    /// Returns the maximum gin associated to a built-in type.
-    pub fn maximum_gin() -> Gin { Gin(4) }
-}
-
-impl ItemIdentifier {
-    /// Returns the InternId.
-    pub fn id(&self) -> mem::InternId { self.0 }
-
-    /// Sets the InternId.
-    pub fn with_id(self, id: mem::InternId) -> Self {
-        ItemIdentifier(id, self.1)
-    }
-
-    /// Sets the Range.
-    pub fn with_range(self, range: com::Range) -> Self {
-        ItemIdentifier(self.0, range)
-    }
-
-    /// Returns a sentinel instance of ItemIdentifier.
-    pub fn unresolved() -> ItemIdentifier { Default::default() }
-}
-
-impl Type {
+impl TypeDefinition {
     /// Returns a Bool type.
-    pub fn bool_() -> Self { Type::Builtin(BuiltinType::Bool) }
+    pub fn bool_() -> Self { TypeDefinition::Builtin(BuiltinType::Bool) }
 
     /// Returns an Int type.
-    pub fn int() -> Self { Type::Builtin(BuiltinType::Int) }
+    pub fn int() -> Self { TypeDefinition::Builtin(BuiltinType::Int) }
 
     /// Returns a String type.
-    pub fn string() -> Self { Type::Builtin(BuiltinType::String) }
+    pub fn string() -> Self { TypeDefinition::Builtin(BuiltinType::String) }
 
     /// Returns a Void type.
-    pub fn void() -> Self { Type::Builtin(BuiltinType::Void) }
+    pub fn void() -> Self { TypeDefinition::Builtin(BuiltinType::Void) }
 
     /// Returns a unit type.
-    pub fn unit() -> Self { Type::Tuple(Tuple::unit(), Gin::default()) }
+    pub fn unit() -> Self { TypeDefinition::Tuple(DynTuple::unit()) }
 
     /// Returns an unresolved type.
     pub fn unresolved() -> Self {
-        Type::Unresolved(
+        TypeDefinition::Unresolved(
             ItemIdentifier::unresolved(),
             Path::default(),
-            Gin::default(),
         )
     }
 
     /// Returns the type of the field, or Unresolved if unknown.
-    pub fn field(&self, field: Field) -> Type {
-        self.fields().field(field).unwrap_or(Type::unresolved())
+    pub fn field(&self, field: Field) -> TypeDefinition {
+        self.fields().field(field).unwrap_or(TypeDefinition::unresolved())
     }
 
     /// Returns the fields of the type, as a Tuple.
     ///
     /// Note:   unless the type is a Rec or Tuple, the Tuple will be empty.
-    pub fn fields(&self) -> Tuple<Type> {
+    pub fn fields(&self) -> DynTuple<TypeDefinition> {
         match self {
-            Type::Rec(r, ..) => r.definition.clone(),
-            Type::Tuple(t, ..) => t.clone(),
-            _ => Tuple::unit(),
-        }
-    }
-    /// Returns the gin associated to the type.
-    pub fn gin(&self) -> Gin {
-        use self::Type::*;
-
-        match self {
-            Builtin(b) => b.gin(),
-            Enum(_, _, gin) | Rec(_, _, gin) | Tuple(_, gin)
-                | Unresolved(_, _, gin) | UnresolvedEnum(_, _, gin)
-                | UnresolvedRec(_, _, gin)
-                    => *gin,
+            TypeDefinition::Rec(r, ..) => r.definition.clone(),
+            TypeDefinition::Tuple(t, ..) => t.clone(),
+            _ => DynTuple::unit(),
         }
     }
 
-    /// Switches the gin of the type.
-    ///
-    /// Panics: If the type is a built-in.
-    pub fn with_gin(self, gin: Gin) -> Type {
-        use self::Type::*;
+    /// Returns the name of the type.
+    pub fn name(&self) -> ItemIdentifier {
+        use self::TypeDefinition::*;
 
         match self {
-            Builtin(_) => panic!("Built-in have no GIN!"),
-            Enum(e, p, _) => Enum(e, p, gin),
-            Rec(r, p, _) => Rec(r, p, gin),
-            Tuple(t, _) => Tuple(t, gin),
-            Unresolved(i, p, _) => Unresolved(i, p, gin),
-            UnresolvedEnum(e, p, _) => UnresolvedEnum(e, p, gin),
-            UnresolvedRec(r, p, _) => UnresolvedRec(r, p, gin),
+            Builtin(_) => ItemIdentifier::unresolved(),
+            Enum(e, _) => e.prototype.name,
+            Rec(r, _) => r.prototype.name,
+            Tuple(_) => ItemIdentifier::unresolved(),
+            Unresolved(i, _) => *i,
+            UnresolvedEnum(e, _) => e.name,
+            UnresolvedRec(r, _) => r.name,
         }
     }
-
 
     /// Switches the path of the type.
     ///
     /// Panics: If this variant has no path.
-    pub fn with_path(self, p: Path) -> Type {
-        use self::Type::*;
+    pub fn with_path(self, p: Path) -> TypeDefinition {
+        use self::TypeDefinition::*;
 
         match self {
-            Enum(e, _, gin) => Enum(e, p, gin),
-            Rec(r, _, gin) => Rec(r, p, gin),
-            Unresolved(i, _, gin) => Unresolved(i, p, gin),
-            UnresolvedEnum(e, _, gin) => UnresolvedEnum(e, p, gin),
-            UnresolvedRec(r, _, gin) => UnresolvedRec(r, p, gin),
+            Enum(e, _) => Enum(e, p),
+            Rec(r, _) => Rec(r, p),
+            Unresolved(i, _) => Unresolved(i, p),
+            UnresolvedEnum(e, _) => UnresolvedEnum(e, p),
+            UnresolvedRec(r, _) => UnresolvedRec(r, p),
             _ => panic!("{} has no path!", self),
         }
     }
@@ -303,11 +218,6 @@ impl Type {
 impl Span for Argument {
     /// Range spanned by the binding.
     fn span(&self) -> com::Range { self.range }
-}
-
-impl Span for ItemIdentifier {
-    /// Returns the range spanned by the ItemIdentifier.
-    fn span(&self) -> com::Range { self.1 }
 }
 
 impl Span for Prototype {
@@ -323,10 +233,10 @@ impl Span for Prototype {
     }
 }
 
-impl Span for Type {
+impl Span for TypeDefinition {
     /// Returns the range this type would cover if it was anchored at 0.
     fn span(&self) -> com::Range {
-        use self::Type::*;
+        use self::TypeDefinition::*;
         use self::BuiltinType::*;
 
         fn len(i: ItemIdentifier, p: &Path) -> usize {
@@ -339,12 +249,12 @@ impl Span for Type {
             Builtin(Int) => 3,
             Builtin(String) => 6,
             Builtin(Void) => 4,
-            Enum(e, p, _) => len(e.prototype.name, p),
-            Rec(r, p, _) => len(r.prototype.name, p),
-            Tuple(t, _) => t.fields.iter().map(|t| t.span().length()).sum(),
-            Unresolved(i, p, _) => len(*i, p),
-            UnresolvedEnum(e, p, _) => len(e.name, p),
-            UnresolvedRec(r, p, _) => len(r.name, p),
+            Enum(e, p) => len(e.prototype.name, p),
+            Rec(r, p) => len(r.prototype.name, p),
+            Tuple(t) => t.fields.iter().map(|t| t.span().length()).sum(),
+            Unresolved(i, p) => len(*i, p),
+            UnresolvedEnum(e, p) => len(e.name, p),
+            UnresolvedRec(r, p) => len(r.name, p),
         };
 
         com::Range::new(0, len)
@@ -352,28 +262,8 @@ impl Span for Type {
 }
 
 //
-//  Debug Implementations
-//
-
-impl std::fmt::Debug for Gin {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "Gin({})", self.0)
-    }
-}
-
-impl std::fmt::Debug for ItemIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        write!(f, "ItemIdentifier({:?}, {})", self.0, self.1)
-    }
-}
-
-//
 //  From Implementations
 //
-
-impl convert::From<u32> for Gin {
-    fn from(i: u32) -> Gin { Gin(i) }
-}
 
 impl convert::From<Enum> for Item {
     fn from(e: Enum) -> Self { Item::Enum(e) }
@@ -385,12 +275,6 @@ impl convert::From<Function> for Item {
 
 impl convert::From<Record> for Item {
     fn from(r: Record) -> Self { Item::Rec(r) }
-}
-
-impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
-    fn from(value: ast::TypeIdentifier) -> Self {
-        ItemIdentifier(value.id(), value.span())
-    }
 }
 
 impl convert::From<EnumProto> for Prototype {
@@ -405,20 +289,20 @@ impl convert::From<RecordProto> for Prototype {
     fn from(r: RecordProto) -> Self { Prototype::Rec(r) }
 }
 
-impl convert::From<EnumProto> for Type {
+impl convert::From<EnumProto> for TypeDefinition {
     fn from(e: EnumProto) -> Self {
-        Type::UnresolvedEnum(e, Path::default(), Gin::default())
+        TypeDefinition::UnresolvedEnum(e, Path::default())
     }
 }
 
-impl convert::From<RecordProto> for Type {
+impl convert::From<RecordProto> for TypeDefinition {
     fn from(r: RecordProto) -> Self {
-        Type::UnresolvedRec(r, Path::default(), Gin::default())
+        TypeDefinition::UnresolvedRec(r, Path::default())
     }
 }
 
-impl convert::From<Tuple<Type>> for Type {
-    fn from(t: Tuple<Type>) -> Self { Type::Tuple(t, Gin::default()) }
+impl convert::From<DynTuple<TypeDefinition>> for TypeDefinition {
+    fn from(t: DynTuple<TypeDefinition>) -> Self { TypeDefinition::Tuple(t) }
 }
 
 //
@@ -429,20 +313,8 @@ impl Default for Path {
     fn default() -> Self { Path { components: Default::default() } }
 }
 
-impl Default for Type {
-    fn default() -> Self { Type::unresolved() }
-}
-
-impl fmt::Display for BuiltinType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl fmt::Display for ItemIdentifier {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "<{}>", self.span())
-    }
+impl Default for TypeDefinition {
+    fn default() -> Self { TypeDefinition::unresolved() }
 }
 
 impl fmt::Display for Path {
@@ -455,18 +327,18 @@ impl fmt::Display for Path {
     }
 }
 
-impl fmt::Display for Type {
+impl fmt::Display for TypeDefinition {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        use self::Type::*;
+        use self::TypeDefinition::*;
 
         match self {
             Builtin(t) => write!(f, "{}", t),
-            Enum(e, p, _) => write!(f, "{}{}", p, e.prototype.name),
-            Rec(r, p, _) => write!(f, "{}{}", p, r.prototype.name),
-            Tuple(t, _) => write!(f, "{}", t),
-            Unresolved(i, p, _) => write!(f, "{}{}", p, i),
-            UnresolvedEnum(e, p, _) => write!(f, "{}{}", p, e.name),
-            UnresolvedRec(r, p, _) => write!(f, "{}{}", p, r.name),
+            Enum(e, p) => write!(f, "{}{}", p, e.prototype.name),
+            Rec(r, p) => write!(f, "{}{}", p, r.prototype.name),
+            Tuple(t) => write!(f, "{}", t),
+            Unresolved(i, p) => write!(f, "{}{}", p, i),
+            UnresolvedEnum(e, p) => write!(f, "{}{}", p, e.name),
+            UnresolvedRec(r, p) => write!(f, "{}{}", p, r.name),
         }
     }
 }
@@ -477,7 +349,7 @@ pub mod mocks {
 
     use basic::com::{self, Span};
 
-    use super::{Enum, ItemIdentifier, Record, Registry};
+    use super::*;
 
     /// A mock for the Regitry trait.
     #[derive(Debug)]

@@ -5,7 +5,7 @@
 use std::rc;
 
 use basic::com::{self, Span};
-use basic::mem::{self, DynArray, Ptr};
+use basic::mem::{self, DynArray};
 
 use model::hir::*;
 
@@ -14,9 +14,6 @@ pub struct Resolver<'g> {
     source: &'g [u8],
     interner: rc::Rc<mem::Interner>,
 }
-
-/// Scrubber
-pub struct Scrubber;
 
 //
 //  Public interface of Resolver
@@ -37,6 +34,16 @@ impl<'g> Resolver<'g> {
     pub fn interner(&self) -> &mem::Interner { &*self.interner }
 
     /// Resolves InternId, recursively.
+    pub fn resolve_item_id(&self, i: ItemIdentifier) -> ItemIdentifier {
+        i.with_id(self.from_range(i.span()))
+    }
+
+    /// Resolves InternId, recursively.
+    pub fn resolve_value_id(&self, v: ValueIdentifier) -> ValueIdentifier {
+        v.with_id(self.from_range(v.span()))
+    }
+
+    /// Resolves InternId, recursively.
     pub fn resolve_enum(&self, e: Enum) -> Enum {
         Enum {
             prototype: self.resolve_enum_prototype(e.prototype),
@@ -53,10 +60,11 @@ impl<'g> Resolver<'g> {
     }
 
     /// Resolves InternId, recursively.
-    pub fn resolve_function(&self, f: Function) -> Function {
+    pub fn resolve_function(&self, mut f: Function) -> Function {
+        self.resolve_tree(&mut f.body);
         Function {
             prototype: self.resolve_function_prototype(f.prototype),
-            body: self.resolve_value(f.body),
+            body: f.body,
         }
     }
 
@@ -66,7 +74,7 @@ impl<'g> Resolver<'g> {
             name: self.resolve_item_id(f.name),
             range: f.range,
             arguments: self.resolve_array(f.arguments, |a| self.resolve_argument(a)),
-            result: self.resolve_type(f.result),
+            result: self.resolve_type_definition(f.result),
         }
     }
 
@@ -78,19 +86,6 @@ impl<'g> Resolver<'g> {
             Enum(e) => Enum(self.resolve_enum(e)),
             Fun(f) => Fun(self.resolve_function(f)),
             Rec(r) => Rec(self.resolve_record(r)),
-        }
-    }
-
-    /// Resolves InternId, recursively.
-    pub fn resolve_pattern(&self, p: Pattern) -> Pattern {
-        use self::Pattern::*;
-
-        match p {
-            Constructor(c, g)
-                => Constructor(self.resolve_constructor_pattern(c), g),
-            Ignored(r) => Ignored(r),
-            Tuple(t, r, g) => Tuple(self.resolve_tuple_pattern(t), r, g),
-            Var(v, g) => Var(self.resolve_value_id(v), g),
         }
     }
 
@@ -109,7 +104,7 @@ impl<'g> Resolver<'g> {
     pub fn resolve_record(&self, r: Record) -> Record {
         Record {
             prototype: self.resolve_record_prototype(r.prototype),
-            definition: self.resolve_tuple_type(r.definition),
+            definition: self.resolve_dyn_tuple_type(r.definition),
         }
     }
 
@@ -123,44 +118,42 @@ impl<'g> Resolver<'g> {
     }
 
     /// Resolves InternId, recursively.
-    pub fn resolve_statement(&self, stmt: Stmt) -> Stmt {
-        use self::Stmt::*;
-
-        match stmt {
-            Return(r) => Return(self.resolve_return(r)),
-            Set(re) => Set(self.resolve_re_binding(re)),
-            Var(b) => Var(self.resolve_binding(b)),
-        }
-    }
-
-    /// Resolves InternId, recursively.
-    pub fn resolve_type(&self, t: Type) -> Type {
-        use self::Type::*;
+    pub fn resolve_type_definition(&self, t: TypeDefinition) -> TypeDefinition {
+        use self::TypeDefinition::*;
 
         match t {
             Builtin(b) => Builtin(b),
-            Enum(e, p, g)
-                => Enum(self.resolve_enum(e), self.resolve_path(p), g),
-            Rec(r, p, g)
-                => Rec(self.resolve_record(r), self.resolve_path(p), g),
-            Tuple(t, g) => Tuple(self.resolve_tuple_type(t), g),
-            Unresolved(i, p, g)
-                => Unresolved(self.resolve_item_id(i), self.resolve_path(p), g),
-            UnresolvedEnum(e, p, g)
-                => UnresolvedEnum(self.resolve_enum_prototype(e), self.resolve_path(p), g),
-            UnresolvedRec(r, p, g)
-                => UnresolvedRec(self.resolve_record_prototype(r), self.resolve_path(p), g),
+            Enum(e, p)
+                => Enum(self.resolve_enum(e), self.resolve_path(p)),
+            Rec(r, p)
+                => Rec(self.resolve_record(r), self.resolve_path(p)),
+            Tuple(t) => Tuple(self.resolve_dyn_tuple_type(t)),
+            Unresolved(i, p)
+                => Unresolved(self.resolve_item_id(i), self.resolve_path(p)),
+            UnresolvedEnum(e, p)
+                => UnresolvedEnum(self.resolve_enum_prototype(e), self.resolve_path(p)),
+            UnresolvedRec(r, p)
+                => UnresolvedRec(self.resolve_record_prototype(r), self.resolve_path(p)),
         }
     }
 
     /// Resolves InternId, recursively.
-    pub fn resolve_value(&self, v: Value) -> Value {
-        Value {
-            type_: self.resolve_type(v.type_),
-            range: v.range,
-            expr: self.resolve_expression(v.expr),
-            gvn: v.gvn,
-        }
+    pub fn resolve_type(&self, mut t: Type) -> Type {
+        self.resolve_type_ref(&mut t);
+        t
+    }
+
+    /// Resolves InternId, recursively.
+    pub fn resolve_tree(&self, tree: &mut Tree) {
+        self.resolve_root(tree);
+
+        self.resolve_expression_handles(tree);
+        self.resolve_pattern_handles(tree);
+
+        self.resolve_callables(tree);
+        self.resolve_names(tree);
+        self.resolve_paths(tree);
+        self.resolve_types(tree);
     }
 
     /// Obtains the InternId of the specified range.
@@ -175,265 +168,138 @@ impl<'g> Resolver<'g> {
 }
 
 //
-//  Public interface of Scrubber
-//
-
-impl Scrubber {
-    /// Creates an instance.
-    pub fn new() -> Self { Scrubber }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_enum(&self, e: Enum) -> Enum {
-        Enum {
-            prototype: self.scrub_enum_prototype(e.prototype),
-            variants: self.scrub_array(e.variants, |r| self.scrub_record(r)),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_function(&self, f: Function) -> Function {
-        Function {
-            prototype: self.scrub_function_prototype(f.prototype),
-            body: self.scrub_value(f.body),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_item(&self, i: Item) -> Item {
-        use self::Item::*;
-
-        match i {
-            Enum(e) => Enum(self.scrub_enum(e)),
-            Fun(f) => Fun(self.scrub_function(f)),
-            Rec(r) => Rec(self.scrub_record(r)),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_pattern(&self, p: Pattern) -> Pattern {
-        use self::Pattern::*;
-
-        match p {
-            Constructor(c, g)
-                => Constructor(self.scrub_constructor_pattern(c), g),
-            Ignored(r) => Ignored(r),
-            Tuple(t, r, g) => Tuple(self.scrub_tuple_pattern(t), r, g),
-            Var(v, g) => Var(self.scrub_value_id(v), g),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_prototype(&self, p: Prototype) -> Prototype {
-        use self::Prototype::*;
-
-        match p {
-            Enum(e) => Enum(self.scrub_enum_prototype(e)),
-            Fun(f) => Fun(self.scrub_function_prototype(f)),
-            Rec(r) => Rec(self.scrub_record_prototype(r)),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_record(&self, r: Record) -> Record {
-        Record {
-            prototype: self.scrub_record_prototype(r.prototype),
-            definition: self.scrub_tuple_type(r.definition),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_statement(&self, stmt: Stmt) -> Stmt {
-        use self::Stmt::*;
-
-        match stmt {
-            Return(r) => Return(self.scrub_return(r)),
-            Set(re) => Set(self.scrub_re_binding(re)),
-            Var(b) => Var(self.scrub_binding(b)),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_type(&self, t: Type) -> Type {
-        use self::Type::*;
-
-        match t {
-            Builtin(t) => Builtin(t),
-            Enum(e, p, g)
-                => Enum(self.scrub_enum(e), self.scrub_path(p), g),
-            Rec(r, p, g)
-                => Rec(self.scrub_record(r), self.scrub_path(p), g),
-            Tuple(t, g) => Tuple(self.scrub_tuple_type(t), g),
-            Unresolved(id, p, g)
-                => Unresolved(self.scrub_item_id(id), self.scrub_path(p), g),
-            UnresolvedEnum(e, p, g)
-                => UnresolvedEnum(self.scrub_enum_prototype(e), self.scrub_path(p), g),
-            UnresolvedRec(r, p, g)
-                => UnresolvedRec(self.scrub_record_prototype(r), self.scrub_path(p), g),
-        }
-    }
-
-    /// Scrubs InternId, recursively.
-    pub fn scrub_value(&self, v: Value) -> Value {
-        Value {
-            type_: self.scrub_type(v.type_),
-            range: v.range,
-            expr: self.scrub_expression(v.expr),
-            gvn: v.gvn,
-        }
-    }
-}
-
-//
 //  Implementation details of Resolver
 //
 
 impl<'g> Resolver<'g> {
     fn resolve_argument(&self, a: Argument) -> Argument {
         let name = self.resolve_value_id(a.name);
-        let type_ = self.resolve_type(a.type_);
-        let (range, gvn) = (a.range, a.gvn);
+        let type_ = self.resolve_type_definition(a.type_);
+        let range = a.range;
 
-        Argument { name, type_, range, gvn }
+        Argument { name, type_, range }
     }
 
-    fn resolve_binding(&self, b: Binding) -> Binding {
-        let left = self.resolve_pattern(b.left);
-        let right = self.resolve_value(b.right);
-        let range = b.range;
-
-        Binding { left, right, range }
-    }
-
-    fn resolve_block(&self, stmts: DynArray<Stmt>, v: Option<Ptr<Value>>) -> Expr {
-        Expr::Block(
-            self.resolve_statements(stmts),
-            v.map(|v| self.resolve_value_ptr(v)),
-        )
-    }
-
-    fn resolve_call(&self, c: Callable, args: DynArray<Value>) -> Expr {
-        Expr::Call(
-            self.resolve_callable(c),
-            self.resolve_array(args, |v| self.resolve_value(v)),
-        )
-    }
-
-    fn resolve_callable(&self, c: Callable) -> Callable {
+    fn resolve_callable(&self, callable: &mut Callable) {
         use self::Callable::*;
 
-        match c {
-            Builtin(f) => Builtin(f),
-            Function(f) => Function(self.resolve_function_prototype(f)),
-            Unknown(v) => Unknown(self.resolve_value_id(v)),
-            Unresolved(c) => Unresolved(
-                self.resolve_array(c, |c| self.resolve_callable(c))
-            ),
+        match callable {
+            Function(name, ..) => self.resolve_item_name(name),
+            Unknown(name) => self.resolve_value_name(name),
+            _ => (),
         }
     }
 
-    fn resolve_constructor_pattern(&self, c: Constructor<Pattern>)
-        -> Constructor<Pattern>
-    {
-        self.resolve_constructor_impl(c, |p| self.resolve_pattern(p))
+    fn resolve_callables(&self, tree: &mut Tree) {
+        for callable in tree.iter_callables_mut() {
+            self.resolve_callable(callable);
+        }
     }
 
-    fn resolve_constructor_value(&self, c: Constructor<Value>)
-        -> Constructor<Value>
-    {
-        self.resolve_constructor_impl(c, |v| self.resolve_value(v))
-    }
-
-    fn resolve_expression(&self, expr: Expr) -> Expr {
+    fn resolve_expression(&self, expr: &mut Expr) {
         use self::Expr::*;
 
         match expr {
-            Block(stmts, v) => self.resolve_block(stmts, v),
-            BuiltinVal(v) => BuiltinVal(v),
-            Call(c, a) => self.resolve_call(c, a),
-            Constructor(c) => Constructor(self.resolve_constructor_value(c)),
-            FieldAccess(v, f) => FieldAccess(
-                self.resolve_value_ptr(v),
-                self.resolve_field(f),
-            ),
-            If(condition, if_, else_) => If(
-                self.resolve_value_ptr(condition),
-                self.resolve_value_ptr(if_),
-                self.resolve_value_ptr(else_),
-            ),
-            Implicit(i) => Implicit(self.resolve_implicit(i)),
-            Loop(s) => Loop(self.resolve_statements(s)),
-            Ref(v, g) => Ref(self.resolve_value_id(v), g),
-            Tuple(t) => Tuple(self.resolve_tuple_value(t)),
-            UnresolvedRef(id) => UnresolvedRef(self.resolve_value_id(id)),
+            Call(callable, ..) => self.resolve_callable(callable),
+            FieldAccess(_, field) => self.resolve_field(field),
+            Implicit(implicit) => self.resolve_implicit(implicit),
+            Ref(name, _) | UnresolvedRef(name) => self.resolve_value_name(name),
+            _ => (),
         }
     }
 
-    fn resolve_field(&self, f: Field) -> Field {
-        match f {
-            Field::Index(..) => f,
-            Field::Unresolved(n) => Field::Unresolved(self.resolve_value_id(n)),
+    fn resolve_expression_handles(&self, tree: &mut Tree) {
+        for handle in tree.iter_expression_handles_mut() {
+            self.resolve_type_ref(handle.typ);
+            self.resolve_expression(handle.expr);
         }
     }
 
-    fn resolve_implicit(&self, i: Implicit) -> Implicit {
+    fn resolve_field(&self, field: &mut Field) {
+        use self::Field::*;
+
+        match field {
+            Unresolved(name) => self.resolve_value_name(name),
+            _ => (),
+        }
+    }
+
+    fn resolve_implicit(&self, implicit: &mut Implicit) {
         use self::Implicit::*;
 
-        match i {
-            ToEnum(e, v) => ToEnum(
-                self.resolve_enum_prototype(e),
-                self.resolve_value_ptr(v),
-            ),
+        match implicit {
+            ToEnum(name, _) => self.resolve_item_name(name),
         }
     }
 
-    fn resolve_item_id(&self, i: ItemIdentifier) -> ItemIdentifier {
-        i.with_id(self.from_range(i.span()))
+    fn resolve_item_name(&self, i: &mut ItemIdentifier) {
+        *i = self.resolve_item_id(i.clone());
+    }
+
+    fn resolve_names(&self, tree: &mut Tree) {
+        for name in tree.iter_names_mut() {
+            self.resolve_value_name(name);
+        }
     }
 
     fn resolve_path(&self, p: Path) -> Path {
         Path {
-            components: self.resolve_array(p.components, |c| self.resolve_type(c)),
+            components: self.resolve_array(p.components, |c| self.resolve_type_definition(c)),
         }
     }
 
-    fn resolve_re_binding(&self, r: ReBinding) -> ReBinding {
-        ReBinding {
-            left: self.resolve_value(r.left),
-            right: self.resolve_value(r.right),
-            range: r.range,
+    fn resolve_paths(&self, tree: &mut Tree) {
+        for component in tree.iter_path_mut() {
+            self.resolve_item_name(component);
         }
     }
 
-    fn resolve_return(&self, r: Return) -> Return {
-        Return {
-            value: self.resolve_value(r.value),
-            range: r.range,
+    fn resolve_pattern(&self, pattern: &mut Pattern) {
+        use self::Pattern::*;
+
+        match pattern {
+            Var(name) => self.resolve_value_name(name),
+            _ => (),
         }
     }
 
-    fn resolve_statements(&self, stmts: DynArray<Stmt>) -> DynArray<Stmt> {
-        self.resolve_array(stmts, |s| self.resolve_statement(s))
+    fn resolve_pattern_handles(&self, tree: &mut Tree) {
+        for handle in tree.iter_pattern_handles_mut() {
+            self.resolve_type_ref(handle.typ);
+            self.resolve_pattern(handle.pattern);
+        }
     }
 
-    fn resolve_tuple_pattern(&self, t: Tuple<Pattern>) -> Tuple<Pattern> {
-        self.resolve_tuple_impl(t, |p| self.resolve_pattern(p))
+    fn resolve_root(&self, tree: &mut Tree) {
+        match tree.get_root_mut() {
+            Some(Root::Function(name, _, _, _)) =>
+                self.resolve_item_name(name),
+            _ => (),
+        }
     }
 
-    fn resolve_tuple_type(&self, t: Tuple<Type>) -> Tuple<Type> {
-        self.resolve_tuple_impl(t, |t| self.resolve_type(t))
+    fn resolve_type_ref(&self, typ: &mut Type) {
+        use self::Type::*;
+
+        match typ {
+            Enum(name, ..) | Rec(name, ..) | Unresolved(name, ..)
+                => self.resolve_item_name(name),
+            _ => (),
+        }
     }
 
-    fn resolve_tuple_value(&self, t: Tuple<Value>) -> Tuple<Value> {
-        self.resolve_tuple_impl(t, |v| self.resolve_value(v))
+    fn resolve_types(&self, tree: &mut Tree) {
+        for typ in tree.iter_types_mut() {
+            self.resolve_type_ref(typ);
+        }
     }
 
-    fn resolve_value_id(&self, v: ValueIdentifier) -> ValueIdentifier {
-        v.with_id(self.from_range(v.span()))
+    fn resolve_dyn_tuple_type(&self, t: DynTuple<TypeDefinition>) -> DynTuple<TypeDefinition> {
+        self.resolve_dyn_tuple_impl(t, |t| self.resolve_type_definition(t))
     }
 
-    fn resolve_value_ptr(&self, value: Ptr<Value>) -> Ptr<Value> {
-        value.update(|v| self.resolve_value(v));
-        value
+    fn resolve_value_name(&self, v: &mut ValueIdentifier) {
+        *v = self.resolve_value_id(v.clone());
     }
 
     fn resolve_array<T: Default, F: Fn(T) -> T>(
@@ -447,247 +313,16 @@ impl<'g> Resolver<'g> {
         array
     }
 
-    fn resolve_constructor_impl<T: Default, F: Fn(T) -> T>(
+    fn resolve_dyn_tuple_impl<T: Default, F: Fn(T) -> T>(
         &self,
-        c: Constructor<T>,
+        c: DynTuple<T>,
         resolver: F,
     )
-        -> Constructor<T>
+        -> DynTuple<T>
     {
-        Constructor {
-            type_: self.resolve_type(c.type_),
-            arguments: self.resolve_tuple_impl(c.arguments, resolver),
-            range: c.range,
-        }
-    }
-
-    fn resolve_tuple_impl<T: Default, F: Fn(T) -> T>(
-        &self,
-        c: Tuple<T>,
-        resolver: F,
-    )
-        -> Tuple<T>
-    {
-        Tuple {
+        DynTuple {
             fields: self.resolve_array(c.fields, resolver),
             names: self.resolve_array(c.names, |v| self.resolve_value_id(v)),
-        }
-    }
-
-}
-
-//
-//  Implementation details of Scrubber
-//
-
-impl Scrubber {
-    fn scrub_argument(&self, a: Argument) -> Argument {
-        let name = self.scrub_value_id(a.name);
-        let type_ = self.scrub_type(a.type_);
-        let (range, gvn) = (a.range, a.gvn);
-
-        Argument { name, type_, range, gvn }
-    }
-
-    fn scrub_binding(&self, b: Binding) -> Binding {
-        let left = self.scrub_pattern(b.left);
-        let right = self.scrub_value(b.right);
-        let range = b.range;
-
-        Binding { left, right, range }
-    }
-
-    fn scrub_block(&self, stmts: DynArray<Stmt>, v: Option<Ptr<Value>>) -> Expr {
-        Expr::Block(
-            self.scrub_statements(stmts),
-            v.map(|v| self.scrub_value_ptr(v)),
-        )
-    }
-
-    fn scrub_call(&self, c: Callable, args: DynArray<Value>) -> Expr {
-        Expr::Call(
-            self.scrub_callable(c),
-            self.scrub_array(args, |v| self.scrub_value(v)),
-        )
-    }
-
-    fn scrub_callable(&self, c: Callable) -> Callable {
-        use self::Callable::*;
-
-        match c {
-            Builtin(f) => Builtin(f),
-            Function(f) => Function(self.scrub_function_prototype(f)),
-            Unknown(v) => Unknown(self.scrub_value_id(v)),
-            Unresolved(c) => Unresolved(
-                self.scrub_array(c, |c| self.scrub_callable(c))
-            ),
-        }
-    }
-
-    fn scrub_constructor_pattern(&self, c: Constructor<Pattern>)
-        -> Constructor<Pattern>
-    {
-        self.scrub_constructor_impl(c, |p| self.scrub_pattern(p))
-    }
-
-    fn scrub_constructor_value(&self, c: Constructor<Value>)
-        -> Constructor<Value>
-    {
-        self.scrub_constructor_impl(c, |v| self.scrub_value(v))
-    }
-
-    fn scrub_enum_prototype(&self, e: EnumProto) -> EnumProto {
-        EnumProto {
-            name: self.scrub_item_id(e.name),
-            range: e.range,
-        }
-    }
-
-    fn scrub_expression(&self, expr: Expr) -> Expr {
-        use self::Expr::*;
-
-        match expr {
-            Block(stmts, v) => self.scrub_block(stmts, v),
-            BuiltinVal(v) => BuiltinVal(v),
-            Call(c, a) => self.scrub_call(c, a),
-            Constructor(c) => Constructor(self.scrub_constructor_value(c)),
-            FieldAccess(v, f) => FieldAccess(
-                self.scrub_value_ptr(v),
-                self.scrub_field(f),
-            ),
-            If(condition, if_, else_) => If(
-                self.scrub_value_ptr(condition),
-                self.scrub_value_ptr(if_),
-                self.scrub_value_ptr(else_),
-            ),
-            Implicit(i) => Implicit(self.scrub_implicit(i)),
-            Loop(s) => Loop(self.scrub_statements(s)),
-            Ref(v, g) => Ref(self.scrub_value_id(v), g),
-            Tuple(t) => Tuple(self.scrub_tuple_value(t)),
-            UnresolvedRef(id) => UnresolvedRef(self.scrub_value_id(id)),
-        }
-    }
-
-    fn scrub_field(&self, f: Field) -> Field {
-        match f {
-            Field::Index(..) => f,
-            Field::Unresolved(n) => Field::Unresolved(self.scrub_value_id(n)),
-        }
-    }
-
-    fn scrub_function_prototype(&self, f: FunctionProto) -> FunctionProto {
-        FunctionProto {
-            name: self.scrub_item_id(f.name),
-            range: f.range,
-            arguments: self.scrub_array(f.arguments, |a| self.scrub_argument(a)),
-            result: self.scrub_type(f.result),
-        }
-    }
-
-    fn scrub_implicit(&self, i: Implicit) -> Implicit {
-        use self::Implicit::*;
-
-        match i {
-            ToEnum(e, v) => ToEnum(
-                self.scrub_enum_prototype(e),
-                self.scrub_value_ptr(v),
-            ),
-        }
-    }
-
-    fn scrub_item_id(&self, id: ItemIdentifier) -> ItemIdentifier {
-        id.with_id(Default::default())
-    }
-
-    fn scrub_path(&self, p: Path) -> Path {
-        Path {
-            components: self.scrub_array(p.components, |c| self.scrub_type(c)),
-        }
-    }
-
-    fn scrub_re_binding(&self, r: ReBinding) -> ReBinding {
-        ReBinding {
-            left: self.scrub_value(r.left),
-            right: self.scrub_value(r.right),
-            range: r.range,
-        }
-    }
-
-    fn scrub_record_prototype(&self, r: RecordProto) -> RecordProto {
-        RecordProto {
-            name: self.scrub_item_id(r.name),
-            range: r.range,
-            enum_: self.scrub_item_id(r.enum_),
-        }
-    }
-
-    fn scrub_return(&self, r: Return) -> Return {
-        Return {
-            value: self.scrub_value(r.value),
-            range: r.range,
-        }
-    }
-
-    fn scrub_statements(&self, stmts: DynArray<Stmt>) -> DynArray<Stmt> {
-        self.scrub_array(stmts, |s| self.scrub_statement(s))
-    }
-
-    fn scrub_tuple_pattern(&self, t: Tuple<Pattern>) -> Tuple<Pattern> {
-        self.scrub_tuple_impl(t, |p| self.scrub_pattern(p))
-    }
-
-    fn scrub_tuple_type(&self, t: Tuple<Type>) -> Tuple<Type> {
-        self.scrub_tuple_impl(t, |t| self.scrub_type(t))
-    }
-
-    fn scrub_tuple_value(&self, t: Tuple<Value>) -> Tuple<Value> {
-        self.scrub_tuple_impl(t, |v| self.scrub_value(v))
-    }
-
-    fn scrub_value_id(&self, id: ValueIdentifier) -> ValueIdentifier {
-        id.with_id(Default::default())
-    }
-
-    fn scrub_value_ptr(&self, value: Ptr<Value>) -> Ptr<Value> {
-        value.update(|v| self.scrub_value(v));
-        value
-    }
-
-    fn scrub_array<T: Default, F: Fn(T) -> T>(
-        &self,
-        array: DynArray<T>,
-        scrubber: F,
-    )
-        -> DynArray<T>
-    {
-        array.update_all(|e| scrubber(e));
-        array
-    }
-
-    fn scrub_constructor_impl<T: Default, F: Fn(T) -> T>(
-        &self,
-        c: Constructor<T>,
-        scrubber: F,
-    )
-        -> Constructor<T>
-    {
-        Constructor {
-            type_: self.scrub_type(c.type_),
-            arguments: self.scrub_tuple_impl(c.arguments, scrubber),
-            range: c.range,
-        }
-    }
-
-    fn scrub_tuple_impl<T: Default, F: Fn(T) -> T>(
-        &self,
-        c: Tuple<T>,
-        scrubber: F,
-    )
-        -> Tuple<T>
-    {
-        Tuple {
-            fields: self.scrub_array(c.fields, scrubber),
-            names: self.scrub_array(c.names, |v| self.scrub_value_id(v)),
         }
     }
 }

@@ -11,14 +11,9 @@
 //! type-checked, that is that if an variable of type T is passed to a function
 //! expecting an argument of type U, it has been checked that T be compatible to
 //! U *and* that transformation has been made explicit.
-//!
-//! The structures are parameterized by the lifetime of the arena providing the
-//! memory for their members.
 
 #[cfg(test)]
 pub mod builder;
-#[cfg(test)]
-pub mod gn;
 #[cfg(test)]
 pub mod interning;
 
@@ -27,9 +22,11 @@ mod item;
 mod pattern;
 mod stmt;
 mod value;
+mod tree;
 
 pub use self::common::*;
 pub use self::item::*;
 pub use self::pattern::*;
 pub use self::stmt::*;
 pub use self::value::*;
+pub use self::tree::*;

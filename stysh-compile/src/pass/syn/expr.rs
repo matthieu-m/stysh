@@ -915,7 +915,7 @@ mod tests {
         assert_eq!(
             exprit(&env, b"{ :return 1; }"),
             Expression::Block(
-                &e.block_div()
+                &e.block_expression_less()
                     .push_stmt(s.ret().expr(e.int(1, 10)).build())
                     .build()
             )

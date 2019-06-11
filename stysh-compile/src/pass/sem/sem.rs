@@ -2,6 +2,8 @@
 //!
 //! Let's start simple here. It'll get MUCH more complicated later.
 
+use std::cell;
+
 use basic::{com, mem};
 use basic::com::Span;
 
@@ -41,8 +43,16 @@ impl<'a> GraphBuilder<'a> {
     }
 
     /// Translates a stand-alone expression.
-    pub fn expression(&mut self, e: &ast::Expression) -> hir::Value {
-        self.mapper(self.scope).value_of(e)
+    pub fn expression(&mut self, e: &ast::Expression) -> hir::Tree {
+        let tree = cell::RefCell::new(hir::Tree::default());
+
+        let expr = self.symbol_mapper(self.scope, &tree).value_of(e);
+
+        tree.borrow_mut().set_root_expression(expr);
+
+        self.resolve(&tree);
+
+        tree.into_inner()
     }
 
     /// Translates a full-fledged item.
@@ -89,9 +99,8 @@ impl<'a> GraphBuilder<'a> {
         for a in fun.arguments {
             arguments.push(hir::Argument {
                 name: hir::ValueIdentifier(a.name.id(), a.name.span()),
-                type_: self.mapper(self.scope).type_of(&a.type_),
+                type_: self.type_mapper(self.scope).type_of(&a.type_),
                 range: a.span(),
-                gvn: self.context.gvn(),
             });
         }
 
@@ -103,7 +112,7 @@ impl<'a> GraphBuilder<'a> {
                     fun.result.span().end_offset() - (fun.keyword as usize)
                 ),
                 arguments: arguments,
-                result: self.mapper(self.scope).type_of(&fun.result),
+                result: self.type_mapper(self.scope).type_of(&fun.result),
             }
         )
     }
@@ -130,9 +139,9 @@ impl<'a> GraphBuilder<'a> {
                     prototype: hir::RecordProto {
                         name: name.into(),
                         range: ev.span(),
-                        enum_: prototype.name.into()
+                        enum_: prototype.name,
                     },
-                    definition: hir::Tuple::unit(),
+                    definition: hir::DynTuple::unit(),
                 }),
                 Missing(_) | Unexpected(_) => (),
             }
@@ -144,27 +153,43 @@ impl<'a> GraphBuilder<'a> {
     fn fun_item(&mut self, fun: ast::Function, p: hir::FunctionProto)
         -> hir::Item
     {
-        for a in &p.arguments {
-            self.context.insert_value(a.name, a.type_);
-        }
+        let body = cell::RefCell::new(hir::Tree::default());
+
+        let arguments = {
+            let mut arguments = vec!();
+            let mut names = vec!();
+
+            for a in &p.arguments {
+                let ty = self.symbol_mapper(self.scope, &body).convert_type(&a.type_);
+                let pattern = hir::Pattern::Var(a.name);
+
+                let pattern = body.borrow_mut().push_pattern(ty, pattern, a.range);
+                arguments.push(pattern);
+                names.push(a.name);
+
+                self.context.insert_value(a.name, pattern.into());
+                self.context.link_gvns(&[pattern.into()]);
+                self.context.push_diverging(pattern.into());
+            }
+
+            let arguments = body.borrow_mut().push_patterns(&arguments);
+            let names = body.borrow_mut().push_names(&names);
+
+            hir::Tuple { fields: arguments, names }
+        };
+
+        let result = body.borrow_mut().push_type_definition(&p.result);
 
         let scope = self.function_scope(self.scope, p.clone());
-        let mut body =
-            self.mapper(&scope)
+        let expr =
+            self.symbol_mapper(&scope, &body)
                 .value_of(&ast::Expression::Block(&fun.body));
 
-        for _ in 0..3 {
-            self.context.next_iteration();
+        body.borrow_mut().set_root_function(p.name, arguments, result, expr);
 
-            self.nested().fetch_all();
+        self.resolve(&body);
 
-            let res = self.unifier().unify_value(body, p.result.clone());
-            body = res.entity;
-
-            if res.altered == 0 && self.context.unfetched() == 0 { break; }
-        }
-
-        hir::Item::Fun(hir::Function { prototype: p, body: body })
+        hir::Item::Fun(hir::Function { prototype: p, body: body.into_inner() })
     }
 
     fn rec_item(&mut self, r: ast::Record, p: hir::RecordProto)
@@ -173,17 +198,30 @@ impl<'a> GraphBuilder<'a> {
         use self::ast::InnerRecord::*;
 
         let definition = match r.inner {
-            Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
-            Tuple(_, tup) => {
-                let mapper = self.mapper(self.scope);
-                mapper.tuple_of(&tup, |t| mapper.type_of(t))
-            },
+            Missing(_) | Unexpected(_) | Unit(_) => hir::DynTuple::unit(),
+            Tuple(_, tup) => self.type_mapper(self.scope).tuple_of(&tup),
         };
 
         hir::Item::Rec(hir::Record {
             prototype: p,
             definition: definition,
         })
+    }
+
+    fn resolve(&self, tree: &cell::RefCell<hir::Tree>) {
+        for _ in 0..4 {
+            self.context.next_iteration();
+
+            self.nested(tree).fetch_all();
+
+            self.unifier(tree).unify_all();
+
+            //  Nothing left to resolve, done!
+            if self.context.unfetched() == 0 && self.context.diverging() == 0 { break; }
+
+            //  No progress made, no point in continuing.
+            if self.context.fetched() == 0 && self.context.unified() == 0 { break; }
+        }
     }
 
     fn function_scope<'b>(
@@ -196,18 +234,32 @@ impl<'a> GraphBuilder<'a> {
         scp::FunctionScope::new(parent, p)
     }
 
-    fn mapper<'b>(&'b self, scope: &'b scp::Scope)
+    fn symbol_mapper<'b>(
+        &'b self,
+        scope: &'b scp::Scope,
+        tree: &'b cell::RefCell<hir::Tree>,
+    )
         -> sym::SymbolMapper<'b>
     {
-        sym::SymbolMapper::new(scope, self.context)
+        sym::SymbolMapper::new(scope, self.context, tree)
     }
 
-    fn nested(&self) -> nef::NestedEntityFetcher<'a> {
-        nef::NestedEntityFetcher::new(self.context, self.registry)
+    fn type_mapper<'b>(&'b self, scope: &'b scp::Scope)
+        -> sym::TypeMapper<'b>
+    {
+        sym::TypeMapper::new(scope)
     }
 
-    fn unifier(&self) -> tup::TypeUnifier<'a> {
-        tup::TypeUnifier::new(self.context, self.registry)
+    fn nested<'b>(&'b self, tree: &'b cell::RefCell<hir::Tree>)
+        -> nef::NestedEntityFetcher<'b>
+    {
+        nef::NestedEntityFetcher::new(self.context, self.registry, tree)
+    }
+
+    fn unifier<'b>(&'b self, tree: &'b cell::RefCell<hir::Tree>)
+        -> tup::TypeUnifier<'b>
+    {
+        tup::TypeUnifier::new(self.context, self.registry, tree)
     }
 }
 
@@ -217,14 +269,11 @@ impl<'a> GraphBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use std::rc;
-    use basic::mem;
+    use basic::{com, mem};
     use model::ast;
     use model::ast::builder::Factory as SynFactory;
-    use model::hir::builder::Factory as SemFactory;
-    use model::hir::*;
-    use model::hir::gn::GlobalNumberer;
-    use model::hir::interning::Scrubber;
-    use model::hir::mocks::MockRegistry;
+    use model::hir::{self, *};
+    use model::hir::builder::{Factory as SemFactory, RcTree};
     use super::Context;
     use super::scp::mocks::MockScope;
 
@@ -234,8 +283,7 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
-        let (i, p) = (hir.item(), hir.proto());
+        let hir = SemFactory::new(Default::default());
 
         assert_eq!(
             env.proto_of(
@@ -245,7 +293,7 @@ mod tests {
                     .push_unit(20, 3)
                     .build(),
             ),
-            p.enum_(i.id(6, 6)).build()
+            hir.proto().enum_(env.item_id(6, 6)).build()
         );
     }
 
@@ -255,10 +303,10 @@ mod tests {
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
+        let hir = SemFactory::new(Default::default());
         let (i, p) = (hir.item(), hir.proto());
 
-        let e: EnumProto = p.enum_(i.id(6, 6)).build();
+        let e: EnumProto = p.enum_(env.item_id(6, 6)).build();
 
         assert_eq!(
             env.item_of(
@@ -269,7 +317,9 @@ mod tests {
                     .push_unit(20, 3)
                     .build(),
             ),
-            i.enum_(e).push(i.unit(15, 3)).push(i.unit(20, 3)).build().into()
+            env.resolve_item(
+                i.enum_(e).push(i.unit(15, 3)).push(i.unit(20, 3)).build().into()
+            )
         );
     }
 
@@ -279,11 +329,11 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
+        let hir = SemFactory::new(Default::default());
 
         assert_eq!(
             env.proto_of(&ast.item().record(5, 6).build()),
-            hir.proto().rec(hir.item().id(5, 6), 0).range(0, 12).build()
+            hir.proto().rec(env.item_id(5, 6), 0).range(0, 12).build()
         );
     }
 
@@ -293,17 +343,17 @@ mod tests {
         let env = Env::new(b":rec Simple;", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
+        let hir = SemFactory::new(Default::default());
         let (i, p) = (hir.item(), hir.proto());
 
-        let r: RecordProto = p.rec(i.id(5, 6), 0).range(0, 12).build();
+        let r: RecordProto = p.rec(env.item_id(5, 6), 0).range(0, 12).build();
 
         assert_eq!(
             env.item_of(
                 Prototype::Rec(r.clone()),
                 &ast.item().record(5, 6).build(),
             ),
-            i.rec(r).build().into()
+            env.resolve_item(i.rec(r).build().into())
         );
     }
 
@@ -313,10 +363,10 @@ mod tests {
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
-        let (i, p, t) = (hir.item(), hir.proto(), hir.type_());
+        let hir = SemFactory::new(Default::default());
+        let (i, p, t) = (hir.item(), hir.proto(), hir.type_definition());
 
-        let r: RecordProto = p.rec(i.id(5, 3), 0).range(0, 22).build();
+        let r: RecordProto = p.rec(env.item_id(5, 3), 0).range(0, 22).build();
 
         assert_eq!(
             env.item_of(
@@ -330,7 +380,9 @@ mod tests {
                             .build()
                     ).build(),
             ),
-            i.rec(r).push(t.int()).push(t.string()).build().into()
+            env.resolve_item(
+                i.rec(r).push(t.int()).push(t.string()).build().into()
+            )
         );
     }
 
@@ -343,8 +395,8 @@ mod tests {
         );
 
         let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new();
-        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
+        let hir = SemFactory::new(Default::default());
+        let (p, t) = (hir.proto(), hir.type_definition());
 
         assert_eq!(
             env.proto_of(
@@ -358,11 +410,10 @@ mod tests {
                 .push(17, 1, ast.type_().simple(20, 3))
                 .build()
             ),
-            p.fun(i.id(5, 3), t.int())
-                .push(v.id(9, 1), t.int())
-                .push(v.id(17, 1), t.int())
+            p.fun(env.item_id(5, 3), t.int())
+                .push(env.var_id(9, 1), t.int())
+                .push(env.var_id(17, 1), t.int())
                 .range(0, 31)
-                .with_gvn()
                 .build()
                 .into()
         );
@@ -376,42 +427,68 @@ mod tests {
             &global_arena,
         );
 
-        let (a, b) = (env.lookup(b"a"), env.lookup(b"b"));
+        let ast = {
+            let f = env.ast();
+            let (e, i, t) = (f.expr(), f.item(), f.type_());
 
-        let ast = SynFactory::new(&global_arena);
-        let e = ast.expr();
-        let hir = SemFactory::new();
-        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
+            i.function(
+                5,
+                3,
+                t.simple(28, 3),
+                e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
+                    .build(),
+            )
+            .push(9, 1, t.simple(12, 3))
+            .push(17, 1, t.simple(17, 1))
+            .build()
+        };
 
-        let f =
-            p.fun(i.id(5, 3), t.int())
-                .push(v.id(9, 1).with_id(a), t.int())
-                .push(v.id(17, 1).with_id(b), t.int())
+        let add = env.item_id(5, 3);
+        let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
+
+        let prototype = {
+            let f = env.hir();
+            let (p, td) = (f.proto(), f.type_definition());
+
+            p.fun(add, td.int())
+                .push(a, td.int())
+                .push(b, td.int())
                 .range(0, 31)
-                .build();
-
-        let body =
-            v.call()
-                .push(v.name_ref(v.id(9, 1), 34).with_type(t.int()))
-                .push(v.name_ref(v.id(17, 1), 38).with_type(t.int()))
                 .build()
-                .with_type(t.int());
+        };
+
+        let arguments = {
+            let f = env.hir();
+            let (p, t) = (f.pat(), f.type_());
+
+            let a = p.simple().var(a).range(9, 6).type_(t.int()).build();
+            let b = p.simple().var(b).range(17, 6).type_(t.int()).build();
+
+            env.arguments(&[a, b])
+        };
+
+        let result = env.result(env.hir().type_().int());
+
+        let body = {
+            let f = env.hir();
+            let (t, v) = (f.type_(), f.value());
+
+            let a = v.name_ref(a, 34).pattern(0).type_(t.int()).build();
+            let b = v.name_ref(b, 38).pattern(1).type_(t.int()).build();
+
+            v.block(
+                v.call()
+                    .builtin(hir::BuiltinFunction::Add, t.int())
+                    .push(a)
+                    .push(b)
+                    .build()
+            )
+                .build_with_type()
+        };
 
         assert_eq!(
-            env.item_of(
-                Prototype::Fun(f.clone()),
-                &ast.item().function(
-                    5,
-                    3,
-                    ast.type_().simple(28, 3),
-                    e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
-                        .build(),
-                )
-                .push(9, 1, ast.type_().simple(12, 3))
-                .push(17, 1, ast.type_().simple(17, 1))
-                .build()
-            ),
-            env.scrubber.scrub_item(i.fun(f, v.block(body).build()).into())
+            env.item_of(Prototype::Fun(prototype.clone()), &ast),
+            env.function(prototype, arguments, result, body)
         );
     }
 
@@ -423,44 +500,69 @@ mod tests {
             &global_arena,
         );
 
-        let ast = SynFactory::new(&global_arena);
-        let e = ast.expr();
-        let hir = SemFactory::new();
-        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
+        let ast = {
+            let f = env.ast();
+            let (e, i, t) = (f.expr(), f.item(), f.type_());
 
-        let f =
-            p.fun(i.id(5, 3), t.tuple().push(t.int()).push(t.int()).build())
+            i.function(
+                5,
+                3,
+                t.tuple()
+                    .push(t.simple(15, 3))
+                    .push(t.simple(20, 3))
+                    .build(),
+                e.block(
+                    e.tuple().push(e.int(1, 28)).push(e.int(2, 31)).build()
+                ).build(),
+            )
+                .build()
+        };
+
+        let prototype = {
+            let f = env.hir();
+            let (p, td) = (f.proto(), f.type_definition());
+
+            let add = env.item_id(5, 3);
+
+            p.fun(add, td.tuple().push(td.int()).push(td.int()).build())
                 .range(0, 24)
-                .build();
+                .build()
+        };
 
-        let body = v.tuple().push(v.int(1, 28)).push(v.int(2, 31)).build();
+        let arguments = Tuple::unit();
+
+        let result = {
+            let f = env.hir();
+            let (t, ti) = (f.type_(), f.type_id());
+            ti.tuple().push(t.int()).push(t.int()).build()
+        };
+
+        let body = {
+            let v = env.hir().value();
+
+            v.block(
+                v.tuple()
+                    .push(v.int(1, 28))
+                    .push(v.int(2, 31))
+                    .range(27, 6)
+                    .build()
+            ).build()
+        };
 
         assert_eq!(
-            env.item_of(
-                Prototype::Fun(f.clone()),
-                &ast.item().function(
-                    5,
-                    3,
-                    ast.type_().tuple()
-                        .push(ast.type_().simple(15, 3))
-                        .push(ast.type_().simple(20, 3))
-                        .build(),
-                    e.block(
-                        e.tuple().push(e.int(1, 28)).push(e.int(2, 31)).build()
-                    ).build(),
-                )
-                .build()
-            ),
-            i.fun(f, v.block(body).build()).into()
+            env.item_of(Prototype::Fun(prototype.clone()), &ast),
+            env.function(prototype, arguments, result, body)
         );
     }
 
     struct Env<'g> {
         scope: MockScope,
-        registry: MockRegistry,
+        registry: hir::mocks::MockRegistry,
         context: Context,
-        resolver: ast::interning::Resolver<'g>,
-        scrubber: Scrubber,
+        global_arena: &'g mem::Arena,
+        ast_resolver: ast::interning::Resolver<'g>,
+        hir_resolver: hir::interning::Resolver<'g>,
+        tree: RcTree,
     }
 
     impl<'g> Env<'g> {
@@ -468,11 +570,27 @@ mod tests {
             let interner = rc::Rc::new(mem::Interner::new());
             Env {
                 scope: MockScope::new(),
-                registry: MockRegistry::new(),
+                registry: hir::mocks::MockRegistry::new(),
                 context: Context::default(),
-                resolver: ast::interning::Resolver::new(fragment, interner, arena),
-                scrubber: Scrubber::new(),
+                global_arena: arena,
+                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
+                hir_resolver: hir::interning::Resolver::new(fragment, interner),
+                tree: RcTree::default(),
             }
+        }
+
+        fn ast(&self) -> SynFactory<'g> { SynFactory::new(self.global_arena) }
+
+        fn hir(&self) -> SemFactory { SemFactory::new(self.tree.clone()) }
+
+        fn item_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
+            let range = range(pos, len);
+            hir::ItemIdentifier(self.hir_resolver.from_range(range), range)
+        }
+
+        fn var_id(&self, pos: usize, len: usize) -> hir::ValueIdentifier {
+            let range = range(pos, len);
+            hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
         fn builder<'a>(&'a self) -> super::GraphBuilder<'a> {
@@ -484,31 +602,74 @@ mod tests {
         }
 
         fn proto_of(&self, item: &ast::Item) -> Prototype {
-            let item = self.resolver.resolve_item(*item);
+            let item = self.ast_resolver.resolve_item(*item);
+            println!("proto_of - {:#?}", item);
+            println!();
 
             let result = self.builder().prototype(&item);
-            self.scrubber.scrub_prototype(result)
+
+            println!("proto_of - {:#?}", result);
+            println!();
+
+            result
         }
 
         fn item_of(&self, proto: Prototype, item: &ast::Item) -> Item {
-            let item = self.resolver.resolve_item(*item);
+            let item = self.ast_resolver.resolve_item(*item);
+            println!("item_of - {:#?}", item);
+            println!();
 
             let result = self.builder().item(proto, &item);
-            let result = self.unnumber_item(result);
-            self.scrubber.scrub_item(result)
+
+            println!("item_of - {:#?}", result);
+            println!();
+
+            result
         }
 
-        fn lookup(&self, raw: &[u8]) -> mem::InternId {
-            self.resolver.interner().lookup(raw).expect("Known identifier")
-        }
-
-        fn unnumber_item(&self, item: Item) -> Item {
-            let gvn = GlobalNumberer::new();
-
-            match item {
-                Item::Fun(f) => Item::Fun(gvn.unnumber_function(f)),
-                i => i,
+        fn arguments(&self, arguments: &[PatternId]) -> Tuple<PatternId> {
+            let mut names = vec!();
+            for a in arguments {
+                let pattern = *self.tree.borrow().get_pattern(*a);
+                if let Pattern::Var(name) = pattern {
+                    names.push(name);
+                } else {
+                    unimplemented!();
+                }
             }
+            let fields = self.tree.borrow_mut().push_patterns(arguments);
+            let names = self.tree.borrow_mut().push_names(&names);
+            Tuple { fields, names, }
         }
+
+        fn result(&self, typ: Type) -> TypeId {
+            self.tree.borrow_mut().push_type(typ)
+        }
+
+        fn function(
+            &self,
+            prototype: FunctionProto,
+            arguments: Tuple<PatternId>,
+            result: TypeId,
+            expr: ExpressionId
+        )
+            -> Item
+        {
+            let mut body = self.tree.borrow().clone();
+            body.set_root_function(prototype.name, arguments, result, expr);
+
+            println!("function - {:#?}", body);
+            println!();
+
+            hir::Item::Fun(hir::Function { prototype, body })
+        }
+
+        fn resolve_item(&self, item: Item) -> Item {
+            self.hir_resolver.resolve_item(item)
+        }
+    }
+
+    fn range(start: usize, length: usize) -> com::Range {
+        com::Range::new(start, length)
     }
 }

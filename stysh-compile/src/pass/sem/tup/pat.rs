@@ -1,7 +1,8 @@
 //! Pattern Unifier & Propagator.
 
 use model::hir::*;
-use super::{common, typ, Alteration};
+use super::common::{self, Status};
+use super::typ::{self, Action};
 
 /// Pattern Unifier.
 #[derive(Clone, Debug)]
@@ -19,22 +20,17 @@ impl<'a> PatternUnifier<'a> {
         PatternUnifier { core }
     }
 
-    /// Unifies the inner entities (of p), recursively.
-    pub fn unify(&self, p: Pattern, ty: Type)
-        -> Alteration<Pattern>
-    {
-        use self::Pattern::*;
+    /// Unifies the type of the pattern.
+    pub fn unify(&self, p: PatternId) -> Status {
+        let ty = self.core.tree().get_pattern_type_id(p);
 
-        match p.clone() {
-            Ignored(_) => Alteration::forward(p),
-            Constructor(c, g)
-                => self.unify_constructor(c, ty).combine(p, |_, c| Constructor(c, g)),
-            Tuple(t, r, g)
-                => self.unify_tuple(t, ty).combine(p, |_, t| Tuple(t, r, g)),
-            Var(_, g) => {
-                self.unify_variable(g, ty);
-                Alteration::forward(p)
-            },
+        match self.unify_type(ty) {
+            Some(Action::Update(target)) =>
+                self.update(p, ty, target),
+            Some(Action::Unified) =>
+                Status::Unified,
+            Some(Action::Cast(_)) | None =>
+                Status::Diverging,
         }
     }
 }
@@ -44,33 +40,15 @@ impl<'a> PatternUnifier<'a> {
 //
 
 impl<'a> PatternUnifier<'a> {
-    fn unify_constructor(&self, c: Constructor<Pattern>, ty: Type)
-        -> Alteration<Constructor<Pattern>>
-    {
-        let type_ = self.select(c.type_, ty);
-        let arguments = self.unify_tuple(c.arguments, type_.clone());
-        let range = c.range;
-
-        Alteration {
-            entity: Constructor { type_, arguments: arguments.entity, range },
-            altered: arguments.altered,
-        }
+    /// Determine the necessary action to unify the type.
+    fn unify_type(&self, ty: TypeId) -> Option<Action> {
+        typ::TypeUnifier::new(self.core).unify(ty)
     }
 
-    fn unify_tuple(&self, t: Tuple<Pattern>, ty: Type)
-        -> Alteration<Tuple<Pattern>>
-    {
-        self.core.unify_tuple(t, ty, |p, ty| self.unify(p, ty))
-    }
-
-    fn unify_variable(&self, gvn: Gvn, ty: Type) {
-        let known = self.core.type_of(gvn);
-        let ty = self.select(known, ty);
-        self.core.context.value(gvn).set_type(ty);
-    }
-
-    fn select(&self, t0: Type, t1: Type) -> Type {
-        typ::TypeUnifier::new(self.core).select(t0, t1)
+    /// Update the type of the pattern to unify it.
+    fn update(&self, _p: PatternId, ty: TypeId, target: Type) -> Status {
+        self.core.tree.borrow_mut().set_type(ty, target);
+        Status::Unified
     }
 }
 
@@ -78,44 +56,51 @@ impl<'a> PatternUnifier<'a> {
 mod tests {
     use model::hir::*;
 
-    use super::PatternUnifier;
+    use super::{PatternUnifier, Status};
+    use super::super::Relation;
     use super::super::tests::{Env, LocalEnv};
 
     #[test]
-    fn var() {
+    fn name() {
         let env = Env::default();
-        let (_, p, _, _, t, v) = env.factories();
+        let local = env.local(b":var a := 1;");
+        let a = local.value_id(5, 1);
 
-        let local = env.local(b"a");
-        let a = v.id(0, 1);
-        local.core().context.insert_value(a, Type::unresolved());
+        let pat = {
+            let (_, p, _, s, _, _, v) = env.source_factories();
+            let pat = p.var(a);
+            let val= v.int(1, 10);
+            s.var(pat, val);
 
-        assert_eq!(
-            unify(&local, 0, p.var(a), t.int()),
-            p.var(a)
-        );
+            local.link_types_of(pat.into(), Relation::Identical(val.into()));
+
+            pat
+        };
+
+        {
+            let (_, p, _, s, _, _, v) = env.target_factories();
+            let pat = p.var_typed(a, Type::int());
+            s.var(pat, v.int(1, 10));
+        }
+
+        assert_eq!(unify(&local, pat), Status::Unified);
     }
 
-    fn unify<'g>(
-        local: &LocalEnv<'g>,
-        altered: u32,
-        pat: Pattern,
-        ty: Type,
-    )
-        -> Pattern
-    {
-        let pat = local.resolver().resolve_pattern(pat);
-        let pat = local.numberer().number_pattern(pat);
-        let ty = local.resolver().resolve_type(ty);
+    fn unify<'g>(local: &LocalEnv<'g>, p: PatternId) -> Status {
+        local.resolve_trees();
 
-        let resolution =
-            PatternUnifier::new(local.core())
-                .unify(pat, ty)
-                .map(|p| local.scrubber().scrub_pattern(p))
-                .map(|p| local.numberer().unnumber_pattern(p));
+        println!("source before: {:?}", local.source());
+        println!();
 
-        assert_eq!(resolution.altered, altered);
+        let status = PatternUnifier::new(local.core()).unify(p);
 
-        resolution.entity
+        println!("source after: {:?}", local.source());
+        println!();
+        println!("target: {:?}", local.target());
+        println!();
+
+        assert_eq!(local.source(), local.target());
+
+        status
     }
 }

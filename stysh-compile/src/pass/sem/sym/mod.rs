@@ -7,8 +7,10 @@
 //!
 //! Note:   it also doubles up as translated from AST to HIR.
 
-mod sym;
 pub mod scp;
+mod sym;
+mod typ;
 
-use super::Context;
+use super::{Context, Relation};
 pub use self::sym::SymbolMapper;
+pub use self::typ::TypeMapper;

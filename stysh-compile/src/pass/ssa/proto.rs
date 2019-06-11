@@ -10,9 +10,9 @@ use model::{hir, sir};
 #[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ProtoBlock {
     pub id: BlockId,
-    pub arguments: DynArray<(BindingId, hir::Type)>,
+    pub arguments: DynArray<(BindingId, hir::TypeDefinition)>,
     pub predecessors: DynArray<BlockId>,
-    pub bindings: DynArray<(BindingId, sir::ValueId, hir::Type)>,
+    pub bindings: DynArray<(BindingId, sir::ValueId, hir::TypeDefinition)>,
     pub instructions: DynArray<sir::Instruction>,
     pub last_value: Option<sir::ValueId>,
     pub exit: ProtoTerminator,
@@ -31,7 +31,7 @@ pub enum ProtoTerminator {
 #[derive(Clone, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ProtoJump {
     pub dest: BlockId,
-    pub arguments: DynArray<(sir::ValueId, hir::Type)>,
+    pub arguments: DynArray<(sir::ValueId, hir::TypeDefinition)>,
 }
 
 //  Also known as Global Value Number.
@@ -85,7 +85,7 @@ impl ProtoBlock {
         }
     }
 
-    pub fn bind(&mut self, binding: BindingId, type_: hir::Type)
+    pub fn bind(&mut self, binding: BindingId, type_: hir::TypeDefinition)
         -> sir::ValueId
     {
         for (id, value, _) in &self.bindings {
@@ -109,7 +109,7 @@ impl ProtoBlock {
     pub fn bind_successor(
         &mut self,
         id: BlockId,
-        bindings: &DynArray<(BindingId, hir::Type)>,
+        bindings: &DynArray<(BindingId, hir::TypeDefinition)>,
     )
         -> usize
     {
@@ -147,7 +147,7 @@ impl ProtoBlock {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        t: hir::Type,
+        t: hir::TypeDefinition,
     )
     {
         //  TODO(matthieum): The binding may already have been created by
@@ -171,7 +171,7 @@ impl ProtoBlock {
         &mut self,
         binding: BindingId,
         id: sir::ValueId,
-        type_: hir::Type,
+        type_: hir::TypeDefinition,
     )
     {
         if let Some(index) = self.bindings.find(|b| b.0 == binding) {
@@ -279,6 +279,30 @@ impl convert::From<hir::Gvn> for BindingId {
     }
 }
 
+impl convert::From<hir::ExpressionId> for BlockId {
+    fn from(e: hir::ExpressionId) -> BlockId {
+        hir::Gvn::from(e).into()
+    }
+}
+
+impl convert::From<hir::ExpressionId> for BindingId {
+    fn from(e: hir::ExpressionId) -> BindingId {
+        hir::Gvn::from(e).into()
+    }
+}
+
+impl convert::From<hir::PatternId> for BlockId {
+    fn from(p: hir::PatternId) -> BlockId {
+        hir::Gvn::from(p).into()
+    }
+}
+
+impl convert::From<hir::PatternId> for BindingId {
+    fn from(p: hir::PatternId) -> BindingId {
+        hir::Gvn::from(p).into()
+    }
+}
+
 impl<'a> convert::From<&'a hir::Gvn> for BindingId {
     fn from(gvn: &'a hir::Gvn) -> BindingId {
         BindingId(gvn.0)
@@ -307,7 +331,7 @@ impl ProtoBlock {
     fn set_jump_arguments(
         &mut self,
         id: BlockId,
-        arguments: DynArray<(sir::ValueId, hir::Type)>
+        arguments: DynArray<(sir::ValueId, hir::TypeDefinition)>
     )
     {
         match self.exit {

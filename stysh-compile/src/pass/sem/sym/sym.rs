@@ -5,13 +5,15 @@
 //! -   maps function call to callable (binding or function),
 //! -   maps type or module to definition.
 
+use std::cell;
+
 use basic::{com, mem};
 use basic::com::Span;
 
 use model::{ast, hir};
 
-use super::Context;
-use super::scp::{BlockScope, Scope};
+use super::{Context, Relation};
+use super::scp::{BlockScope, CallableCandidate, Scope};
 
 /// The Symbol Mapper.
 ///
@@ -19,6 +21,7 @@ use super::scp::{BlockScope, Scope};
 pub struct SymbolMapper<'a> {
     scope: &'a Scope,
     context: &'a Context,
+    tree: &'a cell::RefCell<hir::Tree>,
 }
 
 impl<'a> SymbolMapper<'a> {
@@ -26,12 +29,18 @@ impl<'a> SymbolMapper<'a> {
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(scope: &'a Scope, context: &'a Context) -> Self {
-        SymbolMapper { scope, context }
+    pub fn new(
+        scope: &'a Scope,
+        context: &'a Context,
+        tree: &'a cell::RefCell<hir::Tree>,
+    )
+        -> Self
+    {
+        SymbolMapper { scope, context, tree }
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::Pattern {
+    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::PatternId {
         use model::ast::Pattern;
 
         match *p {
@@ -55,8 +64,23 @@ impl<'a> SymbolMapper<'a> {
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&self, e: &ast::Expression) -> hir::Value {
+    pub fn value_of(&self, e: &ast::Expression) -> hir::ExpressionId {
         self.value_of_expr(e)
+    }
+
+    /// Converts TypeDefinition into Type.
+    pub fn convert_type(&self, t: &hir::TypeDefinition) -> hir::Type {
+        use self::hir::TypeDefinition::*;
+
+        match t {
+            Builtin(t) => hir::Type::Builtin(*t),
+            Enum(e, p) => self.convert_type_enum(e, p),
+            Rec(r, p) => self.convert_type_record(r, p),
+            Tuple(t) => hir::Type::Tuple(self.convert_type_tuple(&t)),
+            Unresolved(n, p) => self.convert_type_unresolved(n, p),
+            UnresolvedEnum(e, p) => self.convert_type_unresolved(&e.name, p),
+            UnresolvedRec(r, p) => self.convert_type_unresolved(&r.name, p),
+        }
     }
 }
 
@@ -64,45 +88,85 @@ impl<'a> SymbolMapper<'a> {
 //  Implementation Details
 //
 impl<'a> SymbolMapper<'a> {
+
     fn pattern_of_constructor(
         &self,
         c: ast::Constructor<ast::Pattern>,
     )
-        -> hir::Pattern
+        -> hir::PatternId
     {
-        hir::Pattern::Constructor(
-            hir::Constructor {
-                type_: self.type_of(&c.type_),
-                arguments: self.tuple_of(&c.arguments, |p| self.pattern_of(p)),
-                range: c.span(),
-            },
-            self.context.gvn(),
-        )
+        let typ = self.type_of(&c.type_);
+        let range = c.span();
+        let tuple = self.tuple_of(
+            &c.arguments,
+            |p| self.pattern_of(p),
+            |p| self.tree_mut().push_patterns(p),
+        );
+        let pattern = hir::Pattern::Constructor(tuple);
+
+        let result = self.tree_mut().push_pattern(typ, pattern, range);
+        self.link_patterns(result.into(), tuple.fields);
+        result
     }
 
     fn pattern_of_ignored(&self, underscore: com::Range)
-        -> hir::Pattern
+        -> hir::PatternId
     {
-        hir::Pattern::Ignored(underscore)
+        let pattern = hir::Pattern::Ignored(underscore);
+
+        self.tree_mut().push_pattern(hir::Type::unresolved(), pattern, underscore)
     }
 
-    fn pattern_of_tuple(&self, t: &ast::Tuple<ast::Pattern>)
-        -> hir::Pattern
+    fn pattern_of_tuple(&self, tup: &ast::Tuple<ast::Pattern>)
+        -> hir::PatternId
     {
-        hir::Pattern::Tuple(
-            self.tuple_of(t, |p| self.pattern_of(p)),
-            t.span(),
-            self.context.gvn(),
-        )
+        let pat = self.tuple_of(
+            tup,
+            |p| self.pattern_of(p),
+            |p| self.tree_mut().push_patterns(p),
+        );
+        let typ = self.tuple_type_of(
+            pat.names,
+            |tree| tree.get_patterns(pat.fields),
+            |p| self.tree().get_pattern_type_id(p),
+        );
+
+        let typ = hir::Type::Tuple(typ);
+        let pattern = hir::Pattern::Tuple(pat);
+
+        let result = self.tree_mut().push_pattern(typ, pattern, tup.span());
+        self.link_patterns(result.into(), pat.fields);
+        result
     }
 
     fn pattern_of_var(&self, var: ast::VariableIdentifier)
-        -> hir::Pattern
+        -> hir::PatternId
     {
-        let gvn =
-            self.context.insert_value(var.into(), hir::Type::unresolved());
+        let pattern = hir::Pattern::Var(var.into());
+        let pattern = self.tree_mut()
+            .push_pattern(hir::Type::unresolved(), pattern, var.span());
 
-        hir::Pattern::Var(var.into(), gvn)
+        self.context.insert_value(var.into(), pattern.into());
+
+        pattern
+    }
+
+    fn statements<'b>(
+        &self,
+        stmts: &[ast::Statement],
+        scope: &mut BlockScope<'b>,
+    )
+        -> hir::Id<[hir::Stmt]>
+    {
+        let stmts = self.array_of(stmts, |&s| {
+            match s {
+                ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
+                ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
+                ast::Statement::Var(var) => self.stmt_of_var(&var, scope),
+            }
+        });
+
+        self.tree_mut().push_statements(&stmts)
     }
 
     fn stmt_of_return<'b>(&self,
@@ -111,15 +175,18 @@ impl<'a> SymbolMapper<'a> {
     )
         -> hir::Stmt
     {
-        let range = ret.span();
-        let unit = hir::Value::unit().with_range(range.end_offset() - 3, 2);
+        let value = if let Some(e) = ret.expr {
+            self.rescope(scope).value_of_expr(&e)
+        } else {
+            let typ = hir::Type::unit();
+            let expr = hir::Expr::unit();
+            let range = com::Range::new(ret.span().end_offset() - 3, 2);
+            self.tree_mut().push_expression(typ, expr, range)
+        };
 
-        let value =
-            ret.expr
-                .map(|e| self.rescope(scope).value_of_expr(&e))
-                .unwrap_or(unit);
+        //  TODO(matthieum): link type of value to type of function's result.
 
-        hir::Stmt::Return(hir::Return { value, range })
+        hir::Stmt::Return(hir::Return { value, range: ret.span() })
     }
 
     fn stmt_of_set<'b>(
@@ -132,6 +199,10 @@ impl<'a> SymbolMapper<'a> {
         let range = set.span();
         let left = self.rescope(scope).value_of_expr(&set.left);
         let right = self.rescope(scope).value_of_expr(&set.expr);
+
+        self.context.link_gvns(&[left.into(), right.into()]);
+        self.link_gvn_types(left.into(), Relation::SuperTypeOf(right.into()));
+
         hir::Stmt::Set(hir::ReBinding { left, right, range })
     }
 
@@ -145,7 +216,10 @@ impl<'a> SymbolMapper<'a> {
         let left = self.rescope(self.scope).pattern_of(&var.pattern);
         let right = self.rescope(scope).value_of_expr(&var.expr);
         let range = var.span();
-        scope.add_pattern(left.clone());
+
+        scope.add_pattern(left, &self.tree());
+        self.context.link_gvns(&[left.into(), right.into()]);
+        self.link_gvn_types(left.into(), Relation::Identical(right.into()));
 
         hir::Stmt::Var(hir::Binding { left, right, range })
     }
@@ -153,34 +227,25 @@ impl<'a> SymbolMapper<'a> {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::Type
     {
-        let type_ = self.scope.lookup_type(p.components[0].into());
+        let path: Vec<hir::ItemIdentifier> = p.components.iter().map(|&c| c.into()).collect();
+        let path = self.tree_mut().push_path(&path);
 
-        let path = mem::DynArray::with_capacity(p.components.len());
-        path.push(type_);
-        for &c in &p.components[1..] {
-            path.push(hir::Type::Unresolved(
-                c.into(),
-                Default::default(),
-                self.context.gin(),
-            ));
-        }
-
-        hir::Type::Unresolved(
-            t.into(),
-            hir::Path { components: path },
-            self.context.gin(),
-        )
+        hir::Type::Unresolved(t.into(), path)
     }
 
     fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type {
-        self.scope.lookup_type(t.into())
+        self.convert_type(&self.scope.lookup_type(t.into()))
     }
 
-    fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::Type {
-        hir::Type::Tuple(self.tuple_of(t, |t| self.type_of(t)), self.context.gin())
+    fn type_of_tuple(&self, tup: &ast::Tuple<ast::Type>) -> hir::Type {
+        hir::Type::Tuple(self.tuple_of(
+            tup,
+            |t| self.tree_mut().push_type(self.type_of(t)),
+            |t| self.tree_mut().push_type_ids(t),
+        ))
     }
 
-    fn value_of_expr(&self, expr: &ast::Expression) -> hir::Value {
+    fn value_of_expr(&self, expr: &ast::Expression) -> hir::ExpressionId {
         use model::ast::Expression::*;
 
         match *expr {
@@ -197,21 +262,6 @@ impl<'a> SymbolMapper<'a> {
                 => self.value_of_prefix_operator(op, e, expr.span()),
             Tuple(t) => self.value_of_tuple(&t),
             Var(id) => self.value_of_variable(id),
-        }.with_gvn(self.context.gvn())
-    }
-
-    fn value_of_block(&self, block: &ast::Block) -> hir::Value {
-        let mut scope = BlockScope::new(self.scope);
-        let stmts = self.statements(&block.statements, &mut scope);
-        let expr = block.expression.map(
-            |e| mem::Ptr::new(self.rescope(&scope).value_of_expr(e))
-        );
-
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: block.span(),
-            expr: hir::Expr::Block(stmts, expr),
-            gvn: self.context.gvn(),
         }
     }
 
@@ -221,15 +271,18 @@ impl<'a> SymbolMapper<'a> {
         left: &ast::Expression,
         right: &ast::Expression
     )
-        -> hir::Value
+        -> hir::ExpressionId
     {
         use model::ast::BinaryOperator as O;
         use model::hir::BuiltinFunction as F;
 
-        let range = left.span().extend(right.span());
-
         let left = self.value_of_expr(left);
         let right = self.value_of_expr(right);
+
+        let arguments = hir::Tuple {
+            fields: self.tree_mut().push_expressions(&[left, right]),
+            names: hir::Id::empty(),
+        };
 
         let op = match op {
             O::And => F::And,
@@ -247,90 +300,137 @@ impl<'a> SymbolMapper<'a> {
             O::Xor => F::Xor,
         };
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: range,
-            expr: hir::Expr::Call(
-                hir::Callable::Builtin(op),
-                mem::DynArray::new(vec!(left, right)),
-            ),
-            gvn: self.context.gvn(),
+        let left_range = self.tree().get_expression_range(left);
+        let right_range = self.tree().get_expression_range(right);
+
+        let typ = hir::Type::unresolved();
+        let range = left_range.extend(right_range);
+        let expr = hir::Expr::Call(hir::Callable::Builtin(op), arguments);
+
+        let result = self.tree_mut().push_expression(typ, expr, range);
+        self.link_expressions(result.into(), arguments.fields);
+        self.context.push_diverging(result.into());
+        result
+    }
+
+    fn value_of_block(&self, block: &ast::Block) -> hir::ExpressionId {
+        let mut scope = BlockScope::new(self.scope);
+
+        let stmts = self.statements(&block.statements, &mut scope);
+        let expr = block.expression.map(
+            |e| self.rescope(&scope).value_of_expr(e)
+        );
+
+        let range = block.span();
+        let block = hir::Expr::Block(stmts, expr);
+
+        if let Some(e) = expr {
+            let typ = hir::Type::unresolved();
+            let block = self.tree_mut().push_expression(typ, block, range);
+
+            self.context.link_gvns(&[e.into(), block.into()]);
+            self.link_gvn_types(e.into(), Relation::SubTypeOf(block.into()));
+
+            block
+        } else {
+            //  FIXME(matthieum): Deduce type from last statement.
+            //                    It is either () or Void.
+            let typ = hir::Type::unresolved();
+            self.tree_mut().push_expression(typ, block, range)
         }
     }
 
     fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>)
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        let type_ = self.type_of(&c.type_);
-        let arguments = self.tuple_of(&c.arguments, |v| self.value_of(v));
+        let arguments = self.tuple_of(
+            &c.arguments,
+            |v| self.value_of(v),
+            |e| self.tree_mut().push_expressions(e),
+        );
 
-        hir::Value {
-            type_: type_.clone(),
-            range: c.span(),
-            expr: hir::Expr::Constructor(hir::Constructor {
-                type_: type_,
-                arguments: arguments,
-                range: c.span(),
-            }),
-            gvn: self.context.gvn(),
-        }
+        let typ = self.type_of(&c.type_);
+        let expr = hir::Expr::Constructor(arguments);
+
+        let result = self.tree_mut().push_expression(typ, expr, c.span());
+        self.link_expressions(result.into(), arguments.fields);
+        self.context.push_diverging(result.into());
+        result
     }
 
-    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::Value {
-        let callable = if let ast::Expression::Var(id) = *fun.function {
+    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::ExpressionId {
+        let candidate = if let ast::Expression::Var(id) = *fun.function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!()
         };
 
-        let values = self.array_of(fun.arguments.fields, |a| self.value_of(a));
+        let callable = self.convert_callable(&candidate);
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: fun.span(),
-            expr: hir::Expr::Call(callable, values),
-            gvn: self.context.gvn(),
-        }
+        let arguments = self.tuple_of(
+            &fun.arguments,
+            |a| self.value_of(a),
+            |e| self.tree_mut().push_expressions(e),
+        );
+
+        let typ = hir::Type::unresolved();
+        let expr = hir::Expr::Call(callable, arguments);
+
+        let result = self.tree_mut().push_expression(typ, expr, fun.span());
+        self.link_expressions(result.into(), arguments.fields);
+        self.context.push_diverging(result.into());
+        result
     }
 
-    fn value_of_field(&self, field: ast::FieldAccess) -> hir::Value {
+    fn value_of_field(&self, field: ast::FieldAccess) -> hir::ExpressionId {
         use self::ast::FieldIdentifier::*;
 
-        let accessed = mem::Ptr::new(self.value_of(field.accessed));
+        let accessed = self.value_of(field.accessed);
+
+        let mut unfetched = false;
 
         let f = match field.field {
             Index(i, r) => hir::Field::Index(i, r),
-            Name(n, r) => hir::Field::Unresolved(hir::ValueIdentifier(n, r)),
+            Name(n, r) => {
+                unfetched = true;
+                hir::Field::Unresolved(hir::ValueIdentifier(n, r))
+            },
         };
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: field.span(),
-            expr: hir::Expr::FieldAccess(accessed, f),
-            gvn: self.context.gvn(),
+        let typ = hir::Type::unresolved();
+        let expr = hir::Expr::FieldAccess(accessed, f);
+
+        let result = self.tree_mut().push_expression(typ, expr, field.span());
+
+        self.context.link_gvns(&[result.into(), accessed.into()]);
+        if unfetched {
+            self.context.push_unfetched(result.into());
         }
+
+        result
     }
 
-    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::Value {
+    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::ExpressionId {
         let condition = self.value_of_expr(&if_else.condition);
         let true_branch = self.value_of_block(&if_else.true_expr);
         let false_branch = self.value_of_block(&if_else.false_expr);
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: if_else.span(),
-            expr: hir::Expr::If(
-                mem::Ptr::new(condition),
-                mem::Ptr::new(true_branch),
-                mem::Ptr::new(false_branch),
-            ),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::unresolved();
+        let expr = hir::Expr::If(condition, true_branch, false_branch);
+
+        let result = self.tree_mut().push_expression(typ, expr, if_else.span());
+
+        self.context.link_gvns(
+            &[result.into(), true_branch.into(), false_branch.into()]
+        );
+
+        self.link_gvn_types(result.into(), Relation::SuperTypeOf(true_branch.into()));
+        self.link_gvn_types(result.into(), Relation::SuperTypeOf(false_branch.into()));
+
+        result
     }
 
-    fn value_of_literal(&self, lit: ast::Literal)
-        -> hir::Value
-    {
+    fn value_of_literal(&self, lit: ast::Literal) -> hir::ExpressionId {
         use model::ast::Literal::*;
 
         match lit {
@@ -346,60 +446,50 @@ impl<'a> SymbolMapper<'a> {
         value: bool,
         range: com::Range
     )
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::Bool),
-            range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(value)),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::Builtin(hir::BuiltinType::Bool);
+        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(value));
+
+        self.tree_mut().push_expression(typ, expr, range)
     }
 
     fn value_of_literal_bytes(&self, bytes: mem::InternId, range: com::Range)
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        //  TODO(matthieum): Fix type, should be Array[[Byte]].
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::String),
-            range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(bytes)),
-            gvn: self.context.gvn(),
-        }
+        //  TODO(matthieum): Fix type, should be Array[Byte].
+        let typ = hir::Type::Builtin(hir::BuiltinType::String);
+        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::String(bytes));
+
+        self.tree_mut().push_expression(typ, expr, range)
     }
 
     fn value_of_literal_integral(&self, i: i64, range: com::Range)
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::Int),
-            range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i)),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::Builtin(hir::BuiltinType::Int);
+        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i));
+
+        self.tree_mut().push_expression(typ, expr, range)
     }
 
     fn value_of_literal_string(&self, string: mem::InternId, range: com::Range)
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::String),
-            range: range,
-            expr: hir::Expr::BuiltinVal(hir::BuiltinValue::String(string)),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::Builtin(hir::BuiltinType::String);
+        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::String(string));
+
+        self.tree_mut().push_expression(typ, expr, range)
     }
 
-    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::Value {
+    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::ExpressionId {
         let mut scope = BlockScope::new(self.scope);
         let stmts = self.statements(&loop_.statements, &mut scope);
 
-        hir::Value {
-            type_: hir::Type::Builtin(hir::BuiltinType::Void),
-            range: loop_.span(),
-            expr: hir::Expr::Loop(stmts),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::Builtin(hir::BuiltinType::Void);
+        let expr = hir::Expr::Loop(stmts);
+
+        self.tree_mut().push_expression(typ, expr, loop_.span())
     }
 
     fn value_of_prefix_operator(&self, 
@@ -407,43 +497,57 @@ impl<'a> SymbolMapper<'a> {
         expr: &ast::Expression,
         range: com::Range,
     )
-        -> hir::Value
+        -> hir::ExpressionId
     {
         use model::ast::PrefixOperator as O;
         use model::hir::BuiltinFunction as F;
 
-        let expr = self.value_of_expr(expr);
+        let arg = self.value_of_expr(expr);
+        let arguments = hir::Tuple {
+            fields: self.tree_mut().push_expressions(&[arg]),
+            names: hir::Id::empty(),
+        };
 
         let op = match op {
             O::Not => F::Not,
         };
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: range,
-            expr: hir::Expr::Call(
-                hir::Callable::Builtin(op),
-                mem::DynArray::new(vec!(expr)),
-            ),
-            gvn: self.context.gvn(),
-        }
+        let typ = hir::Type::unresolved();
+        let expr = hir::Expr::Call(hir::Callable::Builtin(op), arguments);
+
+        let result = self.tree_mut().push_expression(typ, expr, range);
+        self.context.link_gvns(&[result.into(), arg.into()]);
+        self.context.push_diverging(result.into());
+        result
     }
 
     fn value_of_tuple(&self, tup: &ast::Tuple<ast::Expression>)
-        -> hir::Value
+        -> hir::ExpressionId
     {
-        let expr = self.tuple_of(tup, |v| self.value_of(v));
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: tup.span(),
-            expr: hir::Expr::Tuple(expr),
-            gvn: self.context.gvn(),
-        }
+        let expr = self.tuple_of(
+            tup,
+            |v| self.value_of(v),
+            |e| self.tree_mut().push_expressions(e),
+        );
+        let typ = self.tuple_type_of(
+            expr.names,
+            |tree| tree.get_expressions(expr.fields),
+            |e| self.tree().get_expression_type_id(e),
+        );
+
+        let fields = expr.fields;
+        let typ = hir::Type::Tuple(typ);
+        let expr = hir::Expr::Tuple(expr);
+
+        let result = self.tree_mut().push_expression(typ, expr, tup.span());
+        self.link_expressions(result.into(), fields);
+        result
     }
 
     fn value_of_variable(&self, var: ast::VariableIdentifier)
-        -> hir::Value
+        -> hir::ExpressionId
     {
+        let typ = hir::Type::unresolved();
         let expr =
             self.scope
                 .lookup_binding(var.into())
@@ -456,12 +560,14 @@ impl<'a> SymbolMapper<'a> {
                 })
                 .unwrap_or(hir::Expr::UnresolvedRef(var.into()));
 
-        hir::Value {
-            type_: hir::Type::unresolved(),
-            range: var.span(),
-            expr: expr,
-            gvn: self.context.gvn(),
+        let result = self.tree_mut().push_expression(typ, expr, var.span());
+
+        if let hir::Expr::Ref(_, gvn) = expr {
+            self.context.link_gvns(&[result.into(), gvn]);
+            self.link_gvn_types(result.into(), Relation::Identical(gvn));
         }
+
+        result
     }
 
     fn rescope<'b>(&self, scope: &'b Scope) -> SymbolMapper<'b>
@@ -470,23 +576,125 @@ impl<'a> SymbolMapper<'a> {
         SymbolMapper {
             scope: scope,
             context: self.context,
+            tree: self.tree,
         }
     }
 
-    fn statements<'b>(
-        &self,
-        stmts: &[ast::Statement],
-        scope: &mut BlockScope<'b>,
-    )
-        -> mem::DynArray<hir::Stmt>
+    fn tree(&self) -> cell::Ref<'a, hir::Tree> { self.tree.borrow() }
+
+    fn tree_mut(&self) -> cell::RefMut<'a, hir::Tree> { self.tree.borrow_mut() }
+
+    fn convert_callable(&self, candidate: &CallableCandidate) -> hir::Callable {
+        use self::CallableCandidate as C;
+
+        match &candidate {
+            C::Builtin(f) => hir::Callable::Builtin(*f),
+            C::Function(f) => {
+                let name = f.name;
+                let result = self.convert_type(&f.result);
+                let result = self.tree_mut().push_type(result);
+                let arguments = self.array_of_dyn(
+                    &f.arguments,
+                    |a: &hir::Argument| self.convert_type(&a.type_)
+                );
+                let arguments = hir::Tuple {
+                    fields: self.tree_mut().push_types(&arguments),
+                    names: hir::Id::empty(),
+                };
+                hir::Callable::Function(name, arguments, result)
+            },
+            C::Unknown(name) => hir::Callable::Unknown(*name),
+            C::Unresolved(candidates) => {
+                let callables: Vec<_> = candidates.iter()
+                    .map(|c| self.convert_callable(c))
+                    .collect();
+                let callables = self.tree_mut().push_callables(&callables);
+                hir::Callable::Unresolved(callables)
+            },
+        }
+    }
+
+    fn convert_path(&self, p: &hir::Path) -> hir::PathId {
+        let path: Vec<_> = p.components.iter().map(|t| t.name()).collect();
+        self.tree_mut().push_path(&path)
+    }
+
+    fn convert_type_enum(&self, e: &hir::Enum, p: &hir::Path) -> hir::Type {
+        let name = e.prototype.name;
+        let path = self.convert_path(p);
+        let variants = self.array_of_dyn(
+            &e.variants,
+            |r| self.convert_type_record(&r, &Default::default()),
+        );
+        let variants = self.tree_mut().push_types(&variants);
+
+        hir::Type::Enum(name, path, variants)
+    }
+
+    fn convert_type_record(&self, r: &hir::Record, p: &hir::Path) -> hir::Type {
+        let name = r.prototype.name;
+        let path = self.convert_path(p);
+        let fields = self.convert_type_tuple(&r.definition);
+
+        hir::Type::Rec(name, path, fields)
+    }
+
+    fn convert_type_tuple(&self, t: &hir::DynTuple<hir::TypeDefinition>)
+        -> hir::Tuple<hir::TypeId>
     {
-        self.array_of(stmts, |&s| {
-            match s {
-                ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
-                ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
-                ast::Statement::Var(var) => self.stmt_of_var(&var, scope),
+        let fields = self.array_of_dyn(&t.fields, |f| self.convert_type(&f));
+        let fields = self.tree_mut().push_types(&fields);
+
+        let names = self.array_of_dyn(&t.names, |n| *n);
+        let names = self.tree_mut().push_names(&names);
+
+        hir::Tuple { fields, names }
+    }
+
+    fn convert_type_unresolved(&self, n: &hir::ItemIdentifier, p: &hir::Path) -> hir::Type {
+        hir::Type::Unresolved(*n, self.convert_path(p))
+    }
+
+    fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
+        self.context.link_gvns(&[gvn]);
+        for &e in self.tree().get_expressions(exprs) {
+            self.context.link_gvns(&[gvn, e.into()]);
+        }
+    }
+
+    fn link_patterns(&self, gvn: hir::Gvn, patterns: hir::Id<[hir::PatternId]>) {
+        for &p in self.tree().get_patterns(patterns) {
+            self.context.link_gvns(&[gvn, p.into()]);
+        }
+    }
+
+    fn link_gvn_types(&self, gvn: hir::Gvn, rel: Relation<hir::Gvn>) {
+        let ty = self.tree().get_gvn_type_id(gvn);
+        let rel = rel.map(|gvn| self.tree().get_gvn_type_id(gvn));
+
+        self.link_types(ty, rel);
+    }
+
+    fn link_types(&self, ty_id: hir::TypeId, rel_id: Relation<hir::TypeId>) {
+        use self::hir::Type::*;
+
+        self.context.link_types(ty_id, rel_id);
+
+        let tree = self.tree();
+
+        let ty = *tree.get_type(ty_id);
+        let related = *tree.get_type(*rel_id.get());
+
+        if let (Tuple(ty), Tuple(related)) = (ty, related) {
+            let ty = tree.get_type_ids(ty.fields);
+            let related = tree.get_type_ids(related.fields);
+
+            if ty.len() == related.len() {
+                for (ty, related) in ty.iter().zip(related.iter()) {
+                    self.link_types(*ty, rel_id.map(|_| *related));
+                }
             }
-        })
+        }
     }
 
     fn array_of<'b, T: 'b, U, F: FnMut(&'b T) -> U>(
@@ -494,9 +702,9 @@ impl<'a> SymbolMapper<'a> {
         input: &'b [T],
         mut transformer: F,
     )
-        -> mem::DynArray<U>
+        -> Vec<U>
     {
-        let result = mem::DynArray::with_capacity(input.len());
+        let mut result = Vec::with_capacity(input.len());
 
         for i in input {
             result.push(transformer(i));
@@ -505,11 +713,21 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    /// TODO: Move functionality from GraphBuilder to SymbolMapper.
-    pub fn tuple_of<'b, T: 'b, U, F: FnMut(&'b T) -> U>(
+    fn array_of_dyn<T: Clone, U, F: FnMut(&T) -> U>(
         &self,
-        tup: &'b ast::Tuple<'b, T>,
+        input: &mem::DynArray<T>,
+        mut transformer: F,
+    )
+        -> Vec<U>
+    {
+        input.iter().map(|e| transformer(&e)).collect()
+    }
+
+    fn tuple_of<T, U, F: FnMut(&T) -> U, I: FnOnce(&[U]) -> hir::Id<[U]>>(
+        &self,
+        tup: &ast::Tuple<'_, T>,
         transformer: F,
+        inserter: I,
     )
         -> hir::Tuple<U>
     {
@@ -518,11 +736,32 @@ impl<'a> SymbolMapper<'a> {
         );
 
         let fields = self.array_of(tup.fields, transformer);
+        let fields = inserter(&fields);
         let names = self.array_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r));
+        let names = self.tree_mut().push_names(&names);
 
         hir::Tuple { fields, names }
     }
 
+    fn tuple_type_of<T, A, E>(
+        &self,
+        names: hir::Id<[hir::ValueIdentifier]>,
+        accessor: A,
+        mut extractor: E,
+    )
+        -> hir::Tuple<hir::TypeId>
+        where
+            T: Copy,
+            A: for<'b> FnOnce(&'b cell::Ref<'a, hir::Tree>) -> &'b [T],
+            E: FnMut(T) -> hir::TypeId
+    {
+        let types: Vec<_> = {
+            let tree = self.tree();
+            accessor(&tree).iter().map(|e| extractor(*e)).collect()
+        };
+        let fields = self.tree_mut().push_type_ids(&types);
+        hir::Tuple { fields, names }
+    }
 }
 
 //
@@ -530,200 +769,194 @@ impl<'a> SymbolMapper<'a> {
 //
 #[cfg(test)]
 mod tests {
-    use std::rc;
+    use std::{cell, rc};
 
     use basic::{com, mem};
     use basic::com::Span;
 
     use model::{ast, hir};
     use model::ast::builder::Factory as AstFactory;
-    use model::hir::builder::Factory as HirFactory;
+    use model::hir::builder::{Factory as HirFactory, RcTree};
     use super::super::Context;
-    use super::super::scp::mocks::MockScope;
+    use super::super::scp::{self, mocks::MockScope};
 
     #[test]
     fn value_block_empty() {
         let global_arena = mem::Arena::new();
         let env = Env::new(b"{}", &global_arena);
 
-        let ast = {
-            let e = AstFactory::new(&global_arena).expr();
-            e.block_div().range(0, 2).build()
-        };
+        let ast = env.ast().expr().block_expression_less().range(0, 2).build();
 
         let hir = {
-            let v = HirFactory::new().value();
-            v.block_div().range(0, 2).build().without_type()
+            let v = env.hir().value();
+            v.block_expression_less().range(0, 2).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
     fn value_builtin_boolean() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-        let v = HirFactory::new().value();
         let env = Env::new(b"true", &global_arena);
+        let e = env.ast().expr();
+        let v = env.hir().value().bool_(true, 0);
 
         assert_eq!(
             env.value_of(&e.bool_(true, 0)),
-            v.bool_(true, 0)
+            env.expression(v)
         );
     }
 
     #[test]
     fn value_builtin_string() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new().value();
-
         let env = Env::new(b"'Hello, World!'", &global_arena);
+        let e = env.ast().expr();
+        let v = env.hir().value();
         let id = env.intern(b"Hello, World!");
 
         assert_eq!(
             env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
-            v.string(id, 0, 15)
+            env.expression(v.string(id, 0, 15))
         );
     }
 
     #[test]
     fn value_call_add() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-        let v = HirFactory::new().value();
         let env = Env::new(b"1 + 2", &global_arena);
+        let e = env.ast().expr();
+        let v = env.hir().value();
 
         assert_eq!(
             env.value_of(&e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
-            v.call().push(v.int(1, 0)).push(v.int(2, 4)).build().without_type()
+            env.expression(v.call().push(v.int(1, 0)).push(v.int(2, 4)).build())
         );
     }
 
     #[test]
     fn value_call_basic() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let hir = HirFactory::new();
-        let (i, p, t, v) = (hir.item(), hir.proto(), hir.type_(), hir.value());
-
         let mut env = Env::new(b"basic(1, 2)    basic", &global_arena);
 
-        let proto = p.fun(i.id(15, 5), t.int()).build();
-        env.insert_function(proto.clone(), &[0]);
+        let ast = {
+            let e = env.ast().expr();
 
-        assert_eq!(
-            env.value_of(
-                &e.function_call(e.var(0, 5), 5, 10)
+            e.function_call(e.var(0, 5), 5, 10)
                     .push(e.int(1, 6))
                     .push(e.int(2, 9))
                     .build()
-            ),
+        };
+
+        let hir = {
+            let f = env.hir();
+            let (p, ti, td, v) = (f.proto(), f.type_id(), f.type_definition(), f.value());
+
+            let basic = env.item_id(15, 5);
+            env.insert_function(p.fun(basic, td.int()).build(), &[0]);
+
             v.call()
-                .function(proto)
+                .function(basic, hir::Tuple::default(), ti.int())
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
                 .build()
-                .without_type()
-        )
+        };
+
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let h = HirFactory::new();
-        let (i, p, v) = (h.item(), h.proto(), h.value());
-
         let mut env = Env::new(b"Rec   Rec", &global_arena);
 
-        let rec = p.rec(i.id(6, 3), 0).build();
-        env.insert_record(rec, &[0]);
+        let ast = {
+            let f = env.ast();
+            let (e, t) = (f.expr(), f.type_());
 
-        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
+            e.constructor(t.simple(0, 3)).build()
+        };
 
-        assert_eq!(
-            env.value_of(
-                &ast.expr().constructor(ast.type_().simple(0, 3)).build()
-            ),
-            v.constructor(rec, 0, 3).build_value()
-        );
+        let hir = {
+            let f = env.hir();
+            let (p, t, v) = (f.proto(), f.type_(), f.value());
+
+            let name = env.item_id(6, 3);
+            env.insert_record(p.rec(name, 0).build(), &[0]);
+
+            let rec = t.unresolved(name).build();
+            v.constructor(rec).range(0, 3).build()
+        };
+
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor_arguments() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let h = HirFactory::new();
-        let (i, p, v) = (h.item(), h.proto(), h.value());
-
         let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
 
-        let rec = p.rec(i.id(9, 3), 0).build();
-        env.insert_record(rec, &[0]);
+        let ast = {
+            let f = env.ast();
+            let (e, t) = (f.expr(), f.type_());
 
-        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
+            e.constructor(t.simple(0, 3)).parens(3, 5).push(e.int(1, 4)).build()
+        };
 
-        assert_eq!(
-            env.value_of(
-                &e.constructor(ast.type_().simple(0, 3))
-                    .parens(3, 5)
-                    .push(e.int(1, 4))
-                    .build()
-            ),
-            v.constructor(rec, 0, 6)
-                .push(v.int(1, 4))
-                .build_value()
-        );
+        let hir = {
+            let f = env.hir();
+            let (p, t, v) = (f.proto(), f.type_(), f.value());
+
+            let name = env.item_id(9, 3);
+            env.insert_record(p.rec(name, 0).build(), &[0]);
+
+            let rec = t.unresolved(name).build();
+            v.constructor(rec).push(v.int(1, 4)).range(0, 6).build()
+        };
+
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor_nested() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let h = HirFactory::new();
-        let (i, p, t, v) = (h.item(), h.proto(), h.type_(), h.value());
-
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
             &global_arena
         );
 
-        let enum_ = p.enum_(i.id(6, 6)).build();
-        env.insert_enum(enum_, &[30]);
+        let ast = {
+            let f = env.ast();
+            let (e, t) = (f.expr(), f.type_());
 
-        let enum_ = hir::Type::UnresolvedEnum(enum_, Default::default(), Default::default());
+            e.constructor(t.nested(38, 4).push(30, 6).build()).build()
+        };
 
-        assert_eq!(
-            env.value_of(
-                &e.constructor(
-                    ast.type_().nested(38, 4).push(30, 6).build()
-                ).build()
-            ),
-            v.constructor(
-                t.unresolved(i.id(38, 4))
-                    .push(enum_)
-                    .build(),
-                30,
-                12,
-            ).build_value()
-        );
+        let hir = {
+            let f = env.hir();
+            let (p, t, v) = (f.proto(), f.type_(), f.value());
+
+            let (simple, unit) = (env.item_id(6, 6), env.item_id(38, 4));
+            env.insert_enum(p.enum_(simple).build(), &[30]);
+
+            v.constructor(t.unresolved(unit).push_component(simple).build())
+                .range(30, 12)
+                .build()
+        };
+
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
     fn value_if_else() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new().value();
-
         let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
+        let e = env.ast().expr();
+        let v = env.hir().value();
 
         assert_eq!(
             env.value_of(&ast::Expression::If(
@@ -733,11 +966,11 @@ mod tests {
                     e.block(e.int(0, 23)).build(),
                 ).build()
             )),
-            v.if_(
+            env.expression(v.if_(
                 v.bool_(true, 4),
-                v.block(v.int(1, 11)).build().without_type(),
-                v.block(v.int(0, 23)).build().without_type(),
-            ).build()
+                v.block(v.int(1, 11)).build(),
+                v.block(v.int(0, 23)).build(),
+            ).build())
         )
     }
 
@@ -746,53 +979,51 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":loop { }", &global_arena);
 
-        let ast = {
-            let e = AstFactory::new(&global_arena).expr();
-            e.loop_(0).build()
-        };
+        let ast = env.ast().expr().loop_(0).build();
+        let hir = env.hir().value().loop_().range(0, 9).build();
 
-        let hir = {
-            let v = HirFactory::new().value();
-            v.loop_().range(0, 9).build()
-        };
-
-        assert_eq!(env.value_of(&ast), hir);
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
     fn value_record_field_access() {
         let global_arena = mem::Arena::new();
-        let ast = AstFactory::new(&global_arena);
-        let e = ast.expr();
-
-        let h = HirFactory::new();
-        let (i, p, v) = (h.item(), h.proto(), h.value());
-
         let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
 
-        let rec = p.rec(i.id(5, 3), 0).range(0, 14).build();
-        env.insert_record(rec, &[15]);
+        let ast = {
+            let f = env.ast();
+            let (e, t) = (f.expr(), f.type_());
 
-        let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
-
-        assert_eq!(
-            env.value_of(
-                &e.field_access(
-                    e.constructor(ast.type_().simple(15, 3))
+            e.field_access(
+                    e.constructor(t.simple(15, 3))
                         .parens(18, 21)
                         .push(e.int(42, 19))
                         .build(),
                 )
                     .index(0)
                     .build()
-            ),
+        };
+
+        let hir = {
+            let f = env.hir();
+            let (p, t, v) = (f.proto(), f.type_(), f.value());
+
+            let name = env.item_id(5, 3);
+
+            let rec = p.rec(name, 0).range(0, 14).build();
+            env.insert_record(rec, &[15]);
+
+            let rec = t.unresolved(name).build();
+
             v.field_access(
-                v.constructor(rec, 15, 7)
+                v.constructor(rec)
                     .push(v.int(42, 19))
-                    .build_value()
+                    .range(15, 7)
+                    .build()
             ).build()
-            .without_type()
-        );
+        };
+
+        assert_eq!(env.value_of(&ast), env.expression(hir));
     }
 
     #[test]
@@ -801,22 +1032,25 @@ mod tests {
         let env = Env::new(b"{ :return 1; }", &global_arena);
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, s) = (f.expr(), f.stmt());
 
-            e.block_div()
+            e.block_expression_less()
                 .push_stmt(s.ret().expr(e.int(1, 10)).build())
                 .build()
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (s, v) = (f.stmt(), f.value());
 
-            v.block_div().push(s.ret(v.int(1, 10))).build().without_type()
+            v.block_expression_less().push(s.ret(v.int(1, 10))).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -828,32 +1062,35 @@ mod tests {
         );
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, s) = (f.expr(), f.stmt());
 
             e.if_else(
                 e.bool_(true, 4),
-                e.block_div()
+                e.block_expression_less()
                     .push_stmt(s.ret().expr(e.int(1, 19)).build())
                     .build(),
-                e.block_div()
+                e.block_expression_less()
                     .push_stmt(s.ret().expr(e.int(2, 40)).build())
                     .build(),
             ).build()
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (s, v) = (f.stmt(), f.value());
 
             v.if_(
                 v.bool_(true, 4),
-                v.block_div().push(s.ret(v.int(1, 19))).build().without_type(),
-                v.block_div().push(s.ret(v.int(2, 40))).build().without_type(),
+                v.block_expression_less().push(s.ret(v.int(1, 19))).build(),
+                v.block_expression_less().push(s.ret(v.int(2, 40))).build(),
             ).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::If(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::If(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -862,7 +1099,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
@@ -872,19 +1109,21 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
-            let a = v.id(7, 1);
+            let a = env.var_id(7, 1);
 
-            v.block(v.name_ref(a, 28))
-                .push(s.var(p.var(a), v.int(1, 12)))
-                .push(s.set(v.name_ref(a, 20), v.int(2, 25)))
-                .build()
-                .without_type()
+            let var = s.var(p.var(a), v.int(1, 12));
+            let set = s.set(v.name_ref(a, 20).pattern(0).build(), v.int(2, 25));
+
+            v.block(v.name_ref(a, 28).pattern(0).build()).push(var).push(set).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -896,7 +1135,7 @@ mod tests {
         );
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(33, 1))
@@ -912,37 +1151,38 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
-            let a = v.id(7, 1);
+            let a = env.var_id(7, 1);
             let tup =
                 v.tuple()
                     .push(v.int(1, 13))
-                    .build()
-                    .without_type()
-                    .with_range(12, 4);
+                    .range(12, 4)
+                    .build();
 
-            v.block(v.name_ref(a, 33))
-                .push(s.var(p.var(a), tup))
-                .push(s.set(
-                    v.field_access(v.name_ref(a, 23)).build(),
+            let var = s.var(p.var(a), tup);
+            let set = s.set(
+                    v.field_access(v.name_ref(a, 23).pattern(0).build()).build(),
                     v.int(2, 30)
-                ))
-                .build()
+            );
+
+            v.block(v.name_ref(a, 33).pattern(0).build()).push(var).push(set).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
     fn value_tuple_field_access() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new().value();
-
         let env = Env::new(b"(42, 43).1", &global_arena);
+
+        let e = env.ast().expr();
+        let v = env.hir().value();
 
         assert_eq!(
             env.value_of(
@@ -952,25 +1192,33 @@ mod tests {
                     .index(1)
                     .build()
             ),
-            v.field_access(
-                v.tuple().push(v.int(42, 1)).push(v.int(43, 5)).build().without_type()
-            ).index(1).build()
+            env.expression(
+                v.field_access(
+                    v.tuple()
+                        .push(v.int(42, 1))
+                        .push(v.int(43, 5))
+                        .range(0, 8)
+                        .build()
+                )
+                    .index(1)
+                    .type_(hir::Type::unresolved())
+                    .build()
+            )
         )
     }
 
     #[test]
     fn value_tuple_keyed_field_access() {
         let global_arena = mem::Arena::new();
-        let e = AstFactory::new(&global_arena).expr();
-
-        let v = HirFactory::new().value();
-
         let env = Env::new(b"(.x := 42, .y := 43).y", &global_arena);
+
+        let e = env.ast().expr();
+        let v = env.hir().value();
 
         let (x, y) = (env.field_id(1, 2), env.field_id(11, 2));
 
         assert_eq!(
-            env.value_of_resolved(
+            env.value_of(
                 &e.field_access(
                     e.tuple()
                         .push(e.int(42, 7)).name(1, 2)
@@ -980,15 +1228,17 @@ mod tests {
                     .name(20, 2)
                     .build()
             ),
-            v.field_access(
-                v.tuple()
-                    .push(v.int(42, 7)).name(x)
-                    .push(v.int(43, 17)).name(y)
+            env.expression(
+                v.field_access(
+                    v.tuple()
+                        .push(v.int(42, 7)).name(x)
+                        .push(v.int(43, 17)).name(y)
+                        .range(0, 20)
+                        .build()
+                )
+                    .unresolved(env.field_id(20, 2))
                     .build()
-                    .without_type()
             )
-                .unresolved(env.field_id(20, 2))
-                .build()
         )
     }
 
@@ -998,7 +1248,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.bin_op(e.var(28, 1), e.var(32, 1)).build())
@@ -1008,20 +1258,24 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
-            let (a, b) = (v.id(7, 1), v.id(20, 1));
-            let add =
-                v.call().push(v.name_ref(a, 28)).push(v.name_ref(b, 32)).build();
+            let (a, b) = (env.var_id(7, 1), env.var_id(20, 1));
+            let set_a = s.var(p.var(a), v.int(1, 12));
+            let set_b = s.var(p.var(b), v.int(2, 25));
+            let add = v.call()
+                .push(v.name_ref(a, 28).pattern(0).build())
+                .push(v.name_ref(b, 32).pattern(1).build())
+                .build();
 
-            v.block(add)
-                .push(s.var(p.var(a), v.int(1, 12)))
-                .push(s.var(p.var(b), v.int(2, 25)))
-                .build()
+            v.block(add).push(set_a).push(set_b).build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -1030,7 +1284,7 @@ mod tests {
         let env = Env::new(b"{ :var a := 1; :var _ := 2; a }", &global_arena);
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             e.block(e.var(28, 1))
@@ -1040,19 +1294,23 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
-            let a = v.id(7, 1);
+            let a = env.var_id(7, 1);
+            let set_a = s.var(p.var(a), v.int(1, 12));
+            let set_i = s.var(p.ignored(20), v.int(2, 25));
 
-            v.block(v.name_ref(a, 28))
-                .push(s.var(p.var(a), v.int(1, 12)))
-                .push(s.var(p.ignored(20), v.int(2, 25)))
+            v.block(v.name_ref(a, 28).pattern(0).build())
+                .push(set_a)
+                .push(set_i)
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
-
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -1064,7 +1322,7 @@ mod tests {
         );
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
             e.block(e.var(43, 1))
@@ -1076,29 +1334,37 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
-            let (i, p, s, v) =
-                (f.item(), f.pat(), f.stmt(), f.value());
+            let f = env.hir();
+            let (p, s, t, v) = (f.pat(), f.stmt(), f.type_(), f.value());
 
-            let a = v.id(28, 1);
+            let a = env.var_id(28, 1);
+            let some = env.item_id(5, 4);
 
-            let rec = f.proto().rec(i.id(5, 4), 0).build();
+            let rec = f.proto().rec(some, 0).build();
             env.insert_record(rec, &[23, 34]);
-            let rec = hir::Type::UnresolvedRec(rec, Default::default(), Default::default());
 
-            v.block(v.name_ref(a, 43))
-                .push(s.var(
-                    p.constructor(rec.clone(), 23, 7)
-                        .push(p.var(a))
-                        .build_pattern(),
-                    v.constructor(rec, 34, 7)
-                        .push(v.int(1, 39))
-                        .build_value(),
-                ))
+            let rec = t.unresolved(some).build();
+
+            let var = s.var(
+                p.constructor(rec)
+                    .push(p.var(a))
+                    .range(23, 7)
+                    .build(),
+                v.constructor(rec)
+                    .push(v.int(1, 39))
+                    .range(34, 7)
+                    .build(),
+            );
+
+            v.block(v.name_ref(a, 43).pattern(0).build())
+                .push(var)
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -1110,7 +1376,7 @@ mod tests {
         );
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
 
             e.block(e.var(55, 1))
@@ -1126,32 +1392,36 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
-            let (i, p, s, v) =
-                (f.item(), f.pat(), f.stmt(), f.value());
+            let f = env.hir();
+            let (p, s, t, v) = (f.pat(), f.stmt(), f.type_(), f.value());
 
             let a = env.var_id(36, 1);
+            let some = env.item_id(5, 4);
 
-            let rec = f.proto().rec(i.id(5, 4), 0).build();
-            let rec = hir::Type::UnresolvedRec(
-                env.insert_record(rec, &[27, 42]),
-                Default::default(),
-                Default::default(),
+            let rec = f.proto().rec(some, 0).build();
+            env.insert_record(rec, &[27, 42]);
+
+            let rec = t.unresolved(some).build();
+            let var = s.var(
+                p.constructor(rec)
+                    .push(p.var(a)).name(env.field_id(32, 2))
+                    .range(27, 11)
+                    .build(),
+                v.constructor(rec)
+                    .push(v.int(1, 51)).name(env.field_id(47, 2))
+                    .range(42, 11)
+                    .build(),
             );
 
-            v.block(v.name_ref(a, 55))
-                .push(s.var(
-                    p.constructor(rec.clone(), 27, 11)
-                        .push(p.var(a)).name(env.field_id(32, 2))
-                        .build_pattern(),
-                    v.constructor(rec, 42, 11)
-                        .push(v.int(1, 51)).name(env.field_id(47, 2))
-                        .build_value(),
-                ))
+            v.block(v.name_ref(a, 55).pattern(0).build())
+                .push(var)
                 .build()
         };
 
-        assert_eq!(env.value_of_resolved(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     #[test]
@@ -1160,7 +1430,7 @@ mod tests {
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
 
         let ast = {
-            let f = AstFactory::new(&global_arena);
+            let f = env.ast();
             let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
             let pat = p.tuple().push(p.var(8, 1)).push(p.var(11, 1)).build();
@@ -1172,32 +1442,41 @@ mod tests {
         };
 
         let hir = {
-            let f = HirFactory::new();
+            let f = env.hir();
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
-            let (a, b) = (v.id(8, 1), v.id(11, 1));
+            let (a, b) = (env.var_id(8, 1), env.var_id(11, 1));
+            let var = s.var(
+                p.tuple()
+                    .push(p.var(a))
+                    .push(p.var(b))
+                    .range(7, 6)
+                    .build(),
+                v.tuple()
+                    .push(v.int(1, 18))
+                    .push(v.int(2, 21))
+                    .range(17, 6)
+                    .build(),
+            );
 
-            v.block(v.name_ref(a, 25))
-                .push(s.var(
-                    p.tuple().push(p.var(a)).push(p.var(b)).build(),
-                    v.tuple()
-                        .push(v.int(1, 18))
-                        .push(v.int(2, 21))
-                        .build()
-                        .without_type(),
-                ))
+            v.block(v.name_ref(a, 25).pattern(0).build())
+                .push(var)
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast::Expression::Block(&ast)), hir);
+        assert_eq!(
+            env.value_of(&ast::Expression::Block(&ast)),
+            env.expression(hir)
+        );
     }
 
     struct Env<'g> {
         scope: MockScope,
         context: Context,
+        global_arena: &'g mem::Arena,
         ast_resolver: ast::interning::Resolver<'g>,
         hir_resolver: hir::interning::Resolver<'g>,
-        scrubber: hir::interning::Scrubber,
+        tree: RcTree,
     }
 
     impl<'g> Env<'g> {
@@ -1206,10 +1485,25 @@ mod tests {
             Env {
                 scope: MockScope::new(),
                 context: Context::default(),
+                global_arena: arena,
                 ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
-                scrubber: hir::interning::Scrubber::new(),
+                tree: RcTree::default(),
             }
+        }
+
+        fn ast(&self) -> AstFactory<'g> { AstFactory::new(self.global_arena) }
+
+        fn hir(&self) -> HirFactory { HirFactory::new(self.tree.clone()) }
+
+        fn expression(&self, e: hir::ExpressionId) -> hir::Tree {
+            let mut tree = self.tree.borrow().clone();
+            tree.set_root_expression(e);
+
+            println!("{:#?}", tree);
+            println!();
+
+            tree
         }
 
         fn intern(&self, bytes: &[u8]) -> mem::InternId {
@@ -1225,7 +1519,7 @@ mod tests {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::Type::UnresolvedEnum(enum_, Default::default(), Default::default()),
+                    hir::TypeDefinition::UnresolvedEnum(enum_, Default::default()),
                 );
             } 
         }
@@ -1243,7 +1537,7 @@ mod tests {
             for p in positions {
                 let proto_clone = proto.clone();
                 let id = hir::ValueIdentifier(proto_clone.name.id(), range(*p, len));
-                self.scope.callables.insert(id, hir::Callable::Function(proto_clone));
+                self.scope.callables.insert(id, scp::CallableCandidate::Function(proto_clone));
             }
         }
 
@@ -1261,7 +1555,7 @@ mod tests {
                 let id = hir::ItemIdentifier(rec.name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::Type::UnresolvedRec(rec, Default::default(), Default::default()),
+                    hir::TypeDefinition::UnresolvedRec(rec, Default::default()),
                 );
             }
 
@@ -1274,32 +1568,31 @@ mod tests {
             hir::ValueIdentifier(self.hir_resolver.from_range(field), range)
         }
 
+        fn item_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
+            let range = range(pos, len);
+            hir::ItemIdentifier(self.hir_resolver.from_range(range), range)
+        }
+
         fn var_id(&self, pos: usize, len: usize) -> hir::ValueIdentifier {
             let range = range(pos, len);
             hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
-        fn mapper<'a>(&'a self) -> super::SymbolMapper<'a> {
-            super::SymbolMapper::new(&self.scope, &self.context)
+        fn mapper<'a>(&'a self, tree: &'a cell::RefCell<hir::Tree>) -> super::SymbolMapper<'a> {
+            super::SymbolMapper::new(&self.scope, &self.context, tree)
         }
 
-        fn unnumber_value(&self, v: hir::Value) -> hir::Value {
-            use self::hir::gn::GlobalNumberer;
+        fn value_of(&self, expr: &ast::Expression) -> hir::Tree {
+            let tree = cell::RefCell::new(hir::Tree::new());
 
-            GlobalNumberer::new().unnumber_value(v)
-        }
-
-        fn value_of(&self, expr: &ast::Expression) -> hir::Value {
-            self.scrubber.scrub_value(self.value_of_resolved(expr))
-        }
-
-        fn value_of_resolved(&self, expr: &ast::Expression) -> hir::Value {
             let expr = self.ast_resolver.resolve_expr(*expr);
+            let expr = self.mapper(&tree).value_of(&expr);
+            tree.borrow_mut().set_root_expression(expr);
 
-            let result = self.mapper().value_of(&expr);
-            let result = self.unnumber_value(result);
+            println!("{:#?}", tree);
+            println!();
 
-            result
+            tree.into_inner()
         }
     }
 

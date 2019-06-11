@@ -1,10 +1,10 @@
 //! Common Type Unifier.
 
-use basic::mem::DynArray;
+use std::cell;
 
 use model::hir::*;
 
-use super::{Alteration, Context};
+use super::Context;
 
 /// Core Unifier
 #[derive(Clone, Copy, Debug)]
@@ -13,6 +13,17 @@ pub struct CoreUnifier<'a> {
     pub context: &'a Context,
     /// Registry.
     pub registry: &'a Registry,
+    /// Tree.
+    pub tree: &'a cell::RefCell<Tree>,
+}
+
+/// Status
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Status {
+    /// Diverging, still, though progress may have been made.
+    Diverging,
+    /// Unified, whether already unified or freshly unified.
+    Unified,
 }
 
 //
@@ -21,94 +32,50 @@ pub struct CoreUnifier<'a> {
 
 impl<'a> CoreUnifier<'a> {
     /// Creates a new instance.
-    pub fn new(context: &'a Context, registry: &'a Registry) -> Self {
-        CoreUnifier { registry, context }
-    }
-
-    /// Returns the type of a known GVN.
-    ///
-    /// Panics: If the GVN is unknown.
-    pub fn type_of(&self, gvn: Gvn) -> Type {
-        self.context.value(gvn).type_()
-    }
-
-    /// Unifies an option.
-    pub fn unify_option<T, U, F>(&self, o: Option<T>, fun: F)
-        -> Alteration<Option<U>>
-        where
-            F: FnOnce(T) -> Alteration<U>,
+    pub fn new(
+        context: &'a Context,
+        registry: &'a Registry,
+        tree: &'a cell::RefCell<Tree>,
+    )
+        -> Self 
     {
-        match o {
-            None => Alteration::forward(None),
-            Some(t) => fun(t).map(Some),
-        }
+        CoreUnifier { context, registry, tree }
     }
 
-    /// Unifies an array.
-    pub fn unify_array<T, F>(&self, array: DynArray<T>, mut fun: F)
-        -> Alteration<DynArray<T>>
-        where
-            T: Default,
-            F: FnMut(usize, T) -> Alteration<T>,
-    {
-        let mut altered = 0;
+    /// Returns a reference to the Tree.
+    pub fn tree(&self) -> cell::Ref<'a, Tree> { self.tree.borrow() }
 
-        for i in 0..array.len() {
-            let element = array.replace_with_default(i);
-
-            let alteration = fun(i, element);
-
-            altered += alteration.altered;
-            array.replace(i, alteration.entity);
-        }
-
-        Alteration { entity: array, altered }
-    }
-
-    /// Unifies a tuple.
-    pub fn unify_tuple<T, F>(&self, t: Tuple<T>, ty: Type, mut fun: F)
-        -> Alteration<Tuple<T>>
-        where
-            T: Default,
-            F: FnMut(T, Type) -> Alteration<T>,
-    {
-        let fields = if let Type::Tuple(ty, ..) = ty {
-            self.unify_array(t.fields.clone(), |i, e| {
-                if let Some(ty) = ty.fields.get(i) {
-                    fun(e, ty)
-                } else {
-                    Alteration::forward(e)
-                }
-            })
-        } else {
-            self.unify_array(t.fields.clone(), |_, e| fun(e, Type::unresolved()))
-        };
-        fields.combine(t, |t, f| Tuple { fields: f, names: t.names })
-    }
+    /// Returns a mutable reference to the Tree.
+    pub fn tree_mut(&self) -> cell::RefMut<'a, Tree> { self.tree.borrow_mut() }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use std::rc;
+    use std::{cell, rc};
 
-    use basic::mem;
+    use basic::{com, mem};
 
     use model::hir::*;
-    use model::hir::gn::GlobalNumberer;
     use model::hir::builder::{
         Factory, ItemFactory, PatternFactory, PrototypeFactory, StmtFactory,
-        TypeFactory, ValueFactory,
+        TypeFactory, TypeIdFactory, ValueFactory, RcTree,
     };
-    use model::hir::interning::{Resolver, Scrubber};
+    use model::hir::interning::Resolver;
 
     use super::{Context, CoreUnifier};
+    use super::super::Relation;
 
     #[derive(Default)]
-    pub struct Env;
+    pub struct Env {
+        source: RcTree,
+        target: RcTree,
+    }
 
     pub struct LocalEnv<'g> {
         registry: mocks::MockRegistry,
         context: Context,
+        source: RcTree,
+        target: RcTree,
         resolver: Resolver<'g>,
     }
 
@@ -118,37 +85,90 @@ pub mod tests {
             LocalEnv {
                 registry: mocks::MockRegistry::new(),
                 context: Context::default(),
+                source: self.source.clone(),
+                target: self.target.clone(),
                 resolver: Resolver::new(raw, interner),
             }
         }
 
-        pub fn factories(&self) -> (
+        pub fn source_factories(&self) -> (
             ItemFactory,
             PatternFactory,
             PrototypeFactory,
             StmtFactory,
             TypeFactory,
+            TypeIdFactory,
             ValueFactory
         )
         {
-            let f = Factory::new();
-            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
+            let f = Factory::new(self.source.clone());
+            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
+        }
+
+        pub fn target_factories(&self) -> (
+            ItemFactory,
+            PatternFactory,
+            PrototypeFactory,
+            StmtFactory,
+            TypeFactory,
+            TypeIdFactory,
+            ValueFactory
+        )
+        {
+            let f = Factory::new(self.target.clone());
+            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
         }
     }
 
     impl<'g> LocalEnv<'g> {
+        #[allow(dead_code)]
         pub fn core<'a>(&'a self) -> CoreUnifier<'a> {
-            CoreUnifier::new(&self.context, &self.registry)
+            CoreUnifier::new(&self.context, &self.registry, &*self.source)
         }
 
-        pub fn numberer(&self) -> GlobalNumberer {
-            GlobalNumberer::new()
+        #[allow(dead_code)]
+        pub fn source(&self) -> &cell::RefCell<Tree> { &*self.source }
+
+        #[allow(dead_code)]
+        pub fn target(&self) -> &cell::RefCell<Tree> { &*self.target }
+
+        #[allow(dead_code)]
+        pub fn item_id(&self, pos: usize, len: usize) -> ItemIdentifier {
+            let id = ItemIdentifier(Default::default(), com::Range::new(pos, len));
+            self.resolver.resolve_item_id(id)
         }
 
+        #[allow(dead_code)]
+        pub fn value_id(&self, pos: usize, len: usize) -> ValueIdentifier {
+            let id = ValueIdentifier(Default::default(), com::Range::new(pos, len));
+            self.resolver.resolve_value_id(id)
+        }
+
+        #[allow(dead_code)]
+        pub fn link_gvns(&self, gvns: &[Gvn]) { self.context.link_gvns(gvns); }
+
+        #[allow(dead_code)]
+        pub fn link_types(&self, ty: TypeId, rel: Relation<TypeId>) {
+            self.context.link_types(ty, rel);
+        }
+
+        #[allow(dead_code)]
+        pub fn link_types_of(&self, gvn: Gvn, grel: Relation<Gvn>) {
+            let ty = self.type_of(gvn);
+            let rel = grel.map(|g| self.type_of(g));
+
+            println!("link_types_of {:?} ({:?}) to {:?} ({:?})",
+                gvn, ty, grel, rel);
+            self.context.link_types(ty, rel);
+        }
+
+        #[allow(dead_code)]
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }
 
-        pub fn scrubber(&self) -> Scrubber {
-            Scrubber::new()
+        #[allow(dead_code)]
+        pub fn resolve_trees(&self) {
+            self.resolver.resolve_tree(&mut *self.source.borrow_mut());
+            self.resolver.resolve_tree(&mut *self.target.borrow_mut());
         }
 
         #[allow(dead_code)]
@@ -161,6 +181,17 @@ pub mod tests {
         pub fn insert_record(&mut self, r: Record) {
             let r = self.resolver.resolve_record(r);
             self.registry.insert_record(r);
+        }
+
+        #[allow(dead_code)]
+        fn type_of(&self, gvn: Gvn) -> TypeId {
+            if let Some(e) = gvn.as_expression() {
+                self.source.borrow().get_expression_type_id(e)
+            } else if let Some(p) = gvn.as_pattern() {
+                self.source.borrow().get_pattern_type_id(p)
+            } else {
+                unreachable!()
+            }
         }
     }
 }

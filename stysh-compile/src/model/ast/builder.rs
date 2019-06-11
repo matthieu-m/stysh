@@ -278,9 +278,9 @@ impl<'a> ExprFactory<'a> {
         BlockBuilder::new(self.arena, expr)
     }
 
-    /// Creates a diverging BlockBuilder.
-    pub fn block_div(&self) -> BlockBuilder<'a> {
-        BlockBuilder::diverging(self.arena)
+    /// Creates an expression-less BlockBuilder.
+    pub fn block_expression_less(&self) -> BlockBuilder<'a> {
+        BlockBuilder::expression_less(self.arena)
     }
 
     /// Creates a ConstructorBuilder.
@@ -458,7 +458,7 @@ impl<'a> BlockBuilder<'a> {
     }
 
     /// Creates a new instance, defaults the range.
-    pub fn diverging(arena: &'a mem::Arena) -> Self {
+    pub fn expression_less(arena: &'a mem::Arena) -> Self {
         BlockBuilder {
             statements: mem::Array::new(arena),
             expr: None,

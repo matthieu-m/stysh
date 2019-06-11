@@ -50,7 +50,7 @@ pub struct ControlFlowGraph {
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct BasicBlock {
     /// The list of arguments of this basic block.
-    pub arguments: DynArray<hir::Type>,
+    pub arguments: DynArray<hir::TypeDefinition>,
     /// The list of instructions of this basic block.
     pub instructions: DynArray<Instruction>,
     /// The last instruction of this basic block.
@@ -71,11 +71,11 @@ pub enum Instruction {
     /// A function call.
     Call(Callable, DynArray<ValueId>, com::Range),
     /// A field load.
-    Field(hir::Type, ValueId, u16, com::Range),
+    Field(hir::TypeDefinition, ValueId, u16, com::Range),
     /// A value load.
     Load(hir::BuiltinValue, com::Range),
     /// A composite creation.
-    New(hir::Type, DynArray<ValueId>, com::Range),
+    New(hir::TypeDefinition, DynArray<ValueId>, com::Range),
 }
 
 /// A Callable.
@@ -149,13 +149,13 @@ impl Instruction {
     }
 
     /// Returns the resulting type of the instruction.
-    pub fn result_type(&self) -> hir::Type {
+    pub fn result_type(&self) -> hir::TypeDefinition {
         use self::Instruction::*;
 
         match self {
             Call(fun, _, _) => fun.result_type(),
             Field(type_, _, _, _) => type_.clone(),
-            Load(builtin, _) => builtin.result_type(),
+            Load(builtin, _) => type_of_value(*builtin),
             New(type_, _, _) => type_.clone(),
         }
     }
@@ -163,11 +163,11 @@ impl Instruction {
 
 impl Callable {
     /// Returns the type of the result of the function.
-    pub fn result_type(&self) -> hir::Type {
+    pub fn result_type(&self) -> hir::TypeDefinition {
         use self::Callable::*;
 
         match self {
-            Builtin(fun) => fun.result_type(),
+            Builtin(fun) => type_of_function(*fun),
             Function(fun) => fun.result.clone(),
         }
     }
@@ -219,6 +219,26 @@ impl ValueId {
 //  Implementation Details
 //
 const VALUE_ID_ARGUMENT_MASK: u16 = 1u16 << 15;
+
+fn type_of_function(b: hir::BuiltinFunction) -> hir::TypeDefinition {
+    use self::hir::BuiltinFunction::*;
+
+    match b {
+        Add | FloorDivide | Multiply | Substract => hir::TypeDefinition::int(),
+        And | Differ | Equal | GreaterThan | GreaterThanOrEqual |
+        LessThan | LessThanOrEqual | Not | Or | Xor => hir::TypeDefinition::bool_(),
+    }
+}
+
+fn type_of_value(b: hir::BuiltinValue) -> hir::TypeDefinition {
+    use self::hir::BuiltinValue::*;
+
+    match b {
+        Bool(_) => hir::TypeDefinition::bool_(),
+        Int(_) => hir::TypeDefinition::int(),
+        String(_) => hir::TypeDefinition::string(),
+    }
+}
 
 impl std::fmt::Display for ControlFlowGraph {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {

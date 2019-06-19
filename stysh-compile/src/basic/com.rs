@@ -2,20 +2,20 @@
 //!
 //! A standard vocabulary used throughout the code.
 
-use std;
+use std::{self, convert, fmt, num, ops, sync};
 
 /// A fragment of source code.
 #[derive(Clone)]
-pub struct CodeFragment(std::sync::Arc<Vec<u8>>);
+pub struct CodeFragment(sync::Arc<Vec<u8>>);
 
 impl CodeFragment {
     /// Creates a new `CodeFragment`.
     pub fn new(code: Vec<u8>) -> CodeFragment {
-        CodeFragment(std::sync::Arc::new(code))
+        CodeFragment(sync::Arc::new(code))
     }
 }
 
-impl std::ops::Deref for CodeFragment {
+impl ops::Deref for CodeFragment {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
@@ -23,38 +23,53 @@ impl std::ops::Deref for CodeFragment {
     }
 }
 
-/// A library identifier.
+/// The core implementation of a u32-based ID.
 ///
-/// Note:   The `LibraryId` is unique within a compilation, but unstable.
+/// The ID can be any number in the `[0, u32::MAX - 2]` range:
+/// -   `u32::MAX` is reserved to enable size optimizations (Option).
+/// -   `u32::MAX - 1` is reserved to denote Default constructed IDs.
 ///
-/// Note:   0 is reserved for the built-in types.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct LibraryId(u32);
+/// IDs built on top of `CoreId` may reserve further numbers for their own ends.
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct CoreId(num::NonZeroU32);
 
-impl LibraryId {
-    /// Creates a new `LibraryId`, it MUST be unique within a compilation.
-    pub fn new(id: u32) -> LibraryId { LibraryId(id) }
-}
-
-/// A module identifier.
-///
-/// Note:   the `ModuleId` is unique within a compilation, but unstable.
-///
-/// Note:   (0, 0) is reserved for the built-in types.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ModuleId {
-    library: LibraryId,
-    index: u32,
-}
-
-impl ModuleId {
-    /// Creates a new `ModuleId`, it MUST be unique within a compilation.
-    pub fn new(library: LibraryId, index: u32) -> ModuleId {
-        ModuleId { library: library, index: index }
+impl CoreId {
+    /// Creates a new instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the integer provided is `u32::MAX`.
+    pub fn new(id: u32) -> CoreId {
+        if id == std::u32::MAX {
+            panic!("Unsuitable ID: {}", id);
+        }
+        unsafe { CoreId(num::NonZeroU32::new_unchecked(id + 1)) }
     }
 
-    /// Returns the LibraryId of the library to which this module belongs.
-    pub fn library(self) -> LibraryId { self.library }
+    /// Get the raw ID.
+    pub fn raw(&self) -> u32 { self.0.get() - 1 }
+}
+
+impl fmt::Debug for CoreId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.raw())
+    }
+}
+
+impl Default for CoreId {
+    fn default() -> CoreId {
+        unsafe { CoreId(num::NonZeroU32::new_unchecked(std::u32::MAX)) }
+    }
+}
+
+impl fmt::Display for CoreId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.raw())
+    }
+}
+
+impl convert::From<CoreId> for u32 {
+    fn from(core_id: CoreId) -> u32 { core_id.raw() }
 }
 
 /// A Range represents a start and end position in a buffer.
@@ -135,23 +150,23 @@ impl Range {
     }
 }
 
-impl std::fmt::Debug for Range {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl fmt::Debug for Range {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}@{}", self.length, self.offset)
     }
 }
 
-impl std::default::Default for Range {
+impl Default for Range {
     fn default() -> Range { Range::new(0, 0) }
 }
 
-impl std::fmt::Display for Range {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl fmt::Display for Range {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}@{}", self.length, self.offset)
     }
 }
 
-impl std::ops::Index<Range> for [u8] {
+impl ops::Index<Range> for [u8] {
     type Output = [u8];
 
     fn index(&self, index: Range) -> &[u8] {
@@ -174,14 +189,14 @@ impl<'a> Slice<'a> {
     pub fn get(&self, pos: usize) -> Option<&u8> { self.0.get(pos) }
 }
 
-impl<'a> std::fmt::Debug for Slice<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Debug for Slice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}", self)
     }
 }
 
-impl<'a> std::fmt::Display for Slice<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for Slice<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let mut start = 0;
         while start < self.0.len() {
             let end =
@@ -220,7 +235,24 @@ pub trait Span {
 //
 #[cfg(test)]
 mod tests {
-    use super::Range;
+    use super::{CoreId, Range};
+
+    #[test]
+    fn core_id_roundtrip() {
+        for i in 0..10 {
+            assert_eq!(i, CoreId::new(i).raw());
+        }
+    }
+
+    #[test]
+    fn core_id_default() {
+        let core: CoreId = Default::default();
+        assert_eq!(std::u32::MAX - 1, core.raw());
+    }
+
+    #[test]
+    #[should_panic]
+    fn core_id_reserved_size_optimization() { CoreId::new(std::u32::MAX); }
 
     #[test]
     fn range_extend_contiguous() {

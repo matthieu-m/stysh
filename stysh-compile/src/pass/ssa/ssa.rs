@@ -3,7 +3,7 @@
 //! This module is in charge of transforming the Abstract Semantic Graph (often
 //! confusingly dubbed AST) into a CFG in a variant of the SSA form.
 
-use std::{cell, collections::HashMap, fmt, num};
+use std::{cell, collections::HashMap, fmt};
 
 use basic::com;
 use basic::mem::DynArray;
@@ -69,7 +69,7 @@ impl GraphBuilder {
 //
 //  Implementation Details
 //
-struct LocalExpressionId(num::NonZeroU32);
+struct LocalExpressionId(com::CoreId);
 
 struct LocalExpression {
     expr: hir::Expr,
@@ -896,8 +896,9 @@ impl<'a> GraphBuilderImpl<'a> {
     )
         -> hir::ExpressionId
     {
-        let local_id =
-            LocalExpressionId(non_zero(self.expression.borrow().len() as u32));
+        let local_id = LocalExpressionId(
+            com::CoreId::new(self.expression.borrow().len() as u32)
+        );
 
         let expr = LocalExpression { expr, type_, range };
         self.expression.borrow_mut().push(&local_id, expr);
@@ -973,7 +974,7 @@ impl<'a> GraphBuilderImpl<'a> {
 impl LocalExpressionId {
     fn new(offset: u32, expr: hir::ExpressionId) -> Option<LocalExpressionId> {
         if expr.index() >= offset as usize {
-            Some(LocalExpressionId(non_zero(expr.index() as u32 - offset)))
+            Some(LocalExpressionId(com::CoreId::new(expr.index() as u32 - offset)))
         } else {
             None
         }
@@ -992,18 +993,10 @@ impl fmt::Debug for LocalExpressionId {
 
 impl TableIndex for LocalExpressionId {
     fn from_index(index: usize) -> Self {
-        LocalExpressionId(non_zero(index as u32))
+        LocalExpressionId(com::CoreId::new(index as u32))
     }
 
-    fn index(&self) -> usize { from_non_zero(self.0) as usize }
-}
-
-fn non_zero(id: u32) -> num::NonZeroU32 {
-    num::NonZeroU32::new(id + 1).expect("Non wrapping")
-}
-
-fn from_non_zero(id: num::NonZeroU32) -> u32 {
-    id.get() - 1
+    fn index(&self) -> usize { self.0.raw() as usize }
 }
 
 //

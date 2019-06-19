@@ -1,6 +1,6 @@
 //! Common types.
 
-use std::{cmp, convert, fmt, hash, marker, num};
+use std::{cmp, convert, fmt, hash, marker};
 
 use basic::{com, mem};
 use basic::mem::DynArray;
@@ -16,19 +16,19 @@ use model::hir::Type;
 //
 
 /// Index of an Expr in the Tree.
-#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ExpressionId(num::NonZeroU32);
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ExpressionId(com::CoreId);
 
 /// Index of a T in the ValueTree.
 //  #[manual(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Id<T: ?Sized>(num::NonZeroU32, marker::PhantomData<*const T>);
+pub struct Id<T: ?Sized>(com::CoreId, marker::PhantomData<*const T>);
 
 /// Index of a Path in the Tree.
 pub type PathId = Id<[ItemIdentifier]>;
 
 /// Index of a Pattern in the Tree.
-#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct PatternId(num::NonZeroU32);
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct PatternId(com::CoreId);
 
 /// Index of a Type in the Tree.
 pub type TypeId = Id<Type>;
@@ -97,7 +97,7 @@ pub struct Tuple<T> {
 
 impl ExpressionId {
     /// Creates a new instance.
-    pub fn new(id: u32) -> Self { ExpressionId(non_zero(id)) }
+    pub fn new(id: u32) -> Self { ExpressionId(com::CoreId::new(id)) }
 
     /// Creates an instance from an Expression Gvn.
     pub fn from_gvn(gvn: Gvn) -> Option<Self> {
@@ -111,7 +111,7 @@ impl ExpressionId {
 
 impl PatternId {
     /// Creates a new instance.
-    pub fn new(id: u32) -> Self { PatternId(non_zero(id)) }
+    pub fn new(id: u32) -> Self { PatternId(com::CoreId::new(id)) }
 
     /// Creates an instance from an Pattern Gvn.
     pub fn from_gvn(gvn: Gvn) -> Option<Self> {
@@ -125,7 +125,7 @@ impl PatternId {
 
 impl<T: ?Sized> Id<T> {
     /// Creates a new instance.
-    pub fn new(id: u32) -> Self { Id(non_zero(id), marker::PhantomData) }
+    pub fn new(id: u32) -> Self { Id(com::CoreId::new(id), marker::PhantomData) }
 
     /// Creates an empty instance.
     pub fn empty() -> Self { Id(empty_non_zero(), marker::PhantomData) }
@@ -241,24 +241,8 @@ impl Gvn {
     const PATTERN_OFFSET: u32 = std::u32::MAX / 2;
 }
 
-fn default_non_zero() -> num::NonZeroU32 {
-    //  Safety:
-    //  -   u32::MAX is not 0.
-    unsafe { num::NonZeroU32::new_unchecked(std::u32::MAX) }
-}
-
-fn empty_non_zero() -> num::NonZeroU32 {
-    //  Safety:
-    //  -   u32::MAX - 1 is not 0.
-    unsafe { num::NonZeroU32::new_unchecked(std::u32::MAX - 1) }
-}
-
-fn non_zero(id: u32) -> num::NonZeroU32 {
-    num::NonZeroU32::new(id + 1).expect("Non wrapping")
-}
-
-fn from_non_zero(id: num::NonZeroU32) -> u32 {
-    id.get() - 1
+fn empty_non_zero() -> com::CoreId {
+    com::CoreId::new(std::u32::MAX - 2)
 }
 
 //
@@ -274,7 +258,7 @@ impl<T: ?Sized> Copy for Id<T> {}
 impl fmt::Debug for ExpressionId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         //  More compact representation for `{:#?}`.
-        if self.0 == default_non_zero() {
+        if self.0 == Default::default() {
             write!(f, "ExpressionId(default)")
         } else if self.0 == empty_non_zero() {
             write!(f, "ExpressionId(empty)")
@@ -287,7 +271,7 @@ impl fmt::Debug for ExpressionId {
 impl fmt::Debug for PatternId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         //  More compact representation for `{:#?}`.
-        if self.0 == default_non_zero() {
+        if self.0 == Default::default() {
             write!(f, "PatternId(default)")
         } else if self.0 == empty_non_zero() {
             write!(f, "PatternId(empty)")
@@ -303,7 +287,7 @@ impl<T: ?Sized> fmt::Debug for Id<T> {
         //
         //  FIXME(matthieum): consider adding `std::intrinsics::type_name<T>()`
         //  once it stabilizes.
-        if self.0 == default_non_zero() {
+        if self.0 == Default::default() {
             write!(f, "Id(default)")
         } else if self.0 == empty_non_zero() {
             write!(f, "Id(empty)")
@@ -335,16 +319,8 @@ impl fmt::Debug for ValueIdentifier {
     }
 }
 
-impl Default for ExpressionId {
-    fn default() -> Self { ExpressionId(default_non_zero()) }
-}
-
-impl Default for PatternId {
-    fn default() -> Self { PatternId(default_non_zero()) }
-}
-
 impl<T: ?Sized> Default for Id<T> {
-    fn default() -> Self { Id(default_non_zero(), marker::PhantomData) }
+    fn default() -> Self { Id(Default::default(), marker::PhantomData) }
 }
 
 impl Default for Field {
@@ -404,13 +380,13 @@ impl<T: ?Sized> cmp::Eq for Id<T> {}
 
 impl convert::From<ExpressionId> for Gvn {
     fn from(id: ExpressionId) -> Self {
-        Gvn(from_non_zero(id.0).wrapping_add(Gvn::EXPRESSION_OFFSET))
+        Gvn(id.0.raw().wrapping_add(Gvn::EXPRESSION_OFFSET))
     }
 }
 
 impl convert::From<PatternId> for Gvn {
     fn from(id: PatternId) -> Self {
-        Gvn(from_non_zero(id.0).wrapping_add(Gvn::PATTERN_OFFSET))
+        Gvn(id.0.raw().wrapping_add(Gvn::PATTERN_OFFSET))
     }
 }
 
@@ -471,19 +447,19 @@ impl com::Span for ValueIdentifier {
 impl TableIndex for ExpressionId {
     fn from_index(index: usize) -> Self { ExpressionId::new(index as u32) }
 
-    fn index(&self) -> usize { from_non_zero(self.0) as usize }
+    fn index(&self) -> usize { self.0.raw() as usize }
 }
 
 impl TableIndex for PatternId {
     fn from_index(index: usize) -> Self { PatternId::new(index as u32) }
 
-    fn index(&self) -> usize { from_non_zero(self.0) as usize }
+    fn index(&self) -> usize { self.0.raw() as usize }
 }
 
 impl<T: ?Sized> TableIndex for Id<T> {
     fn from_index(index: usize) -> Self { Id::new(index as u32) }
 
-    fn index(&self) -> usize { (self.0.get() - 1) as usize }
+    fn index(&self) -> usize { self.0.raw() as usize }
 }
 
 #[cfg(test)]

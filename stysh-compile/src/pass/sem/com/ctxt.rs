@@ -419,9 +419,13 @@ impl<I: sea::TableIndex + fmt::Debug> TrackerImpl<I> {
 
     //  Accessors
 
-    fn is_fetched(&self, key: &I) -> bool { *self.fetched.at(key)  }
+    fn is_fetched(&self, key: &I) -> bool {
+        self.fetched.get(key).cloned().unwrap_or(false)
+    }
 
-    fn is_unified(&self, key: &I) -> bool { *self.unified.at(key) }
+    fn is_unified(&self, key: &I) -> bool {
+        self.unified.get(key).cloned().unwrap_or(false)
+    }
 
     //  Mutators
 
@@ -592,7 +596,7 @@ impl<T> WorkQueue<T> {
 
 impl<T: Eq> WorkQueue<T> {
     fn push(&mut self, iteration: u32, e: T) {
-        if !self.0.iter().any(|item| item.1 == e) {
+        if iteration == 0 || !self.0.iter().any(|item| item.1 == e) {
             self.0.push_back((iteration, e));
         }
     }

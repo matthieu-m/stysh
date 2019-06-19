@@ -168,8 +168,6 @@ impl<'a> GraphBuilder<'a> {
                 names.push(a.name);
 
                 self.context.insert_value(a.name, pattern.into());
-                self.context.link_gvns(&[pattern.into()]);
-                self.context.push_diverging(pattern.into());
             }
 
             let arguments = body.borrow_mut().push_patterns(&arguments);
@@ -209,6 +207,20 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn resolve(&self, tree: &cell::RefCell<hir::Tree>) {
+        {
+            let tree = tree.borrow();
+
+            for p in tree.iter_pattern_handles() {
+                self.context.push_unfetched(p.id.into());
+                self.context.push_diverging(p.id.into());
+            }
+
+            for e in tree.iter_expression_handles() {
+                self.context.push_unfetched(e.id.into());
+                self.context.push_diverging(e.id.into());
+            }
+        }
+
         for _ in 0..4 {
             self.context.next_iteration();
 
@@ -543,7 +555,7 @@ mod tests {
                     .push(v.int(2, 31))
                     .range(27, 6)
                     .build()
-            ).build()
+            ).build_with_type()
         };
 
         assert_eq!(

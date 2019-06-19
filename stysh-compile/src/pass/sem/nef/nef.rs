@@ -38,8 +38,6 @@ impl<'a> NestedEntityFetcher<'a> {
 
             if status == Status::Fetched {
                 self.core.context.push_fetched(gvn);
-            } else {
-                self.core.context.push_unfetched(gvn);
             }
         }
         self.core.context.fetched()

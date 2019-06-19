@@ -309,7 +309,6 @@ impl<'a> SymbolMapper<'a> {
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
-        self.context.push_diverging(result.into());
         result
     }
 
@@ -354,7 +353,6 @@ impl<'a> SymbolMapper<'a> {
 
         let result = self.tree_mut().push_expression(typ, expr, c.span());
         self.link_expressions(result.into(), arguments.fields);
-        self.context.push_diverging(result.into());
         result
     }
 
@@ -378,7 +376,6 @@ impl<'a> SymbolMapper<'a> {
 
         let result = self.tree_mut().push_expression(typ, expr, fun.span());
         self.link_expressions(result.into(), arguments.fields);
-        self.context.push_diverging(result.into());
         result
     }
 
@@ -387,14 +384,10 @@ impl<'a> SymbolMapper<'a> {
 
         let accessed = self.value_of(field.accessed);
 
-        let mut unfetched = false;
-
         let f = match field.field {
             Index(i, r) => hir::Field::Index(i, r),
-            Name(n, r) => {
-                unfetched = true;
-                hir::Field::Unresolved(hir::ValueIdentifier(n, r))
-            },
+            Name(n, r) =>
+                hir::Field::Unresolved(hir::ValueIdentifier(n, r)),
         };
 
         let typ = hir::Type::unresolved();
@@ -403,9 +396,6 @@ impl<'a> SymbolMapper<'a> {
         let result = self.tree_mut().push_expression(typ, expr, field.span());
 
         self.context.link_gvns(&[result.into(), accessed.into()]);
-        if unfetched {
-            self.context.push_unfetched(result.into());
-        }
 
         result
     }
@@ -517,7 +507,6 @@ impl<'a> SymbolMapper<'a> {
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.context.link_gvns(&[result.into(), arg.into()]);
-        self.context.push_diverging(result.into());
         result
     }
 
@@ -656,7 +645,6 @@ impl<'a> SymbolMapper<'a> {
     }
 
     fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
-        self.context.link_gvns(&[gvn]);
         for &e in self.tree().get_expressions(exprs) {
             self.context.link_gvns(&[gvn, e.into()]);
         }

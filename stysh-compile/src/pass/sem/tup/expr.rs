@@ -55,7 +55,7 @@ impl<'a> ExprUnifier<'a> {
     fn determine_from_expression(&self, e: ExpressionId) -> Option<Action> {
         use self::Expr::*;
 
-        let expr = *self.core.tree().get_expression(e);
+        let expr = self.core.tree().get_expression(e);
 
         match expr {
             BuiltinVal(value) =>
@@ -76,7 +76,7 @@ impl<'a> ExprUnifier<'a> {
             Builtin(fun) =>
                 Some(Action::Update(fun.result_type())),
             Function(_, _, id) =>
-                Some(Action::Update(*self.core.tree().get_type(id))),
+                Some(Action::Update(self.core.tree().get_type(id))),
             Unknown(_) | Unresolved(_) =>
                 None,
         }

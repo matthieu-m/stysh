@@ -269,8 +269,8 @@ impl Inner {
 
     fn expressions_eq(
         &self,
-        left: ExpressionHandle<'_>,
-        right: ExpressionHandle<'_>,
+        left: ExpressionHandle,
+        right: ExpressionHandle,
     )
         -> bool
     {
@@ -317,7 +317,7 @@ impl Inner {
         }
     }
 
-    fn patterns_eq(&self, left: PatternHandle<'_>, right: PatternHandle<'_>)
+    fn patterns_eq(&self, left: PatternHandle, right: PatternHandle)
         -> bool
     {
         self.pattern_ids_eq(left.id, right.id) &&

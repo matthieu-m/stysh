@@ -66,7 +66,7 @@ impl<'a> TypeUnifier<'a> {
     fn is_determined(&self, ty: TypeId) -> bool {
         use self::Type::*;
 
-        match *self.tree().get_type(ty) {
+        match self.tree().get_type(ty) {
             Builtin(_) | Enum(..) | Rec(..) => true,
             Tuple(tup) =>
                 self.tree()
@@ -92,7 +92,7 @@ impl<'a> TypeUnifier<'a> {
     fn unify_with_identical(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match *self.tree().get_type(other) {
+        match self.tree().get_type(other) {
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::Identical),
             Builtin(_) | Enum(..) | Rec(..) | Unresolved(..) =>
@@ -104,7 +104,7 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_sub_type_of(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match *self.tree().get_type(other) {
+        match self.tree().get_type(other) {
             Builtin(_) =>
                 //  FIXME(matthieum): need to cater for Bool::True and Bool::False.
                 self.resolve(ty, other),
@@ -121,7 +121,7 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_super_type_of(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match *self.tree().get_type(other) {
+        match self.tree().get_type(other) {
             Builtin(_) =>
                 //  FIXME(matthieum): need to cater for Bool::True and Bool::False.
                 self.resolve(ty, other),
@@ -142,11 +142,11 @@ impl<'a> TypeUnifier<'a> {
     )
         -> Option<Action>
     {
-        if let Type::Rec(rec, ..) = *self.tree().get_type(ty) {
+        if let Type::Rec(rec, ..) = self.tree().get_type(ty) {
             let matches = self.tree()
                 .get_type_ids(variants)
                 .iter()
-                .map(|&id| *self.tree().get_type(id))
+                .map(|&id| self.tree().get_type(id))
                 .any(|variant| variant.name() == rec);
 
             if matches {
@@ -165,7 +165,7 @@ impl<'a> TypeUnifier<'a> {
     {
         use self::Type::*;
 
-        match *self.tree().get_type(ty) {
+        match self.tree().get_type(ty) {
             Tuple(current) =>
                 self.unify_tuples(current, other, relate),
             Unresolved(name, ..) =>
@@ -238,7 +238,7 @@ impl<'a> TypeUnifier<'a> {
 
     /// Resolves a type.
     fn resolve(&self, ty: TypeId, other: TypeId) -> Option<Action> {
-        let other_type = *self.tree().get_type(other);
+        let other_type = self.tree().get_type(other);
 
         if let Type::Unresolved(..) = other_type {
             return None;
@@ -247,7 +247,7 @@ impl<'a> TypeUnifier<'a> {
         //  Always returns Unified, even if the unification does not happen, as
         //  the only way for unification to fail is for a conflict to occur,
         //  and such conflicts indicate a source code error.
-        if let Type::Unresolved(name, ..) = *self.tree().get_type(ty) {
+        if let Type::Unresolved(name, ..) = self.tree().get_type(ty) {
             self.resolve_unresolved(name, other_type)
         } else {
             None
@@ -360,7 +360,7 @@ mod tests {
 
         let ty = t.unresolved();
         let rel = Relation::Identical(t.tuple().push(i).push(i).build());
-        let tup = *local.source().borrow().get_type(*rel.get());
+        let tup = local.source().borrow().get_type(*rel.get());
 
         assert_eq!(
             unify(&local, ty, rel),
@@ -491,7 +491,7 @@ mod tests {
     }
 
     fn fields<'g>(local: &LocalEnv<'g>, ty: TypeId) -> Vec<TypeId> {
-        let typ = *local.source().borrow().get_type(ty);
+        let typ = local.source().borrow().get_type(ty);
 
         let tup = match typ {
             Type::Rec(_, _, tup) | Type::Tuple(tup) => tup,
@@ -505,7 +505,7 @@ mod tests {
         local.core().context
             .get_type_links(ty)
             .iter()
-            .map(|rel| rel.map(|ty| *local.source().borrow().get_type(ty)))
+            .map(|rel| rel.map(|ty| local.source().borrow().get_type(ty)))
             .collect()
     }
 

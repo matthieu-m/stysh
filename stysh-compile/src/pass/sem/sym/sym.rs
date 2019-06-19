@@ -682,8 +682,8 @@ impl<'a> SymbolMapper<'a> {
 
         let tree = self.tree();
 
-        let ty = *tree.get_type(ty_id);
-        let related = *tree.get_type(*rel_id.get());
+        let ty = tree.get_type(ty_id);
+        let related = tree.get_type(*rel_id.get());
 
         if let (Tuple(ty), Tuple(related)) = (ty, related) {
             let ty = tree.get_type_ids(ty.fields);

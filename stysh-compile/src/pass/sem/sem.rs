@@ -627,7 +627,7 @@ mod tests {
         fn arguments(&self, arguments: &[PatternId]) -> Tuple<PatternId> {
             let mut names = vec!();
             for a in arguments {
-                let pattern = *self.tree.borrow().get_pattern(*a);
+                let pattern = self.tree.borrow().get_pattern(*a);
                 if let Pattern::Var(name) = pattern {
                     names.push(name);
                 } else {

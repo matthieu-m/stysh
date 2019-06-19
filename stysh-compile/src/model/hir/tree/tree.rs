@@ -115,60 +115,30 @@ pub enum Root {
 ///
 /// Combines all elements of an Expression into a single handle.
 #[derive(Clone, Copy, Debug)]
-pub struct ExpressionHandle<'a> {
+pub struct ExpressionHandle {
     /// Expression ID.
     pub id: ExpressionId,
     /// Expression.
-    pub expr: &'a Expr,
+    pub expr: Expr,
     /// Type of the expression.
-    pub typ: &'a Type,
+    pub typ: Type,
     /// Range spanned by the expression.
     pub range: Range,
-}
-
-/// ExpressionHandleMut.
-///
-/// Combines all elements of an Expression into a single handle.
-#[derive(Debug)]
-pub struct ExpressionHandleMut<'a> {
-    /// Expression ID.
-    pub id: ExpressionId,
-    /// Expression.
-    pub expr: &'a mut Expr,
-    /// Type of the expression.
-    pub typ: &'a mut Type,
-    /// Range spanned by the expression.
-    pub range: &'a mut Range,
 }
 
 /// PatternHandle.
 ///
 /// Combines all elements of an Pattern into a single handle.
 #[derive(Clone, Copy, Debug)]
-pub struct PatternHandle<'a> {
+pub struct PatternHandle {
     /// Pattern ID.
     pub id: PatternId,
     /// Pattern.
-    pub pattern: &'a Pattern,
+    pub pattern: Pattern,
     /// Type of the pattern.
-    pub typ: &'a Type,
+    pub typ: Type,
     /// Range spanned by the pattern.
     pub range: Range,
-}
-
-/// PatternHandleMut.
-///
-/// Combines all elements of an Pattern into a single handle.
-#[derive(Debug)]
-pub struct PatternHandleMut<'a> {
-    /// Pattern ID.
-    pub id: PatternId,
-    /// Pattern.
-    pub pattern: &'a mut Pattern,
-    /// Type of the pattern.
-    pub typ: &'a mut Type,
-    /// Range spanned by the pattern.
-    pub range: &'a mut Range,
 }
 
 //
@@ -301,15 +271,20 @@ impl Tree {
     }
 
     /// Returns the type associated to a GVN.
-    pub fn get_gvn_type(&self, gvn: Gvn) -> &Type {
+    pub fn get_gvn_type(&self, gvn: Gvn) -> Type {
         let id = self.get_gvn_type_id(gvn);
         self.get_type(id)
     }
 
-    /// Returns the type associated to a GVN.
-    pub fn get_gvn_type_mut(&mut self, gvn: Gvn) -> &mut Type {
-        let id = self.get_gvn_type_id(gvn);
-        self.get_type_mut(id)
+    /// Sets the type associated to a GVN.
+    pub fn set_gvn_type(&mut self, gvn: Gvn, ty: Type) {
+        if let Some(e) = gvn.as_expression() {
+            self.set_expression_type(e, ty)
+        } else if let Some(p) = gvn.as_pattern() {
+            self.set_pattern_type(p, ty)
+        } else {
+            unreachable!("Indeterminate {:?}", gvn)
+        }
     }
 
 
@@ -323,44 +298,24 @@ impl Tree {
         *self.expr_range.at(&id)
     }
 
-    /// Returns the range associated to an expression.
-    pub fn get_expression_range_mut(&mut self, id: ExpressionId) -> &mut Range {
-        self.expr_range.at_mut(&id)
-    }
-
     /// Returns the type ID associated to an expression.
     pub fn get_expression_type_id(&self, id: ExpressionId) -> TypeId {
         *self.expr_type.at(&id)
     }
 
-    //  No `get_expression_type_id_mut`: links between Expressions and Types are immutable.
-
     /// Returns the type associated to an expression.
-    pub fn get_expression_type(&self, id: ExpressionId) -> &Type {
+    pub fn get_expression_type(&self, id: ExpressionId) -> Type {
         let ty = self.get_expression_type_id(id);
-        self.tys.at(&ty)
-    }
-
-    /// Returns the type associated to an expression.
-    pub fn get_expression_type_mut(&mut self, id: ExpressionId) -> &mut Type {
-        let ty = self.get_expression_type_id(id);
-        self.tys.at_mut(&ty)
+        self.get_type(ty)
     }
 
     /// Returns the expression.
-    pub fn get_expression(&self, id: ExpressionId) -> &Expr {
-        self.expression.at(&id)
-    }
-
-    /// Returns the expression.
-    pub fn get_expression_mut(&mut self, id: ExpressionId) -> &mut Expr {
-        self.expression.at_mut(&id)
+    pub fn get_expression(&self, id: ExpressionId) -> Expr {
+        *self.expression.at(&id)
     }
 
     /// Returns the expression handle.
-    pub fn get_expression_handle<'a>(&'a self, id: ExpressionId)
-        -> ExpressionHandle<'a>
-    {
+    pub fn get_expression_handle(&self, id: ExpressionId) -> ExpressionHandle {
         ExpressionHandle {
             id,
             expr: self.get_expression(id),
@@ -369,18 +324,11 @@ impl Tree {
         }
     }
 
-    /// Returns the expression handle.
-    pub fn get_expression_handle_mut<'a>(&'a mut self, id: ExpressionId)
-        -> ExpressionHandleMut<'a>
+    /// Returns an Iterator over ExpressionHandle.
+    pub fn iter_expression_handles<'a>(&'a self)
+        -> impl iter::Iterator<Item = ExpressionHandle> + 'a
     {
-        let ty = self.get_expression_type_id(id);
-
-        ExpressionHandleMut {
-            id,
-            expr: self.expression.at_mut(&id),
-            typ: self.tys.at_mut(&ty),
-            range: self.expr_range.at_mut(&id),
-        }
+        ExpressionIter { tree: self, index: 0 }
     }
 
     /// Inserts a new expression.
@@ -400,11 +348,16 @@ impl Tree {
         id
     }
 
-    /// Returns an Iterator over ExpressionHandle.
-    pub fn iter_expression_handles<'a>(&'a self)
-        -> impl iter::Iterator<Item = ExpressionHandle<'a>>
-    {
-        ExpressionIter { tree: self, index: 0 }
+    /// Sets the expression.
+    pub fn set_expression(&mut self, id: ExpressionId, e: Expr) {
+        *self.expression.at_mut(&id) = e;
+    }
+
+    /// Sets the type associated to an expression.
+    pub fn set_expression_type(&mut self, id: ExpressionId, typ: Type) {
+        let ty = *self.expr_type.at_mut(&id);
+        let ty = self.set_type(ty, typ);
+        *self.expr_type.at_mut(&id) = ty;
     }
 
 
@@ -415,44 +368,24 @@ impl Tree {
         *self.pat_range.at(&id)
     }
 
-    /// Returns the range associated to a pattern.
-    pub fn get_pattern_range_mut(&mut self, id: PatternId) -> &mut Range {
-        self.pat_range.at_mut(&id)
-    }
-
     /// Returns the type ID associated to an pattern.
     pub fn get_pattern_type_id(&self, id: PatternId) -> TypeId {
         *self.pat_type.at(&id)
     }
 
-    //  No `get_pattern_type_id_mut`: links between Patterns and Types are immutable.
-
     /// Returns the type associated to a pattern.
-    pub fn get_pattern_type(&self, id: PatternId) -> &Type {
+    pub fn get_pattern_type(&self, id: PatternId) -> Type {
         let ty = self.get_pattern_type_id(id);
-        self.tys.at(&ty)
-    }
-
-    /// Returns the type associated to a pattern.
-    pub fn get_pattern_type_mut(&mut self, id: PatternId) -> &mut Type {
-        let ty = self.get_pattern_type_id(id);
-        self.tys.at_mut(&ty)
+        self.get_type(ty)
     }
 
     /// Returns the pattern associated to the id.
-    pub fn get_pattern(&self, id: PatternId) -> &Pattern {
-        self.pattern.at(&id)
-    }
-
-    /// Returns the pattern associated to the id.
-    pub fn get_pattern_mut(&mut self, id: PatternId) -> &mut Pattern {
-        self.pattern.at_mut(&id)
+    pub fn get_pattern(&self, id: PatternId) -> Pattern {
+        *self.pattern.at(&id)
     }
 
     /// Returns the pattern handle.
-    pub fn get_pattern_handle<'a>(&'a self, id: PatternId)
-        -> PatternHandle<'a>
-    {
+    pub fn get_pattern_handle(&self, id: PatternId) -> PatternHandle {
         PatternHandle {
             id,
             pattern: self.get_pattern(id),
@@ -461,17 +394,11 @@ impl Tree {
         }
     }
 
-    /// Returns the pattern handle.
-    pub fn get_pattern_handle_mut<'a>(&'a mut self, id: PatternId)
-        -> PatternHandleMut<'a>
+    /// Returns an Iterator over PatternHandle.
+    pub fn iter_pattern_handles<'a>(&'a self)
+        -> impl iter::Iterator<Item = PatternHandle> + 'a
     {
-        let ty = self.get_pattern_type_id(id);
-        PatternHandleMut {
-            id,
-            pattern: self.pattern.at_mut(&id),
-            typ: self.tys.at_mut(&ty),
-            range: self.pat_range.at_mut(&id),
-        }
+        PatternIter { tree: self, index: 0 }
     }
 
     /// Inserts a new pattern.
@@ -491,35 +418,58 @@ impl Tree {
         id
     }
 
-    /// Returns an Iterator over PatternHandle.
-    pub fn iter_pattern_handles<'a>(&'a self)
-        -> impl iter::Iterator<Item = PatternHandle<'a>>
-    {
-        PatternIter { tree: self, index: 0 }
+    /// Sets the pattern associated to the id.
+    pub fn set_pattern(&mut self, id: PatternId, p: Pattern) {
+        *self.pattern.at_mut(&id) = p;
+    }
+
+    /// Sets the type associated to a pattern.
+    pub fn set_pattern_type(&mut self, id: PatternId, typ: Type) {
+        let ty = *self.pat_type.at_mut(&id);
+        let ty = self.set_type(ty, typ);
+        *self.pat_type.at_mut(&id) = ty;
     }
 
 
     //  Satellites.
 
     /// Returns the type associated to the id.
-    pub fn get_type(&self, id: TypeId) -> &Type {
-        self.tys.at(&id)
-    }
-
-    /// Returns the type associated to the id.
-    pub fn get_type_mut(&mut self, id: TypeId) -> &mut Type {
-        self.tys.at_mut(&id)
+    pub fn get_type(&self, id: TypeId) -> Type {
+        if let Some(b) = id.builtin() {
+            Type::Builtin(b)
+        } else {
+            *self.tys.at(&id)
+        }
     }
 
     /// Sets the type associated to the id.
-    pub fn set_type(&mut self, id: TypeId, ty: Type) {
+    pub fn set_type(&mut self, id: TypeId, ty: Type) -> TypeId {
+        if let Some(_) = id.builtin() {
+            if let Type::Builtin(b) = ty {
+                return TypeId::from(b);
+            }
+
+            panic!("Cannot update a built-in to a non built-in");
+        }
+
+        //  FIXME(matthieum): Could implement compression.
         *self.tys.at_mut(&id) = ty;
+
+        if let Type::Builtin(b) = ty {
+            TypeId::from(b)
+        } else {
+            id
+        }
     }
 
     /// Inserts a new type.
     ///
     /// Returns the id created for it.
     pub fn push_type(&mut self, typ: Type) -> TypeId {
+        if let Type::Builtin(b) = typ {
+            return TypeId::from(b);
+        }
+
         let ty = TypeId::new(self.tys.len() as u32);
         self.tys.push(&ty, typ);
         ty
@@ -533,7 +483,7 @@ impl Tree {
 
         //  FIXME(matthieum): handle paths.
         match typ {
-            Builtin(builtin) => self.push_type(Type::Builtin(*builtin)),
+            Builtin(builtin) => TypeId::from(*builtin),
             Enum(e, _) => {
                 let e = self.insert_enum(e);
                 self.push_type(e)
@@ -574,11 +524,6 @@ impl Tree {
         self.callables.get(&id)
     }
 
-    /// Returns the callables associated to the id.
-    pub fn get_callables_mut(&mut self, id: Id<[Callable]>) -> &mut [Callable] {
-        self.callables.get_mut(&id)
-    }
-
     /// Inserts a new array of callables.
     ///
     /// Returns the id created for it.
@@ -598,11 +543,6 @@ impl Tree {
         self.expressions.get(&id)
     }
 
-    /// Returns the expressions associated to the id.
-    pub fn get_expressions_mut(&mut self, id: Id<[ExpressionId]>) -> &mut [ExpressionId] {
-        self.expressions.get_mut(&id)
-    }
-
     /// Inserts a new array of expressions.
     ///
     /// Returns the id created for it.
@@ -613,13 +553,6 @@ impl Tree {
     /// Returns the names associated to the id.
     pub fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         self.names.get(&id)
-    }
-
-    /// Returns the names associated to the id.
-    pub fn get_names_mut(&mut self, id: Id<[ValueIdentifier]>)
-        -> &mut [ValueIdentifier]
-    {
-        self.names.get_mut(&id)
     }
 
     /// Inserts a new array of names.
@@ -643,11 +576,6 @@ impl Tree {
         self.paths.get(&id)
     }
 
-    /// Returns the path associated to the id.
-    pub fn get_path_mut(&mut self, id: Id<[ItemIdentifier]>) -> &mut [ItemIdentifier] {
-        self.paths.get_mut(&id)
-    }
-
     /// Inserts a new array of path components.
     ///
     /// Returns the id created for it.
@@ -667,11 +595,6 @@ impl Tree {
         self.patterns.get(&id)
     }
 
-    /// Returns the get_patterns associated to the id.
-    pub fn get_patterns_mut(&mut self, id: Id<[PatternId]>) -> &mut [PatternId] {
-        self.patterns.get_mut(&id)
-    }
-
     /// Inserts a new array of patterns.
     ///
     /// Returns the id created for it.
@@ -682,11 +605,6 @@ impl Tree {
     /// Returns the statements associated to the id.
     pub fn get_statements(&self, id: Id<[Stmt]>) -> &[Stmt] {
         self.stmts.get(&id)
-    }
-
-    /// Returns the statements associated to the id.
-    pub fn get_statements_mut(&mut self, id: Id<[Stmt]>) -> &mut [Stmt] {
-        self.stmts.get_mut(&id)
     }
 
     /// Inserts a new array of statements.
@@ -700,8 +618,6 @@ impl Tree {
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
         self.types.get(&id)
     }
-
-    //  No `get_type_ids_mut`: links between types are immutable.
 
     /// Inserts a new array of type ids.
     ///
@@ -825,7 +741,7 @@ impl cmp::Eq for Tree {}
 //
 
 impl<'a> iter::Iterator for ExpressionIter<'a> {
-    type Item = ExpressionHandle<'a>;
+    type Item = ExpressionHandle;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.tree.expression.len() {
@@ -841,7 +757,7 @@ impl<'a> iter::Iterator for ExpressionIter<'a> {
 }
 
 impl<'a> iter::Iterator for PatternIter<'a> {
-    type Item = PatternHandle<'a>;
+    type Item = PatternHandle;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.tree.pattern.len() {
@@ -911,15 +827,15 @@ pub mod tests {
 
         assert_eq!(
             tree.get_expression(one),
-            &Expr::int(1)
+            Expr::int(1)
         );
         assert_eq!(
             tree.get_expression(two),
-            &Expr::int(2)
+            Expr::int(2)
         );
         assert_eq!(
             tree.get_expression(ExpressionId::new(2)),
-            &Expr::Call(
+            Expr::Call(
                 Callable::Builtin(BuiltinFunction::Add),
                 Tuple::unnamed(Id::new(0)),
             )

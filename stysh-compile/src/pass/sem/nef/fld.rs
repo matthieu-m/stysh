@@ -36,7 +36,7 @@ impl<'a> FieldFetcher<'a> {
 impl<'a> FieldFetcher<'a> {
     fn fetch_children(&self) -> Status {
         if let Some(e) = self.gvn.as_expression() {
-            let expr = *self.core.tree().get_expression(e);
+            let expr = self.core.tree().get_expression(e);
 
             match expr {
                 Expr::FieldAccess(accessed, field)
@@ -74,10 +74,10 @@ impl<'a> FieldFetcher<'a> {
     {
         if let Some((field, typ)) = self.fetch_unresolved_impl(accessed, name) {
             let mut tree = self.core.tree_mut();
-            let typ = *tree.get_type(typ);
+            let typ = tree.get_type(typ);
 
-            *tree.get_expression_mut(e) = Expr::FieldAccess(accessed, field);
-            *tree.get_expression_type_mut(e) = typ;
+            tree.set_expression(e, Expr::FieldAccess(accessed, field));
+            tree.set_expression_type(e, typ);
 
             return Status::Fetched;
         }
@@ -96,7 +96,7 @@ impl<'a> FieldFetcher<'a> {
 
         let tree = self.core.tree();
 
-        let definition = match *tree.get_expression_type(accessed) {
+        let definition = match tree.get_expression_type(accessed) {
             Rec(_, _, t) | Tuple(t) => t,
             _ => return None,
         };

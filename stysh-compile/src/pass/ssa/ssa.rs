@@ -503,7 +503,7 @@ impl<'a> GraphBuilderImpl<'a> {
     {
         use self::hir::Pattern::*;
 
-        let pattern = *self.tree.get_pattern(id);
+        let pattern = self.tree.get_pattern(id);
 
         let (patterns, types) = match pattern {
             Ignored(..) => { return current; },
@@ -785,7 +785,7 @@ impl<'a> GraphBuilderImpl<'a> {
     }
 
     fn convert_type_id(&self, ty: hir::TypeId) -> hir::TypeDefinition {
-        let ty = *self.tree.get_type(ty);
+        let ty = self.tree.get_type(ty);
         self.convert_type(ty)
     }
 
@@ -849,7 +849,7 @@ impl<'a> GraphBuilderImpl<'a> {
         let ty = if let Some(e) = gvn.as_expression() {
             self.get_expression_type(e)
         } else if let Some(p) = gvn.as_pattern() {
-            *self.tree.get_pattern_type(p)
+            self.tree.get_pattern_type(p)
         } else {
             unimplemented!("Unknown GVN {:?}", gvn);
         };
@@ -868,7 +868,7 @@ impl<'a> GraphBuilderImpl<'a> {
         if let Some(local) = LocalExpressionId::new(self.expression_offset, id) {
             self.expression.borrow().at(&local).expr
         } else {
-            *self.tree.get_expression(id)
+            self.tree.get_expression(id)
         }
     }
 
@@ -876,7 +876,7 @@ impl<'a> GraphBuilderImpl<'a> {
         if let Some(local) = LocalExpressionId::new(self.expression_offset, id) {
             self.expression.borrow().at(&local).type_
         } else {
-            *self.tree.get_expression_type(id)
+            self.tree.get_expression_type(id)
         }
     }
 
@@ -1816,7 +1816,7 @@ mod tests {
 
                 for a in &p.arguments {
                     let ty = self.tree.borrow_mut().push_type_definition(&a.type_);
-                    let ty = *self.tree.borrow().get_type(ty);
+                    let ty = self.tree.borrow().get_type(ty);
 
                     let pattern = Pattern::Var(a.name);
                     let pattern = self.tree.borrow_mut().push_pattern(ty, pattern, a.range);
@@ -1852,7 +1852,7 @@ mod tests {
         }
 
         fn type_of(&self, e: ExpressionId) -> Type {
-            *self.tree.borrow().get_expression_type(e)
+            self.tree.borrow().get_expression_type(e)
         }
 
         fn funit(&self, prototype: FunctionProto, body: ExpressionId)

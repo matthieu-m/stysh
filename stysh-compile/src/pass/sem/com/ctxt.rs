@@ -544,6 +544,10 @@ impl TypeLinks {
     //  Mutators
 
     fn link(&mut self, ty: TypeId, rel: Relation<TypeId>) {
+        if ty.is_builtin() {
+            return;
+        }
+
         let index = ty.index();
 
         if index >= self.links.len() {

@@ -144,7 +144,7 @@ impl<'a> Inner<'a> {
         }
     }
 
-    fn write_expression(&mut self, h: ExpressionHandle<'_>, name: &str) -> Result<(), fmt::Error> {
+    fn write_expression(&mut self, h: ExpressionHandle, name: &str) -> Result<(), fmt::Error> {
         self.write_indentation()?;
 
         if !name.is_empty() {
@@ -154,7 +154,7 @@ impl<'a> Inner<'a> {
         self.write_expression_impl(h)
     }
 
-    fn write_expression_field(&mut self, h: ExpressionHandle<'_>, field: ValueIdentifier) -> Result<(), fmt::Error> {
+    fn write_expression_field(&mut self, h: ExpressionHandle, field: ValueIdentifier) -> Result<(), fmt::Error> {
         self.write_indentation()?;
 
         if field.0 != Default::default() {
@@ -164,7 +164,7 @@ impl<'a> Inner<'a> {
         self.write_expression_impl(h)
     }
 
-    fn write_expression_impl(&mut self, h: ExpressionHandle<'_>) -> Result<(), fmt::Error> {
+    fn write_expression_impl(&mut self, h: ExpressionHandle) -> Result<(), fmt::Error> {
         use self::Expr::*;
 
         match h.expr {
@@ -184,7 +184,7 @@ impl<'a> Inner<'a> {
         write!(self.writer, " -> {:?} {:?} {:?}\n", h.typ, h.range, Gvn::from(h.id))
     }
 
-    fn write_pattern(&mut self, h: PatternHandle<'_>, name: &str) -> Result<(), fmt::Error> {
+    fn write_pattern(&mut self, h: PatternHandle, name: &str) -> Result<(), fmt::Error> {
         self.write_indentation()?;
 
         if !name.is_empty() {
@@ -194,7 +194,7 @@ impl<'a> Inner<'a> {
         self.write_pattern_impl(h)
     }
 
-    fn write_pattern_field(&mut self, h: PatternHandle<'_>, field: ValueIdentifier) -> Result<(), fmt::Error> {
+    fn write_pattern_field(&mut self, h: PatternHandle, field: ValueIdentifier) -> Result<(), fmt::Error> {
         self.write_indentation()?;
 
         if field.0 != Default::default() {
@@ -204,7 +204,7 @@ impl<'a> Inner<'a> {
         self.write_pattern_impl(h)
     }
 
-    fn write_pattern_impl(&mut self, h: PatternHandle<'_>) -> Result<(), fmt::Error> {
+    fn write_pattern_impl(&mut self, h: PatternHandle) -> Result<(), fmt::Error> {
         use self::Pattern::*;
 
         match h.pattern {

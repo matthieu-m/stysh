@@ -107,7 +107,7 @@ impl<'a> BlockScope<'a> {
 
     /// Adds a new pattern to the scope.
     pub fn add_pattern(&mut self, pattern: PatternId, tree: &Tree) {
-        let tuple = match *tree.get_pattern(pattern) {
+        let tuple = match tree.get_pattern(pattern) {
             Pattern::Ignored(..) => return,
             Pattern::Var(id) => {
                 self.add_value(id);

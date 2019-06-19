@@ -756,7 +756,7 @@ impl StmtFactory {
 
     /// Shortcut: Creates a simple binding Stmt.
     pub fn var_id(&self, id: ValueIdentifier, expr: ExpressionId) -> Stmt {
-        let typ = *self.0.borrow().get_expression_type(expr);
+        let typ = self.0.borrow().get_expression_type(expr);
         let range = id.1;
 
         let pattern = self.0.borrow_mut().push_pattern(typ, Pattern::Var(id), range);
@@ -1486,7 +1486,7 @@ impl BlockBuilder {
 
     fn compute_type(&self) -> Type {
         if let Some(expr) = self.expr {
-            *self.tree.borrow().get_expression_type(expr)
+            self.tree.borrow().get_expression_type(expr)
         } else if let Some(stmt) = self.statements.last() {
             //  Possibly void, if ending with break/continue/return.
             stmt.result_type()
@@ -1822,14 +1822,14 @@ impl FieldAccessBuilder {
         }
 
         if let Field::Index(i, _) = self.field {
-            let accessed = *self.tree.borrow().get_expression_type(self.expr);
+            let accessed = self.tree.borrow().get_expression_type(self.expr);
 
             return match accessed {
                 Type::Rec(_, _, tup) | Type::Tuple(tup) => {
                     self.tree.borrow()
                         .get_type_ids(tup.fields)
                         .get(i as usize)
-                        .map(|ty| *self.tree.borrow().get_type(*ty))
+                        .map(|ty| self.tree.borrow().get_type(*ty))
                         .unwrap_or(Type::unresolved())
                 },
                 _ => Type::unresolved(),
@@ -1896,8 +1896,8 @@ impl IfBuilder {
             return typ;
         }
 
-        let true_ = *self.tree.borrow().get_expression_type(self.true_);
-        let false_ = *self.tree.borrow().get_expression_type(self.false_);
+        let true_ = self.tree.borrow().get_expression_type(self.true_);
+        let false_ = self.tree.borrow().get_expression_type(self.false_);
 
         if true_ == false_ || false_ == Type::void() {
             true_

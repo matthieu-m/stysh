@@ -27,13 +27,13 @@ pub enum DepthTreeItem<'a> {
     /// A Callable.
     Callable(&'a Callable),
     /// An Expression, with the name of the field in its parent node.
-    Expression(ExpressionHandle<'a>, &'static str),
+    Expression(ExpressionHandle, &'static str),
     /// An Expression Field -- part of a tuple.
-    ExpressionField(ExpressionHandle<'a>, ValueIdentifier),
+    ExpressionField(ExpressionHandle, ValueIdentifier),
     /// A Pattern, with the name of the field in its parent node.
-    Pattern(PatternHandle<'a>, &'static str),
+    Pattern(PatternHandle, &'static str),
     /// A Pattern Field -- part of a tuple.
-    PatternField(PatternHandle<'a>, ValueIdentifier),
+    PatternField(PatternHandle, ValueIdentifier),
     /// A Statement.
     Statement(&'a Stmt),
     /// A Type, with the name of the field in its parent node.
@@ -87,7 +87,7 @@ impl<'a> DepthTreeIter<'a> {
     {
         let fields = tree.get_patterns(arguments.fields);
         let names = tree.get_names(arguments.names);
-        let result = *tree.get_type(result);
+        let result = tree.get_type(result);
 
         let stack = vec!(
             DepthStep::SeqStop,
@@ -276,9 +276,9 @@ impl<'a> DepthTreeIter<'a> {
             self.stack.push(DepthStep::TypeTuple(tail, names));
 
             let ty = self.tree.get_type(*head);
-            self.push_type_children(ty);
+            self.push_type_children(&ty);
 
-            DepthTreeItem::TypeField(*ty, name)
+            DepthTreeItem::TypeField(ty, name)
         } else {
             DepthTreeItem::SeqStop
         }
@@ -291,7 +291,7 @@ impl<'a> DepthTreeIter<'a> {
             Function(_, args, res) => {
                 let fields = self.tree.get_type_ids(args.fields);
                 let names = self.tree.get_names(args.names);
-                let res = *self.tree.get_type(*res);
+                let res = self.tree.get_type(*res);
 
                 self.stack.extend_from_slice(&[
                     DepthStep::SeqStop,

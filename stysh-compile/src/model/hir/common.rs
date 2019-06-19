@@ -8,9 +8,6 @@ use basic::sea::TableIndex;
 
 use model::ast;
 
-//  FIXME(matthieum): consider defining TypeId fully to avoid cyclic dependency.
-use model::hir::Type;
-
 //
 //  Public Types (IDs)
 //
@@ -31,7 +28,8 @@ pub type PathId = Id<[ItemIdentifier]>;
 pub struct PatternId(com::CoreId);
 
 /// Index of a Type in the Tree.
-pub type TypeId = Id<Type>;
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TypeId(com::CoreId);
 
 /// A global value number.
 ///
@@ -119,6 +117,37 @@ impl PatternId {
             Some(PatternId::new(gvn.0 - Gvn::PATTERN_OFFSET))
         } else {
             None
+        }
+    }
+}
+
+impl TypeId {
+    /// Creates a new instance.
+    pub fn new(id: u32) -> Self { TypeId(com::CoreId::new(id)) }
+
+    /// Creates a new instance of a Bool TypeId.
+    pub fn bool_() -> Self { TypeId::new(TypeId::BOOL_ID) }
+
+    /// Creates a new instance of a Int TypeId.
+    pub fn int() -> Self { TypeId::new(TypeId::INT_ID) }
+
+    /// Creates a new instance of a String TypeId.
+    pub fn string() -> Self { TypeId::new(TypeId::STRING_ID) }
+
+    /// Creates a new instance of a Void TypeId.
+    pub fn void() -> Self { TypeId::new(TypeId::VOID_ID) }
+
+    /// Returns whether the corresponding Type is a built-in.
+    pub fn is_builtin(&self) -> bool { self.builtin().is_some() }
+
+    /// Converts to a BuiltinType, if possible.
+    pub fn builtin(&self) -> Option<BuiltinType> {
+        match self.0.raw() {
+            t if t == TypeId::BOOL_ID => Some(BuiltinType::Bool),
+            t if t == TypeId::INT_ID => Some(BuiltinType::Int),
+            t if t == TypeId::STRING_ID => Some(BuiltinType::String),
+            t if t == TypeId::VOID_ID => Some(BuiltinType::Void),
+            _ => None
         }
     }
 }
@@ -241,6 +270,13 @@ impl Gvn {
     const PATTERN_OFFSET: u32 = std::u32::MAX / 2;
 }
 
+impl TypeId {
+    const BOOL_ID: u32 = std::u32::MAX - 2;
+    const INT_ID: u32 = std::u32::MAX - 3;
+    const STRING_ID: u32 = std::u32::MAX - 4;
+    const VOID_ID: u32 = std::u32::MAX - 5;
+}
+
 fn empty_non_zero() -> com::CoreId {
     com::CoreId::new(std::u32::MAX - 2)
 }
@@ -277,6 +313,19 @@ impl fmt::Debug for PatternId {
             write!(f, "PatternId(empty)")
         } else {
             write!(f, "PatternId({})", self.index())
+        }
+    }
+}
+
+impl fmt::Debug for TypeId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        //  More compact representation for `{:#?}`.
+        if self.0 == Default::default() {
+            write!(f, "TypeId(default)")
+        } else if let Some(t) = self.builtin() {
+            write!(f, "TypeId({:?})", t)
+        } else {
+            write!(f, "TypeId({})", self.index())
         }
     }
 }
@@ -378,6 +427,17 @@ impl<T> fmt::Display for DynTuple<T>
 
 impl<T: ?Sized> cmp::Eq for Id<T> {}
 
+impl convert::From<BuiltinType> for TypeId {
+    fn from(b: BuiltinType) -> Self {
+        match b {
+            BuiltinType::Bool => TypeId::bool_(),
+            BuiltinType::Int => TypeId::int(),
+            BuiltinType::String => TypeId::string(),
+            BuiltinType::Void => TypeId::void(),
+        }
+    }
+}
+
 impl convert::From<ExpressionId> for Gvn {
     fn from(id: ExpressionId) -> Self {
         Gvn(id.0.raw().wrapping_add(Gvn::EXPRESSION_OFFSET))
@@ -456,6 +516,12 @@ impl TableIndex for PatternId {
     fn index(&self) -> usize { self.0.raw() as usize }
 }
 
+impl TableIndex for TypeId {
+    fn from_index(index: usize) -> Self { TypeId::new(index as u32) }
+
+    fn index(&self) -> usize { self.0.raw() as usize }
+}
+
 impl<T: ?Sized> TableIndex for Id<T> {
     fn from_index(index: usize) -> Self { Id::new(index as u32) }
 
@@ -486,5 +552,28 @@ mod tests {
             Gvn::from(PatternId::new(0)).as_pattern(),
             Some(PatternId::new(0))
         );
+    }
+
+    #[test]
+    fn type_id() {
+        assert_eq!(TypeId::new(0).index(), 0);
+        assert_eq!(TypeId::new(5).index(), 5);
+    }
+
+    #[test]
+    fn type_id_builtin() {
+        use self::BuiltinType::*;
+
+        assert_eq!(Some(Bool), TypeId::bool_().builtin());
+        assert_eq!(Some(Int), TypeId::int().builtin());
+        assert_eq!(Some(String), TypeId::string().builtin());
+        assert_eq!(Some(Void), TypeId::void().builtin());
+
+        for &b in &[Bool, Int, String, Void] {
+            assert_eq!(Some(b), TypeId::from(b).builtin());
+        }
+
+        assert_eq!(None, TypeId::default().builtin());
+        assert_eq!(None, TypeId::new(0).builtin());
     }
 }

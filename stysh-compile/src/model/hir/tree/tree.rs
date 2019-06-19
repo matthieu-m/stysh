@@ -286,8 +286,6 @@ impl Tree {
         self.records.values()
     }
 
-    //  No `iter_records_mut`: links between Record and Field are immutable.
-
 
     //  Gvns.
 
@@ -409,13 +407,6 @@ impl Tree {
         ExpressionIter { tree: self, index: 0 }
     }
 
-    /// Returns an Iterator over ExpressionHandleMut.
-    pub fn iter_expression_handles_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = ExpressionHandleMut<'a>>
-    {
-        ExpressionIterMut { tree: self, index: 0 }
-    }
-
 
     //  Patterns.
 
@@ -507,13 +498,6 @@ impl Tree {
         PatternIter { tree: self, index: 0 }
     }
 
-    /// Returns an Iterator over PatternHandleMut.
-    pub fn iter_pattern_handles_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = PatternHandleMut<'a>>
-    {
-        PatternIterMut { tree: self, index: 0 }
-    }
-
 
     //  Satellites.
 
@@ -585,13 +569,6 @@ impl Tree {
         self.tys.iter()
     }
 
-    /// Returns an Iterator over mutable references to Types.
-    pub fn iter_types_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = &'a mut Type>
-    {
-        self.tys.iter_mut()
-    }
-
     /// Returns the callables associated to the id.
     pub fn get_callables(&self, id: Id<[Callable]>) -> &[Callable] {
         self.callables.get(&id)
@@ -614,13 +591,6 @@ impl Tree {
         -> impl iter::Iterator<Item = &'a Callable>
     {
         self.callables.iter().flatten()
-    }
-
-    /// Returns an Iterator over mutable Callables.
-    pub fn iter_callables_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = &'a mut Callable>
-    {
-        self.callables.iter_mut().flatten()
     }
 
     /// Returns the expressions associated to the id.
@@ -668,13 +638,6 @@ impl Tree {
         self.names.iter().flatten()
     }
 
-    /// Returns an Iterator over mutable sequences of ValueIdentifier.
-    pub fn iter_names_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = &'a mut ValueIdentifier>
-    {
-        self.names.iter_mut().flatten()
-    }
-
     /// Returns the path associated to the id.
     pub fn get_path(&self, id: Id<[ItemIdentifier]>) -> &[ItemIdentifier] {
         self.paths.get(&id)
@@ -697,13 +660,6 @@ impl Tree {
         -> impl iter::Iterator<Item = &'a ItemIdentifier>
     {
         self.paths.iter().flatten()
-    }
-
-    /// Returns an Iterator over mutable path components.
-    pub fn iter_path_mut<'a>(&'a mut self)
-        -> impl iter::Iterator<Item = &'a mut ItemIdentifier>
-    {
-        self.paths.iter_mut().flatten()
     }
 
     /// Returns the patterns associated to the id.
@@ -768,8 +724,6 @@ impl Tree {
     {
         self.types.iter().flatten()
     }
-
-    //  No `iter_type_ids_mut`: links between types are immutable.
 }
 
 //
@@ -783,18 +737,8 @@ struct ExpressionIter<'a> {
     index: usize,
 }
 
-struct ExpressionIterMut<'a> {
-    tree: &'a mut Tree,
-    index: usize,
-}
-
 struct PatternIter<'a> {
     tree: &'a Tree,
-    index: usize,
-}
-
-struct PatternIterMut<'a> {
-    tree: &'a mut Tree,
     index: usize,
 }
 
@@ -896,28 +840,6 @@ impl<'a> iter::Iterator for ExpressionIter<'a> {
     }
 }
 
-impl<'a> iter::Iterator for ExpressionIterMut<'a> {
-    type Item = ExpressionHandleMut<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.tree.expression.len() {
-            let index = ExpressionId::from_index(self.index);
-            debug_assert!(index.index() == self.index);
-
-            //  Safety:
-            //  -   non-overlapping indices.
-            //  -   constrained lifetime.
-            let tree: &'a mut Tree =
-                unsafe { &mut *(self.tree as *mut _) };
-
-            self.index += 1;
-            Some(tree.get_expression_handle_mut(index))
-        } else {
-            None
-        }
-    }
-}
-
 impl<'a> iter::Iterator for PatternIter<'a> {
     type Item = PatternHandle<'a>;
 
@@ -928,28 +850,6 @@ impl<'a> iter::Iterator for PatternIter<'a> {
 
             self.index += 1;
             Some(self.tree.get_pattern_handle(index))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> iter::Iterator for PatternIterMut<'a> {
-    type Item = PatternHandleMut<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.tree.pattern.len() {
-            let index = PatternId::from_index(self.index);
-            debug_assert!(index.index() == self.index);
-
-            //  Safety:
-            //  -   non-overlapping indices.
-            //  -   constrained lifetime.
-            let tree: &'a mut Tree =
-                unsafe { &mut *(self.tree as *mut _) };
-
-            self.index += 1;
-            Some(tree.get_pattern_handle_mut(index))
         } else {
             None
         }

@@ -381,8 +381,8 @@ impl ItemFactory {
     }
 
     /// Shortcut: Creates a Unit Record.
-    pub fn unit(&self, pos: usize, len: usize) -> Record {
-        let proto = RecordProtoBuilder::new(self.id(pos, len), pos).build();
+    pub fn unit(&self, id: ItemIdentifier) -> Record {
+        let proto = RecordProtoBuilder::new(id, id.1.offset()).build();
         self.rec(proto).build()
     }
 }

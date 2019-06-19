@@ -1511,7 +1511,6 @@ mod tests {
         }
 
         fn insert_enum(&mut self, enum_: hir::EnumProto, positions: &[usize]) {
-            let enum_ = self.hir_resolver.resolve_enum_prototype(enum_);
             let name = enum_.name;
             let len = name.span().length();
 
@@ -1530,7 +1529,6 @@ mod tests {
             positions: &[usize],
         )
         {
-            let proto = self.hir_resolver.resolve_function_prototype(proto);
             let len = proto.name.span().length();
             println!("Registered function: {:?}", proto.name);
 
@@ -1544,7 +1542,6 @@ mod tests {
         fn insert_record(&mut self, rec: hir::RecordProto, positions: &[usize])
             -> hir::RecordProto
         {
-            let rec = self.hir_resolver.resolve_record_prototype(rec);
             let len = rec.name.span().length();
             println!(
                 "Registered record prototype: {:?} (of {:?})",

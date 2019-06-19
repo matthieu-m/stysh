@@ -307,6 +307,7 @@ mod tests {
         let (i, p) = (hir.item(), hir.proto());
 
         let e: EnumProto = p.enum_(env.item_id(6, 6)).build();
+        let (one, two) = (env.item_id(15, 3), env.item_id(20, 3));
 
         assert_eq!(
             env.item_of(
@@ -317,9 +318,7 @@ mod tests {
                     .push_unit(20, 3)
                     .build(),
             ),
-            env.resolve_item(
-                i.enum_(e).push(i.unit(15, 3)).push(i.unit(20, 3)).build().into()
-            )
+            i.enum_(e).push(i.unit(one)).push(i.unit(two)).build().into()
         );
     }
 
@@ -353,7 +352,7 @@ mod tests {
                 Prototype::Rec(r.clone()),
                 &ast.item().record(5, 6).build(),
             ),
-            env.resolve_item(i.rec(r).build().into())
+            i.rec(r).build().into()
         );
     }
 
@@ -380,9 +379,7 @@ mod tests {
                             .build()
                     ).build(),
             ),
-            env.resolve_item(
-                i.rec(r).push(t.int()).push(t.string()).build().into()
-            )
+            i.rec(r).push(t.int()).push(t.string()).build().into()
         );
     }
 
@@ -662,10 +659,6 @@ mod tests {
             println!();
 
             hir::Item::Fun(hir::Function { prototype, body })
-        }
-
-        fn resolve_item(&self, item: Item) -> Item {
-            self.hir_resolver.resolve_item(item)
         }
     }
 

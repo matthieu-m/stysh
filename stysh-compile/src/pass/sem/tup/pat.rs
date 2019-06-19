@@ -87,8 +87,6 @@ mod tests {
     }
 
     fn unify<'g>(local: &LocalEnv<'g>, p: PatternId) -> Status {
-        local.resolve_trees();
-
         println!("source before: {:?}", local.source());
         println!();
 

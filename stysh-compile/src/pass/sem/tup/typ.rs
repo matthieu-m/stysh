@@ -512,7 +512,6 @@ mod tests {
     fn unify<'g>(local: &LocalEnv<'g>, ty: TypeId, rel: Relation<TypeId>)
         -> Option<Action>
     {
-        local.resolve_trees();
         local.link_types(ty, rel);
 
         println!("source before: {:?}", local.source());

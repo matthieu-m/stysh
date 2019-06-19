@@ -166,24 +166,6 @@ pub mod tests {
         pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }
 
         #[allow(dead_code)]
-        pub fn resolve_trees(&self) {
-            self.resolver.resolve_tree(&mut *self.source.borrow_mut());
-            self.resolver.resolve_tree(&mut *self.target.borrow_mut());
-        }
-
-        #[allow(dead_code)]
-        pub fn insert_enum(&mut self, e: Enum) {
-            let e = self.resolver.resolve_enum(e);
-            self.registry.insert_enum(e);
-        }
-
-        #[allow(dead_code)]
-        pub fn insert_record(&mut self, r: Record) {
-            let r = self.resolver.resolve_record(r);
-            self.registry.insert_record(r);
-        }
-
-        #[allow(dead_code)]
         fn type_of(&self, gvn: Gvn) -> TypeId {
             if let Some(e) = gvn.as_expression() {
                 self.source.borrow().get_expression_type_id(e)

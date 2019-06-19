@@ -135,8 +135,6 @@ mod tests {
     }
 
     fn unify<'g>(local: &LocalEnv<'g>, e: ExpressionId) -> Status {
-        local.resolve_trees();
-
         println!("source before: {:?}", local.source());
         println!();
 

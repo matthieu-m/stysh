@@ -250,10 +250,11 @@ mod tests {
     #[test]
     fn enum_empty() {
         let env = Env::new();
-        let i = env.factory().item();
+        let local = env.local(b":enum Empty {}");
+        let i = local.factory().item();
 
         assert_eq!(
-            enumit(&env, b":enum Empty {}"),
+            enumit(&local),
             i.enum_(6, 5).braces(12, 13).build()
         );
     }
@@ -261,26 +262,35 @@ mod tests {
     #[test]
     fn enum_unit_single() {
         let env = Env::new();
-        let i = env.factory().item();
+        let local = env.local(b":enum Simple { First }");
+        let i = local.factory().item();
 
         assert_eq!(
-            enumit(&env, b":enum Simple { First }"),
+            enumit(&local),
             i.enum_(6, 6).push_unit(15, 5).build()
         );
+    }
+
+    #[test]
+    fn enum_unit_single_trailing_comma() {
+        let env = Env::new();
+        let local = env.local(b":enum Simple { First ,}");
+        let i = local.factory().item();
 
         assert_eq!(
-            enumit(&env, b":enum Simple { First ,}"),
+            enumit(&local),
             i.enum_(6, 6).braces(13, 22).push_unit(15, 5).comma(21).build()
-        );
+        ); 
     }
 
     #[test]
     fn enum_unit_multiple() {
         let env = Env::new();
-        let i = env.factory().item();
+        let local = env.local(b":enum Simple { First, Second, Third }");
+        let i = local.factory().item();
 
         assert_eq!(
-            enumit(&env, b":enum Simple { First, Second, Third }"),
+            enumit(&local),
             i.enum_(6, 6)
                 .push_unit(15, 5)
                 .push_unit(22, 6)
@@ -290,32 +300,13 @@ mod tests {
     }
 
     #[test]
-    fn enum_unit_multiple_named() {
-        let env = Env::new();
-        let local = env.local(b":enum Simple { First, Second, Third }");
-        let i = env.factory().item();
-
-        let simple = local.resolve_type(6, 6);
-        let (first, second, third) =
-            (local.resolve_type(15, 5), local.resolve_type(22, 6), local.resolve_type(30, 5));
-
-        assert_eq!(
-            enumit_resolved(&local),
-            i.enum_named(simple)
-                .push_named_unit(first)
-                .push_named_unit(second)
-                .push_named_unit(third)
-                .build()
-        );
-    }
-
-    #[test]
     fn rec_tuple() {
         let env = Env::new();
-        let (_, i, _, _, t) = env.factories();
+        let local = env.local(b":rec Tup(Int, String);");
+        let (_, i, _, _, t) = local.factories();
 
         assert_eq!(
-            recit(&env, b":rec Tup(Int, String);"),
+            recit(&local),
             i.record(5, 3).tuple(
                 t.tuple()
                     .push(t.simple(9, 3))
@@ -329,20 +320,14 @@ mod tests {
     fn rec_tuple_keyed() {
         let env = Env::new();
         let local = env.local(b":rec Person(.name: String, .age: Int);");
-        let (_, i, _, _, t) = env.factories();
-
-        let person = local.resolve_type(5, 6);
-        let name = local.resolve_field(12, 5);
-        let string = local.resolve_type(19, 6);
-        let age = local.resolve_field(27, 4);
-        let int = local.resolve_type(33, 3);
+        let (_, i, _, _, t) = local.factories();
 
         assert_eq!(
-            recit_resolved(&local),
-            i.record_named(person).tuple(
+            recit(&local),
+            i.record(5, 6).tuple(
                 t.tuple()
-                    .full_name(name).push(t.simple_named(string))
-                    .full_name(age).push(t.simple_named(int))
+                    .name(12, 5).push(t.simple(19, 6))
+                    .name(27, 4).push(t.simple(33, 3))
                     .build()
             ).build()
         );
@@ -351,10 +336,11 @@ mod tests {
     #[test]
     fn rec_unit() {
         let env = Env::new();
-        let i = env.factory().item();
+        let local = env.local(b":rec Simple;");
+        let i = local.factory().item();
 
         assert_eq!(
-            recit(&env, b":rec Simple;"),
+            recit(&local),
             i.record(5, 6).build()
         );
     }
@@ -362,10 +348,11 @@ mod tests {
     #[test]
     fn type_simple() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"Int");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"Int"),
+            typeit(&local),
             t.simple(0, 3)
         );
     }
@@ -373,15 +360,23 @@ mod tests {
     #[test]
     fn type_nested() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"Enum::Variant");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"Enum::Variant"),
+            typeit(&local),
             t.nested(6, 7).push(0, 4).build()
         );
+    }
+
+    #[test]
+    fn type_nested_nested() {
+        let env = Env::new();
+        let local = env.local(b"Enum::Other::Variant");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"Enum::Other::Variant"),
+            typeit(&local),
             t.nested(13, 7).push(0, 4).push(6, 5).build()
         );
     }
@@ -389,15 +384,23 @@ mod tests {
     #[test]
     fn tuple_unit() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"()");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"()"),
+            typeit(&local),
             t.tuple().parens(0, 1).build()
         );
+    }
+
+    #[test]
+    fn tuple_unit_spaced() {
+        let env = Env::new();
+        let local = env.local(b"( )");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"( )"),
+            typeit(&local),
             t.tuple().parens(0, 2).build()
         );
     }
@@ -405,15 +408,23 @@ mod tests {
     #[test]
     fn tuple_simple() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"(Int)");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"(Int)"),
+            typeit(&local),
             t.tuple().push(t.simple(1, 3)).build()
         );
+    }
+
+    #[test]
+    fn tuple_simple_trailing_comma() {
+        let env = Env::new();
+        let local = env.local(b"(Int,)");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"(Int,)"),
+            typeit(&local),
             t.tuple().push(t.simple(1, 3)).comma(4).build()
         );
     }
@@ -421,10 +432,11 @@ mod tests {
     #[test]
     fn tuple_few() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"(Int,Int ,Int)");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"(Int,Int ,Int)"),
+            typeit(&local),
             t.tuple()
                 .push(t.simple(1, 3))
                 .push(t.simple(5, 3))
@@ -432,9 +444,16 @@ mod tests {
                 .push(t.simple(10, 3))
                 .build()
         );
+    }
+
+    #[test]
+    fn tuple_few_spaces_and_commas() {
+        let env = Env::new();
+        let local = env.local(b" ( Int , Int, Int , )");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b" ( Int , Int, Int , )"),
+            typeit(&local),
             t.tuple()
                 .parens(1, 20)
                 .push(t.simple(3, 3))
@@ -449,10 +468,11 @@ mod tests {
     #[test]
     fn tuple_keyed() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"(.name: String, .age: Int)");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"(.name: String, .age: Int)"),
+            typeit(&local),
             t.tuple()
                 .name(1, 5).push(t.simple(8, 6))
                 .name(16, 4).push(t.simple(22, 3))
@@ -463,10 +483,11 @@ mod tests {
     #[test]
     fn tuple_nested() {
         let env = Env::new();
-        let t = env.factory().type_();
+        let local = env.local(b"((Int, Int), Int, )");
+        let t = local.factory().type_();
 
         assert_eq!(
-            typeit(&env, b"((Int, Int), Int, )"),
+            typeit(&local),
             t.tuple()
                 .parens(0, 18)
                 .push(
@@ -481,32 +502,17 @@ mod tests {
         );
     }
 
-    fn enumit<'g>(env: &'g Env, raw: &'g [u8]) -> Enum<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_enum(enumit_resolved(&local))
-    }
-
-    fn enumit_resolved<'g>(local: &LocalEnv<'g>) -> Enum<'g> {
+    fn enumit<'g>(local: &LocalEnv<'g>) -> Enum<'g> {
         let mut raw = local.raw();
         super::parse_enum(&mut raw)
     }
 
-    fn recit<'g>(env: &'g Env, raw: &'g [u8]) -> Record<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_record(recit_resolved(&local))
-    }
-
-    fn recit_resolved<'g>(local: &LocalEnv<'g>) -> Record<'g> {
+    fn recit<'g>(local: &LocalEnv<'g>) -> Record<'g> {
         let mut raw = local.raw();
         super::parse_record(&mut raw)
     }
 
-    fn typeit<'g>(env: &'g Env, raw: &'g [u8]) -> Type<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_type(typeit_resolved(&local))
-    }
-
-    fn typeit_resolved<'g>(local: &LocalEnv<'g>) -> Type<'g> {
+    fn typeit<'g>(local: &LocalEnv<'g>) -> Type<'g> {
         let mut raw = local.raw();
         super::parse_type(&mut raw)
     }

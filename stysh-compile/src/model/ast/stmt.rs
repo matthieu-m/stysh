@@ -124,15 +124,15 @@ impl<'a> convert::From<VariableReBinding<'a>> for Statement<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::ast::builder::Factory;
+    use model::ast::{builder::Factory, interning::Resolver};
 
     #[test]
     fn range_stmt_variable_binding() {
         let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let resolver = Resolver::new(b"     :var fool := 1234;", Default::default());
+        let f = Factory::new(&global_arena, resolver);
         let (e, p, s) = (f.expr(), f.pat(), f.stmt());
 
-        //  "     :var fool := 1234;"
         let mut var = s.var(p.var(10, 4), e.int(1234, 18));
 
         let with_semi: Statement = var.build();

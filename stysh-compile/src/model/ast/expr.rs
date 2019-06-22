@@ -384,23 +384,23 @@ impl convert::From<VariableIdentifier> for Expression<'static> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::ast::builder::Factory;
+    use model::ast::{builder::Factory, interning::Resolver};
 
     #[test]
     fn range_expression_literal() {
         let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let resolver = Resolver::new(b"   1", Default::default());
+        let e = Factory::new(&global_arena, resolver).expr();
 
-        //  "   1"
         assert_eq!(e.int(1, 3).span(), range(3, 1));
     }
 
     #[test]
     fn range_expression_binary_operator() {
         let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let resolver = Resolver::new(b"   1 + 1", Default::default());
+        let e = Factory::new(&global_arena, resolver).expr();
 
-        //  "   1 + 1"
         assert_eq!(
             e.bin_op(e.int(1, 3), e.int(1, 7)).build().span(),
             range(3, 5)

@@ -294,8 +294,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
 
         assert_eq!(
             env.proto_of(
@@ -314,8 +314,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":enum Simple { One, Two }", &global_arena);
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
         let (i, p) = (hir.item(), hir.proto());
 
         let e: EnumProto = p.enum_(env.item_id(6, 6)).build();
@@ -339,8 +339,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Simple;", &global_arena);
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
 
         assert_eq!(
             env.proto_of(&ast.item().record(5, 6).build()),
@@ -353,8 +353,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Simple;", &global_arena);
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
         let (i, p) = (hir.item(), hir.proto());
 
         let r: RecordProto = p.rec(env.item_id(5, 6), 0).range(0, 12).build();
@@ -373,8 +373,8 @@ mod tests {
         let global_arena = mem::Arena::new();
         let env = Env::new(b":rec Tup(Int, String);", &global_arena);
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
         let (i, p, t) = (hir.item(), hir.proto(), hir.type_definition());
 
         let r: RecordProto = p.rec(env.item_id(5, 3), 0).range(0, 22).build();
@@ -403,8 +403,8 @@ mod tests {
             &global_arena
         );
 
-        let ast = SynFactory::new(&global_arena);
-        let hir = SemFactory::new(Default::default());
+        let ast = env.ast();
+        let hir = env.hir();
         let (p, t) = (hir.proto(), hir.type_definition());
 
         assert_eq!(
@@ -582,13 +582,13 @@ mod tests {
                 registry: hir::mocks::MockRegistry::new(),
                 context: Context::default(),
                 global_arena: arena,
-                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
+                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone()),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
                 tree: RcTree::default(),
             }
         }
 
-        fn ast(&self) -> SynFactory<'g> { SynFactory::new(self.global_arena) }
+        fn ast(&self) -> SynFactory<'g> { SynFactory::new(self.global_arena, self.ast_resolver.clone()) }
 
         fn hir(&self) -> SemFactory { SemFactory::new(self.tree.clone()) }
 
@@ -611,11 +611,10 @@ mod tests {
         }
 
         fn proto_of(&self, item: &ast::Item) -> Prototype {
-            let item = self.ast_resolver.resolve_item(*item);
             println!("proto_of - {:#?}", item);
             println!();
 
-            let result = self.builder().prototype(&item);
+            let result = self.builder().prototype(item);
 
             println!("proto_of - {:#?}", result);
             println!();
@@ -624,11 +623,10 @@ mod tests {
         }
 
         fn item_of(&self, proto: Prototype, item: &ast::Item) -> Item {
-            let item = self.ast_resolver.resolve_item(*item);
             println!("item_of - {:#?}", item);
             println!();
 
-            let result = self.builder().item(proto, &item);
+            let result = self.builder().item(proto, item);
 
             println!("item_of - {:#?}", result);
             println!();

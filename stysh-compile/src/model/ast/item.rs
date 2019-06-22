@@ -252,14 +252,14 @@ impl<'a> convert::From<Record<'a>> for Item<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::ast::builder::Factory;
+    use model::ast::{builder::Factory, interning::Resolver};
 
     #[test]
     fn range_enum_empty() {
         let global_arena = mem::Arena::new();
-        let item = Factory::new(&global_arena).item();
+        let resolver = Resolver::new(b" :enum Empty { }", Default::default());
+        let item = Factory::new(&global_arena, resolver).item();
 
-        //  " :enum Empty { }"
         let e: Enum = item.enum_(7, 5).build();
         assert_eq!(e.span(), range(1, 15));
     }
@@ -267,9 +267,9 @@ mod tests {
     #[test]
     fn range_enum_minimal() {
         let global_arena = mem::Arena::new();
-        let item = Factory::new(&global_arena).item();
+        let resolver = Resolver::new(b":enum Minimal", Default::default());
+        let item = Factory::new(&global_arena, resolver).item();
 
-        //  ":enum Minimal"
         let e: Enum = item.enum_(6, 7).braces(12, 12).build();
         assert_eq!(e.span(), range(0, 13));
     }
@@ -277,9 +277,9 @@ mod tests {
     #[test]
     fn range_enum_simple() {
         let global_arena = mem::Arena::new();
-        let item = Factory::new(&global_arena).item();
+        let resolver = Resolver::new(b":enum Simple { One, Two }", Default::default());
+        let item = Factory::new(&global_arena, resolver).item();
 
-        //  ":enum Simple { One, Two }"
         let e: Enum =
             item.enum_(6, 6)
                 .push_unit(15, 3)
@@ -291,10 +291,10 @@ mod tests {
     #[test]
     fn range_fun() {
         let global_arena = mem::Arena::new();
-        let f = Factory::new(&global_arena);
+        let resolver = Resolver::new(b"   :fun add() -> Int { 1 + 1 }", Default::default());
+        let f = Factory::new(&global_arena, resolver);
         let e = f.expr();
 
-        //  "   :fun add() -> Int { 1 + 1 }"
         let item: Item =
             f.item()
                 .function(

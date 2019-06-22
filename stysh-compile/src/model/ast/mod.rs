@@ -65,14 +65,14 @@ impl<'a> Span for Node<'a> {
 mod tests {
     use basic::{com, mem};
     use super::*;
-    use model::ast::builder::Factory;
+    use model::ast::{builder::Factory, interning::Resolver};
 
     #[test]
     fn range_node_binary_operator() {
         let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let resolver = Resolver::new(b"   1 + 1", Default::default());
+        let e = Factory::new(&global_arena, resolver).expr();
 
-        //  "   1 + 1"
         let node = Node::Expr(e.bin_op(e.int(1, 3), e.int(1, 7)).build());
 
         assert_eq!(node.span(), range(3, 5));
@@ -81,9 +81,9 @@ mod tests {
     #[test]
     fn range_node_prefix_unary_operator() {
         let global_arena = mem::Arena::new();
-        let e = Factory::new(&global_arena).expr();
+        let resolver = Resolver::new(b" !     1", Default::default());
+        let e = Factory::new(&global_arena, resolver).expr();
 
-        //  " !     1"
         let node = Node::Expr(e.pre_op(e.int(1, 7)).offset(1).build());
 
         assert_eq!(node.span(), range(1, 7));

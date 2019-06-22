@@ -1474,13 +1474,15 @@ mod tests {
                 scope: MockScope::new(),
                 context: Context::default(),
                 global_arena: arena,
-                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone(), arena),
+                ast_resolver: ast::interning::Resolver::new(fragment, interner.clone()),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
                 tree: RcTree::default(),
             }
         }
 
-        fn ast(&self) -> AstFactory<'g> { AstFactory::new(self.global_arena) }
+        fn ast(&self) -> AstFactory<'g> {
+            AstFactory::new(self.global_arena, self.ast_resolver.clone())
+        }
 
         fn hir(&self) -> HirFactory { HirFactory::new(self.tree.clone()) }
 
@@ -1570,8 +1572,7 @@ mod tests {
         fn value_of(&self, expr: &ast::Expression) -> hir::Tree {
             let tree = cell::RefCell::new(hir::Tree::new());
 
-            let expr = self.ast_resolver.resolve_expr(*expr);
-            let expr = self.mapper(&tree).value_of(&expr);
+            let expr = self.mapper(&tree).value_of(expr);
             tree.borrow_mut().set_root_expression(expr);
 
             println!("{:#?}", tree);

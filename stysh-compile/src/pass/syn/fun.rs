@@ -142,10 +142,11 @@ mod tests {
     #[test]
     fn basic_argument_less() {
         let env = Env::new();
-        let (e, i, _, _, t) = env.factories();
+        let local = env.local(b":fun add() -> Int { 1 + 2 }");
+        let (e, i, _, _, t) = local.factories();
 
         assert_eq!(
-            funit(&env, b":fun add() -> Int { 1 + 2 }"),
+            funit(&local),
             i.function(
                 5,
                 3,
@@ -156,31 +157,13 @@ mod tests {
     }
 
     #[test]
-    fn basic_argument_less_named() {
-        let env = Env::new();
-        let local = env.local(b":fun add() -> Int { 1 + 2 }");
-        let (e, i, _, _, t) = env.factories();
-
-        let add = local.resolve_variable(5, 3);
-        let int = local.resolve_type(14, 3);
-
-        assert_eq!(
-            funit_resolved(&local),
-            i.function_named(
-                add,
-                t.simple_named(int),
-                e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
-            ).build()
-        );
-    }
-
-    #[test]
     fn basic_add() {
         let env = Env::new();
-        let (e, i, _, _, t) = env.factories();
+        let local = env.local(b":fun add(a: Int, b: Int) -> Int { a + b }");
+        let (e, i, _, _, t) = local.factories();
 
         assert_eq!(
-            funit(&env, b":fun add(a: Int, b: Int) -> Int { a + b }"),
+            funit(&local),
             i.function(
                 5,
                 3,
@@ -193,12 +176,7 @@ mod tests {
         );
     }
 
-    fn funit<'g>(env: &'g Env, raw: &[u8]) -> Function<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_function(funit_resolved(&local))
-    }
-
-    fn funit_resolved<'g>(local: &LocalEnv<'g>) -> Function<'g> {
+    fn funit<'g>(local: &LocalEnv<'g>) -> Function<'g> {
         super::FunParser::new(local.raw()).parse()
     }
 }

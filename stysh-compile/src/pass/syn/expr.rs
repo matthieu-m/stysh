@@ -757,10 +757,11 @@ mod tests {
     #[test]
     fn basic_add() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"1 + 2");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"1 + 2"),
+            exprit(&local),
             e.bin_op(e.int(1, 0), e.int(2, 4)).build()
         );
     }
@@ -768,10 +769,11 @@ mod tests {
     #[test]
     fn basic_var() {
         let env = Env::new();
-        let (e, _, p, s, _) = env.factories();
+        let local = env.local(b" :var fool := 1234;");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b" :var fool := 1234;"),
+            stmtit(&local),
             s.var(p.var(6, 4), e.int(1234, 14)).build()
         );
     }
@@ -779,10 +781,11 @@ mod tests {
     #[test]
     fn basic_var_automatic_insertion() {
         let env = Env::new();
-        let (e, _, p, s, _) = env.factories();
+        let local = env.local(b" :var fool 1234");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b" :var fool 1234"),
+            stmtit(&local),
             s.var(p.var(6, 4), e.int(1234, 11))
                 .bind(0)
                 .semi_colon(14)
@@ -793,10 +796,11 @@ mod tests {
     #[test]
     fn basic_bytes() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"b'1 + 2'");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"b'1 + 2'"),
+            exprit(&local),
             e.literal(0, 8).push_text(2, 5).bytes().build()
         );
     }
@@ -804,21 +808,23 @@ mod tests {
     #[test]
     fn basic_constructor() {
         let env = Env::new();
-        let f = env.factory();
+        let local = env.local(b"True");
+        let (e, _, _, _, t) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"True"),
-            f.expr().constructor(f.type_().simple(0, 4)).build()
+            exprit(&local),
+            e.constructor(t.simple(0, 4)).build()
         );
     }
 
     #[test]
     fn basic_constructor_arguments() {
         let env = Env::new();
-        let (e, _, _, _, t) = env.factories();
+        let local = env.local(b"Some(1)");
+        let (e, _, _, _, t) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"Some(1)"),
+            exprit(&local),
             e.constructor(t.simple(0, 4)).push(e.int(1, 5)).build()
         );
 
@@ -827,12 +833,13 @@ mod tests {
     #[test]
     fn basic_nested_constructor() {
         let env = Env::new();
-        let f = env.factory();
+        let local = env.local(b"Bool::True");
+        let (e, _, _, _, t) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"Bool::True"),
-            f.expr().constructor(
-                f.type_().nested(6, 4).push(0, 4).build()
+            exprit(&local),
+            e.constructor(
+                t.nested(6, 4).push(0, 4).build()
             ).build()
         );
     }
@@ -840,18 +847,26 @@ mod tests {
     #[test]
     fn basic_function_call() {
         let env = Env::new();
-        let (e, _, p, s, _) = env.factories();
+        let local = env.local(b"basic(1, 2)");
+        let (e, _, _, _, _) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"basic(1, 2)"),
+            exprit(&local),
             e.function_call(e.var(0, 5), 5, 10)
                 .push(e.int(1, 6))
                 .push(e.int(2, 9))
                 .build()
         );
+    }
+
+    #[test]
+    fn basic_function_call_statement() {
+        let env = Env::new();
+        let local = env.local(b":var a := basic(1, 2);");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var a := basic(1, 2);"),
+            stmtit(&local),
             s.var(
                 p.var(5, 1),
                 e.function_call(e.var(10, 5), 15, 20)
@@ -866,10 +881,11 @@ mod tests {
     #[test]
     fn basic_if_else() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b":if true { 1 } :else { 0 }");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b":if true { 1 } :else { 0 }"),
+            exprit(&local),
             Expression::If(
                 &e.if_else(
                     e.bool_(true, 4),
@@ -883,10 +899,11 @@ mod tests {
     #[test]
     fn basic_string() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"'1 + 2'");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"'1 + 2'"),
+            exprit(&local),
             e.literal(0, 7).push_text(1, 5).string().build()
         );
     }
@@ -894,10 +911,11 @@ mod tests {
     #[test]
     fn block_basic() {
         let env = Env::new();
-        let (e, _, p, s, _) = env.factories();
+        let local = env.local(b"{\n    :var fool := 1234;\n    fool\n}");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"{\n    :var fool := 1234;\n    fool\n}"),
+            exprit(&local),
             Expression::Block(
                 &e.block(e.var(29, 4))
                     .range(0, 35)
@@ -910,10 +928,11 @@ mod tests {
     #[test]
     fn block_return() {
         let env = Env::new();
-        let (e, _, _, s, _) = env.factories();
+        let local = env.local(b"{ :return 1; }");
+        let (e, _, _, s, _) = local.factories();
 
         assert_eq!(
-            exprit(&env, b"{ :return 1; }"),
+            exprit(&local),
             Expression::Block(
                 &e.block_expression_less()
                     .push_stmt(s.ret().expr(e.int(1, 10)).build())
@@ -925,10 +944,11 @@ mod tests {
     #[test]
     fn boolean_basic() {
         let env = Env::new();
-        let (e, _, p, s, _) = env.factories();
+        let local = env.local(b":var x := true;");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var x := true;"),
+            stmtit(&local),
             s.var(p.var(5, 1), e.bool_(true, 10)).build()
         );
     }
@@ -937,18 +957,13 @@ mod tests {
     fn constructor_keyed() {
         let env = Env::new();
         let local = env.local(b"Person(.name := jack_jack, .age := 1)");
-        let (e, _, _, _, t) = env.factories();
-
-        let person = local.resolve_type(0, 6);
-        let jack_jack = local.resolve_variable(16, 9);
-        let (name, age) =
-            (local.resolve_field(7, 5), local.resolve_field(27, 4));
+        let (e, _, _, _, t) = local.factories();
 
         assert_eq!(
-            exprit_resolved(&local),
-            e.constructor(t.simple_named(person))
-                .full_name(name).separator(13).push(e.var_named(jack_jack))
-                .full_name(age).separator(32).push(e.int(1, 35))
+            exprit(&local),
+            e.constructor(t.simple(0, 6))
+                .name(7, 5).separator(13).push(e.var(16, 9))
+                .name(27, 4).separator(32).push(e.int(1, 35))
                 .build()
         );
     }
@@ -956,10 +971,11 @@ mod tests {
     #[test]
     fn field_access_basic() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"tup.42");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"tup.42"),
+            exprit(&local),
             e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
         );
     }
@@ -968,25 +984,22 @@ mod tests {
     fn field_access_keyed() {
         let env = Env::new();
         let local = env.local(b"tup.x");
-        let e = env.factory().expr();
-
-        let tup = local.resolve_variable(0, 3);
-        let x = local.resolve_field(3, 2);
-        let x = FieldIdentifier::Name(x.0, x.1);
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit_resolved(&local),
-            e.field_access(e.var_named(tup)).named(x).build()
+            exprit(&local),
+            e.field_access(e.var(0, 3)).name(3, 2).build()
         );
     }
 
     #[test]
     fn field_access_recursive() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"tup.42.53");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"tup.42.53"),
+            exprit(&local),
             e.field_access(
                 e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
             )
@@ -999,10 +1012,11 @@ mod tests {
     #[test]
     fn loop_empty() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b":loop { }");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b":loop { }"),
+            exprit(&local),
             e.loop_(0).build()
         );
     }
@@ -1010,24 +1024,24 @@ mod tests {
     #[test]
     fn set_basic() {
         let env = Env::new();
-        let f = env.factory();
-        let e = f.expr();
+        let local = env.local(b" :set fool := 1234;");
+        let (e, _, _, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b" :set fool := 1234;"),
-            f.stmt().set(e.var(6, 4), e.int(1234, 14)).build()
+            stmtit(&local),
+            s.set(e.var(6, 4), e.int(1234, 14)).build()
         );
     }
 
     #[test]
     fn set_field() {
         let env = Env::new();
-        let f = env.factory();
-        let e = f.expr();
+        let local = env.local(b" :set foo.0 := 1234;");
+        let (e, _, _, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b" :set foo.0 := 1234;"),
-            f.stmt().set(
+            stmtit(&local),
+            s.set(
                 e.field_access(e.var(6, 3)).index(0).build(),
                 e.int(1234, 15)
             ).build()
@@ -1037,11 +1051,11 @@ mod tests {
     #[test]
     fn var_constructor() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
+        let local = env.local(b":var Some(x) := Some(1);");
+        let (e, _, p, s, t) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var Some(x) := Some(1);"),
+            stmtit(&local),
             s.var(
                 p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
                 e.constructor(t.simple(16, 4)).push(e.int(1, 21)).build(),
@@ -1052,13 +1066,11 @@ mod tests {
     #[test]
     fn var_constructor_keyed() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s, t) = (f.expr(), f.pat(), f.stmt(), f.type_());
-
-        let code = b":var Person(.name: n, .age: a) := p;";
+        let local = env.local(b":var Person(.name: n, .age: a) := p;");
+        let (e, _, p, s, t) = local.factories();
 
         assert_eq!(
-            stmtit(&env, code),
+            stmtit(&local),
             s.var(
                 p.constructor(t.simple(5, 6))
                     .name(12, 5).push(p.var(19, 1))
@@ -1072,11 +1084,11 @@ mod tests {
     #[test]
     fn var_ignored() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let local = env.local(b":var _ := 1;");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var _ := 1;"),
+            stmtit(&local),
             s.var(p.ignored(5), e.int(1, 10)).build()
         );
     }
@@ -1084,11 +1096,11 @@ mod tests {
     #[test]
     fn var_ignored_nested() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let local = env.local(b":var (_, b) := (1, 2);");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var (_, b) := (1, 2);"),
+            stmtit(&local),
             s.var(
                 p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
                 e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
@@ -1099,11 +1111,11 @@ mod tests {
     #[test]
     fn var_tuple() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let local = env.local(b":var (a, b) := (1, 2);");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var (a, b) := (1, 2);"),
+            stmtit(&local),
             s.var(
                 p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
                 e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
@@ -1114,11 +1126,11 @@ mod tests {
     #[test]
     fn var_tuple_keyed() {
         let env = Env::new();
-        let f = env.factory();
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
+        let local = env.local(b":var (.x: a, .y: b) := foo();");
+        let (e, _, p, s, _) = local.factories();
 
         assert_eq!(
-            stmtit(&env, b":var (.x: a, .y: b) := foo();"),
+            stmtit(&local),
             s.var(
                 p.tuple()
                     .name(6, 2).push(p.var(10, 1))
@@ -1132,10 +1144,11 @@ mod tests {
     #[test]
     fn shunting_yard_prefix() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b":not a :or b :and c");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b":not a :or b :and c"),
+            exprit(&local),
             e.bin_op(
                 e.pre_op(e.var(5, 1)).build(),
                 e.bin_op(e.var(11, 1), e.var(18, 1)).and().build()
@@ -1146,7 +1159,8 @@ mod tests {
     #[test]
     fn shunting_yard_simple() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"1 + 2 * 3 < 4 // 5");
+        let e = local.factory().expr();
 
         let left = e.bin_op(
             e.int(1, 0),
@@ -1157,7 +1171,7 @@ mod tests {
             e.bin_op(e.int(4, 12), e.int(5, 17)).floor_by().build();
 
         assert_eq!(
-            exprit(&env, b"1 + 2 * 3 < 4 // 5"),
+            exprit(&local),
             e.bin_op(left, right).less_than().build()
         )
     }
@@ -1165,10 +1179,11 @@ mod tests {
     #[test]
     fn tuple_basic() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"(1)");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"(1)"),
+            exprit(&local),
             e.tuple().push(e.int(1, 1)).build()
         );
     }
@@ -1176,10 +1191,11 @@ mod tests {
     #[test]
     fn tuple_keyed() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"(.x := 1, .y := 2)");
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit(&env, b"(.x := 1, .y := 2)"),
+            exprit(&local),
             e.tuple()
                 .name(1, 2).separator(4).push(e.int(1, 7))
                 .name(10, 2).separator(13).push(e.int(2, 16))
@@ -1191,15 +1207,13 @@ mod tests {
     fn tuple_keyed_named() {
         let env = Env::new();
         let local = env.local(b"(.x := 1, .y := 2)");
-        let e = env.factory().expr();
-
-        let (x, y) = (local.resolve_field(1, 2), local.resolve_field(10, 2));
+        let e = local.factory().expr();
 
         assert_eq!(
-            exprit_resolved(&local),
+            exprit(&local),
             e.tuple()
-                .full_name(x).separator(4).push(e.int(1, 7))
-                .full_name(y).separator(13).push(e.int(2, 16))
+                .name(1, 2).separator(4).push(e.int(1, 7))
+                .name(10, 2).separator(13).push(e.int(2, 16))
                 .build()
         );
     }
@@ -1207,32 +1221,23 @@ mod tests {
     #[test]
     fn tuple_nested() {
         let env = Env::new();
-        let e = env.factory().expr();
+        let local = env.local(b"(1, (2, 3), 4)");
+        let e = local.factory().expr();
 
         let inner = e.tuple().push(e.int(2, 5)).push(e.int(3, 8)).build();
 
         assert_eq!(
-            exprit(&env, b"(1, (2, 3), 4)"),
+            exprit(&local),
             e.tuple().push(e.int(1, 1)).push(inner).push(e.int(4, 12)).build()
         );
     }
 
-    fn exprit<'g>(env: &'g Env, raw: &[u8]) -> Expression<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_expr(exprit_resolved(&local))
-    }
-
-    fn exprit_resolved<'g>(local: &LocalEnv<'g>) -> Expression<'g> {
+    fn exprit<'g>(local: &LocalEnv<'g>) -> Expression<'g> {
         let mut raw = local.raw();
         super::parse_expression(&mut raw)
     }
 
-    fn stmtit<'g>(env: &'g Env, raw: &[u8]) -> Statement<'g> {
-        let local = env.local(raw);
-        env.scrubber().scrub_stmt(stmtit_resolved(&local))
-    }
-
-    fn stmtit_resolved<'g>(local: &LocalEnv<'g>) -> Statement<'g> {
+    fn stmtit<'g>(local: &LocalEnv<'g>) -> Statement<'g> {
         let mut raw = local.raw();
         super::parse_statement(&mut raw)
     }

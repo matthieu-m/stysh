@@ -7,33 +7,38 @@ use basic::com::Span;
 
 use model::tt;
 use model::ast::*;
+use model::ast::interning::Resolver;
 
 //
 //  High-Level Builders
 //
 
 /// Factory
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Factory<'a> {
     arena: &'a mem::Arena,
+    resolver: Resolver<'a>,
 }
 
 /// ExprFactory
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ExprFactory<'a> {
     arena: &'a mem::Arena,
+    resolver: Resolver<'a>,
 }
 
 /// ItemFactory
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ItemFactory<'a> {
     arena: &'a mem::Arena,
+    resolver: Resolver<'a>,
 }
 
 /// PatternFactory
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PatternFactory<'a> {
     arena: &'a mem::Arena,
+    resolver: Resolver<'a>,
 }
 
 /// StmtFactory
@@ -63,8 +68,9 @@ pub struct BlockBuilder<'a> {
 }
 
 /// FieldAccessBuilder
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct FieldAccessBuilder<'a> {
+    resolver: Resolver<'a>,
     accessed: &'a Expression<'a>,
     field: FieldIdentifier,
 }
@@ -89,6 +95,7 @@ pub struct IfElseBuilder<'a> {
 /// LiteralBuilder
 #[derive(Clone)]
 pub struct LiteralBuilder<'a> {
+    resolver: Resolver<'a>,
     literal: Literal<'a>,
     fragments: mem::Array<'a, tt::StringFragment>,
 }
@@ -116,6 +123,7 @@ pub struct PreOpBuilder<'a> {
 /// EnumBuilder
 #[derive(Clone)]
 pub struct EnumBuilder<'a> {
+    resolver: Resolver<'a>,
     name: TypeIdentifier,
     keyword: u32,
     open: u32,
@@ -127,6 +135,7 @@ pub struct EnumBuilder<'a> {
 /// FunctionBuilder
 #[derive(Clone)]
 pub struct FunctionBuilder<'a> {
+    resolver: Resolver<'a>,
     name: VariableIdentifier,
     result: Type<'a>,
     body: Block<'a>,
@@ -197,6 +206,7 @@ pub struct ConstructorBuilder<'a, T:'a> {
 /// TupleBuilder
 #[derive(Clone)]
 pub struct TupleBuilder<'a, T: 'a> {
+    resolver: Resolver<'a>,
     fields: mem::Array<'a, T>,
     commas: mem::Array<'a, u32>,
     names: mem::Array<'a, (mem::InternId, com::Range)>,
@@ -206,14 +216,16 @@ pub struct TupleBuilder<'a, T: 'a> {
 }
 
 /// TypeFactory
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct TypeFactory<'a> {
     arena: &'a mem::Arena,
+    resolver: Resolver<'a>,
 }
 
 /// NestedTypeBuilder
 #[derive(Clone)]
 pub struct NestedTypeBuilder<'a> {
+    resolver: Resolver<'a>,
     name: TypeIdentifier,
     components: mem::Array<'a, TypeIdentifier>,
     colons: mem::Array<'a, u32>,
@@ -224,25 +236,31 @@ pub struct NestedTypeBuilder<'a> {
 //
 impl<'a> Factory<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Factory<'a> {
-        Factory { arena: arena }
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Factory<'a> {
+        Factory { arena, resolver }
     }
 
     /// Creates a ExprFactory.
-    pub fn expr(&self) -> ExprFactory<'a> { ExprFactory::new(self.arena) }
+    pub fn expr(&self) -> ExprFactory<'a> {
+        ExprFactory::new(self.arena, self.resolver.clone())
+    }
 
     /// Creates an ItemFactory.
-    pub fn item(&self) -> ItemFactory<'a> { ItemFactory::new(self.arena) }
+    pub fn item(&self) -> ItemFactory<'a> {
+        ItemFactory::new(self.arena, self.resolver.clone())
+    }
 
     /// Creates a PatternFactory.
-    pub fn pat(&self) -> PatternFactory<'a> { PatternFactory::new(self.arena) }
+    pub fn pat(&self) -> PatternFactory<'a> {
+        PatternFactory::new(self.arena, self.resolver.clone())
+    }
 
     /// Creates a StmtFactory.
     pub fn stmt(&self) -> StmtFactory<'a> { StmtFactory::new(self.arena) }
 
     /// Creates a TupleBuilder.
     pub fn tuple<T: 'a>(&self) -> TupleBuilder<'a, T> {
-        TupleBuilder::new(self.arena)
+        TupleBuilder::new(self.arena, self.resolver.clone())
     }
 
     /// Creates an Expression TupleBuilder.
@@ -254,7 +272,9 @@ impl<'a> Factory<'a> {
     pub fn type_tuple(&self) -> TupleBuilder<'a, Type<'a>> { self.tuple() }
 
     /// Creates a TypeFactory.
-    pub fn type_(&self) -> TypeFactory<'a> { TypeFactory::new(self.arena) }
+    pub fn type_(&self) -> TypeFactory<'a> {
+        TypeFactory::new(self.arena, self.resolver.clone())
+    }
 }
 
 //
@@ -262,8 +282,8 @@ impl<'a> Factory<'a> {
 //
 impl<'a> ExprFactory<'a> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena) -> ExprFactory<'a> {
-        ExprFactory { arena }
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> ExprFactory<'a> {
+        ExprFactory { arena, resolver }
     }
 
     /// Creates a BinOpBuilder, defaults to Plus.
@@ -287,21 +307,21 @@ impl<'a> ExprFactory<'a> {
     pub fn constructor(&self, name: Type<'a>)
         -> ConstructorBuilder<'a, Expression<'a>>
     {
-        ConstructorBuilder::new(self.arena, name)
+        ConstructorBuilder::new(self.arena, self.resolver.clone(), name)
     }
 
     /// Creates a FieldAccess Expression.
     pub fn field_access(&self, accessed: Expression<'a>)
         -> FieldAccessBuilder<'a>
     {
-        FieldAccessBuilder::new(self.arena, accessed)
+        FieldAccessBuilder::new(self.arena, self.resolver.clone(), accessed)
     }
 
     /// Creates a FunctionCallBuilder.
     pub fn function_call(&self, callee: Expression<'a>, open: u32, close: u32)
         -> FunctionCallBuilder<'a>
     {
-        FunctionCallBuilder::new(self.arena, callee, open, close)
+        FunctionCallBuilder::new(self.arena, self.resolver.clone(), callee, open, close)
     }
 
     /// Creates a IfElseBuilder.
@@ -318,7 +338,7 @@ impl<'a> ExprFactory<'a> {
 
     /// Creates a LiteralBuilder.
     pub fn literal(&self, pos: usize, len: usize) -> LiteralBuilder<'a> {
-        LiteralBuilder::new(self.arena, (pos, len))
+        LiteralBuilder::new(self.arena, self.resolver.clone(), (pos, len))
     }
 
     /// Shortcut: creates a Bool Lit Expression.
@@ -353,16 +373,12 @@ impl<'a> ExprFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Expression<'a>> {
-        TupleBuilder::new(self.arena)
+        TupleBuilder::new(self.arena, self.resolver.clone())
     }
 
     /// Creates a Var Expression.
     pub fn var(&self, pos: usize, len: usize) -> Expression<'a> {
-        self.var_named(var_id(pos, len))
-    }
-
-    /// Creates a Var Expression, named.
-    pub fn var_named(&self, name: VariableIdentifier) -> Expression<'a> {
+        let name = var_id(&self.resolver, pos, len);
         Expression::Var(name)
     }
 }
@@ -513,10 +529,15 @@ impl<'a> BlockBuilder<'a> {
 
 impl<'a> FieldAccessBuilder<'a> {
     /// Creates a new instance, default to Named.
-    pub fn new(arena: &'a mem::Arena, accessed: Expression<'a>) -> Self {
+    pub fn new(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        accessed: Expression<'a>
+    ) -> Self {
         FieldAccessBuilder {
+            resolver,
             accessed: arena.insert(accessed),
-            field: field_id(0, 0),
+            field: FieldIdentifier::Index(0, Default::default()),
         }
     }
 
@@ -529,12 +550,7 @@ impl<'a> FieldAccessBuilder<'a> {
 
     /// Sets the name of the field.
     pub fn name(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.named(field_id(pos, len))
-    }
-
-    /// Sets the name of the field, with its ID.
-    pub fn named(&mut self, name: FieldIdentifier) -> &mut Self {
-        self.field = name;
+        self.field = field_id(&self.resolver, pos, len);
         self
     }
 
@@ -564,13 +580,14 @@ impl<'a> FunctionCallBuilder<'a> {
     /// Creates an instance.
     pub fn new(
         arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
         callee: Expression<'a>,
         open: u32,
         close: u32,
     )
         -> Self
     {
-        let mut arguments = TupleBuilder::new(arena);
+        let mut arguments = TupleBuilder::new(arena, resolver);
         arguments.parens(open, close);
 
         FunctionCallBuilder {
@@ -656,8 +673,15 @@ impl<'a> IfElseBuilder<'a> {
 
 impl<'a> LiteralBuilder<'a> {
     /// Creates an instance, defaults to an Integral.
-    pub fn new(arena: &'a mem::Arena, r: (usize, usize)) -> Self {
+    pub fn new(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        r: (usize, usize),
+    )
+        -> Self
+    {
         LiteralBuilder {
+            resolver,
             literal: Literal::Integral(0, range(r)),
             fragments: mem::Array::new(arena),
         }
@@ -673,7 +697,8 @@ impl<'a> LiteralBuilder<'a> {
     /// Sets up bytes.
     pub fn bytes(&mut self) -> &mut Self {
         let range = self.literal.span();
-        self.literal = Literal::Bytes(&[], Default::default(), range);
+        let id = self.resolver.resolve_range(range.skip_left(2).skip_right(1));
+        self.literal = Literal::Bytes(&[], id, range);
         self
     }
 
@@ -687,7 +712,8 @@ impl<'a> LiteralBuilder<'a> {
     /// Sets up a string.
     pub fn string(&mut self) -> &mut Self {
         let range = self.literal.span();
-        self.literal = Literal::String(&[], Default::default(), range);
+        let id = self.resolver.resolve_range(range.skip_left(1).skip_right(1));
+        self.literal = Literal::String(&[], id, range);
         self
     }
 
@@ -823,18 +849,18 @@ impl<'a> PreOpBuilder<'a> {
 //
 impl<'a> ItemFactory<'a> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena) -> ItemFactory<'a> {
-        ItemFactory { arena }
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> ItemFactory<'a> {
+        ItemFactory { arena, resolver }
     }
 
     /// Creates a EnumBuilder.
     pub fn enum_(&self, pos: usize, len: usize) -> EnumBuilder<'a> {
-        EnumBuilder::new(self.arena, pos, len)
+        EnumBuilder::new(self.arena, self.resolver.clone(), pos, len)
     }
 
     /// Creates a EnumBuilder, named.
     pub fn enum_named(&self, name: TypeIdentifier) -> EnumBuilder<'a> {
-        EnumBuilder::named(self.arena, name)
+        EnumBuilder::named(self.arena, self.resolver.clone(), name)
     }
 
     /// Creates a FunctionBuilder.
@@ -847,7 +873,7 @@ impl<'a> ItemFactory<'a> {
     )
         ->  FunctionBuilder<'a>
     {
-        FunctionBuilder::new(self.arena, (pos, len), result, body)
+        FunctionBuilder::new(self.arena, self.resolver.clone(), (pos, len), result, body)
     }
 
     /// Creates a FunctionBuilder, named.
@@ -859,12 +885,12 @@ impl<'a> ItemFactory<'a> {
     )
         ->  FunctionBuilder<'a>
     {
-        FunctionBuilder::named(self.arena, name, result, body)
+        FunctionBuilder::named(self.arena, self.resolver.clone(), name, result, body)
     }
 
     /// Creates a wrapped RecordBuilder.
     pub fn record(&self, pos: usize, len: usize) -> RecordBuilder<'a> {
-        RecordBuilder::new(pos, len)
+        RecordBuilder::new(self.resolver.clone(), pos, len)
     }
 
     /// Creates a wrapped RecordBuilder, named.
@@ -875,17 +901,29 @@ impl<'a> ItemFactory<'a> {
 
 impl<'a> EnumBuilder<'a> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, pos: usize, len: usize)
+    pub fn new(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        pos: usize,
+        len: usize,
+    )
         -> Self
     {
-        Self::named(arena, type_id(pos, len))
+        let name = type_id(&resolver, pos, len);
+        Self::named(arena, resolver, name)
     }
 
     /// Creates a new instance.
-    pub fn named(arena: &'a mem::Arena, name: TypeIdentifier) -> Self
+    pub fn named(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        name: TypeIdentifier,
+    )
+        -> Self
     {
         EnumBuilder {
-            name: name,
+            resolver,
+            name,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -923,7 +961,8 @@ impl<'a> EnumBuilder<'a> {
     )
         -> &mut Self
     {
-        self.push_named_tuple(type_id(pos, len), fields)
+        let name = type_id(&self.resolver, pos, len);
+        self.push_named_tuple(name, fields)
     }
 
     /// Appends a Tuple InnerRecord with its ID.
@@ -948,7 +987,8 @@ impl<'a> EnumBuilder<'a> {
 
     /// Appends a Unit InnerRecord.
     pub fn push_unit(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.push_named_unit(type_id(pos, len))
+        let name = type_id(&self.resolver, pos, len);
+        self.push_named_unit(name)
     }
 
     /// Appends a Unit InnerRecord with its ID.
@@ -1015,18 +1055,21 @@ impl<'a> FunctionBuilder<'a> {
     /// Creates a new instance.
     pub fn new(
         arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
         name: (usize, usize),
         result: Type<'a>,
         body: Block<'a>,
     )
         -> Self
     {
-        Self::named(arena, var_id(name.0, name.1), result, body)
+        let name = var_id(&resolver, name.0, name.1);
+        Self::named(arena, resolver, name, result, body)
     }
 
     /// Creates a new instance, named.
     pub fn named(
         arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
         name: VariableIdentifier,
         result: Type<'a>,
         body: Block<'a>,
@@ -1034,9 +1077,10 @@ impl<'a> FunctionBuilder<'a> {
         -> Self
     {
         FunctionBuilder {
-            name: name,
-            result: result,
-            body: body,
+            resolver,
+            name,
+            result,
+            body,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1049,16 +1093,10 @@ impl<'a> FunctionBuilder<'a> {
     pub fn push(&mut self, pos: usize, len: usize, type_: Type<'a>)
         -> &mut Self
     {
-        self.push_named(var_id(pos, len), type_)
-    }
-
-    /// Appends an argument, named.
-    pub fn push_named(&mut self, name: VariableIdentifier, type_: Type<'a>)
-        -> &mut Self
-    {
+        let name = var_id(&self.resolver, pos, len);
         self.arguments.push(Argument {
-            name: name,
-            type_: type_,
+            name,
+            type_,
             colon: U32_NONE,
             comma: U32_NONE,
         });
@@ -1153,15 +1191,16 @@ impl<'a> FunctionBuilder<'a> {
 
 impl<'a> RecordBuilder<'a> {
     /// Creates a new instance, defaults to Unit.
-    pub fn new(pos: usize, len: usize) -> Self {
-        Self::named(type_id(pos, len))
+    pub fn new(resolver: Resolver<'a>, pos: usize, len: usize) -> Self {
+        let name = type_id(&resolver, pos, len);
+        Self::named(name)
     }
 
     /// Overrides the name, defaults to Unit.
     pub fn named(t: TypeIdentifier) -> Self {
         let inner = InnerRecord::Unit(t);
         RecordBuilder {
-            inner: inner,
+            inner,
             keyword: U32_NONE,
             semi_colon: U32_NONE,
         }
@@ -1244,15 +1283,17 @@ impl<'a> RecordBuilder<'a> {
 //
 impl<'a> PatternFactory<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> PatternFactory<'a> {
-        PatternFactory { arena }
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>)
+        -> PatternFactory<'a>
+    {
+        PatternFactory { arena, resolver }
     }
 
     /// Creates a ConstructorBuilder.
     pub fn constructor(&self, name: Type<'a>)
         -> ConstructorBuilder<'a, Pattern<'a>>
     {
-        ConstructorBuilder::new(self.arena, name)
+        ConstructorBuilder::new(self.arena, self.resolver.clone(), name)
     }
 
     /// Creates an Ignored Pattern.
@@ -1262,12 +1303,12 @@ impl<'a> PatternFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
-        TupleBuilder::new(self.arena)
+        TupleBuilder::new(self.arena, self.resolver.clone())
     }
 
     /// Creates a Var Pattern.
     pub fn var(&self, pos: usize, len: usize) -> Pattern<'static> {
-        Pattern::Var(var_id(pos, len))
+        Pattern::Var(var_id(&self.resolver, pos, len))
     }
 }
 
@@ -1489,10 +1530,10 @@ impl<'a> VariableBindingBuilder<'a> {
 //
 impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, name: Type<'a>) -> Self {
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>, name: Type<'a>) -> Self {
         ConstructorBuilder {
             type_: name,
-            arguments: TupleBuilder::new(arena)
+            arguments: TupleBuilder::new(arena, resolver)
         }
     }
 
@@ -1520,14 +1561,6 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
         self
     }
 
-    /// Appends a name.
-    pub fn full_name(&mut self, name: (mem::InternId, com::Range))
-        -> &mut Self
-    {
-        self.arguments.full_name(name);
-        self
-    }
-
     /// Overrides the position of the last inserted separator.
     pub fn separator(&mut self, pos: u32) -> &mut Self {
         self.arguments.separator(pos);
@@ -1547,8 +1580,9 @@ impl<'a, T: 'a + Clone + Span> ConstructorBuilder<'a, T> {
 
 impl<'a, T: 'a> TupleBuilder<'a, T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Self {
         TupleBuilder {
+            resolver,
             fields: mem::Array::new(arena),
             commas: mem::Array::new(arena),
             names: mem::Array::new(arena),
@@ -1580,17 +1614,11 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
         self
     }
 
-    /// Appends a name, with no InternId.
+    /// Appends a name.
     pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
-        self.full_name((Default::default(), range((pos, length))));
-        self
-    }
-
-    /// Appends a full name.
-    pub fn full_name(&mut self, name: (mem::InternId, com::Range))
-        -> &mut Self
-    {
-        self.names.push(name);
+        let range = range((pos, length));
+        let id = self.resolver.resolve_range(range);
+        self.names.push((id, range));
         self.separators.push(U32_NONE);
         self
     }
@@ -1664,8 +1692,8 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
 
 impl<'a> TypeFactory<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena) -> Self {
-        TypeFactory { arena: arena }
+    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Self {
+        TypeFactory { arena, resolver }
     }
 
     /// Creates a Missing Type.
@@ -1675,12 +1703,13 @@ impl<'a> TypeFactory<'a> {
 
     /// Creates a NestedTypeBuilder.
     pub fn nested(&self, pos: usize, len: usize) -> NestedTypeBuilder<'a> {
-        NestedTypeBuilder::new(self.arena, pos, len)
+        NestedTypeBuilder::new(self.arena, self.resolver.clone(), pos, len)
     }
 
     /// Creates a Simple Type.
     pub fn simple(&self, pos: usize, len: usize) -> Type<'a> {
-        self.simple_named(type_id(pos, len))
+        let name = type_id(&self.resolver, pos, len);
+        self.simple_named(name)
     }
 
     /// Creates a Simple Type with its ID.
@@ -1690,20 +1719,35 @@ impl<'a> TypeFactory<'a> {
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TupleBuilder<'a, Type<'a>> {
-        TupleBuilder::new(self.arena)
+        TupleBuilder::new(self.arena, self.resolver.clone())
     }
 }
 
 impl<'a> NestedTypeBuilder<'a> {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, pos: usize, len: usize) -> Self {
-        Self::named(arena, type_id(pos, len))
+    pub fn new(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        pos: usize,
+        len: usize,
+    )
+        -> Self
+    {
+        let name = type_id(&resolver, pos, len);
+        Self::named(arena, resolver, name)
     }
 
     /// Creates an instance, named.
-    pub fn named(arena: &'a mem::Arena, name: TypeIdentifier) -> Self {
+    pub fn named(
+        arena: &'a mem::Arena,
+        resolver: Resolver<'a>,
+        name: TypeIdentifier,
+    )
+        -> Self
+    {
         NestedTypeBuilder {
-            name: name,
+            resolver,
+            name,
             components: mem::Array::new(arena),
             colons: mem::Array::new(arena),
         }
@@ -1711,7 +1755,8 @@ impl<'a> NestedTypeBuilder<'a> {
 
     /// Appends a path component.
     pub fn push(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.push_named(type_id(pos, len))
+        let name = type_id(&self.resolver, pos, len);
+        self.push_named(name)
     }
 
     /// Appends a path component.
@@ -1754,14 +1799,20 @@ fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
 
 fn range(tup: (usize, usize)) -> com::Range { com::Range::new(tup.0, tup.1) }
 
-fn field_id(pos: usize, len: usize) -> FieldIdentifier {
-    FieldIdentifier::Name(Default::default(), range((pos, len)))
+fn field_id(resolver: &Resolver, pos: usize, len: usize) -> FieldIdentifier {
+    resolver.resolve_field_identifier(
+        FieldIdentifier::Name(Default::default(), range((pos, len)))
+    )
 }
 
-fn type_id(pos: usize, len: usize) -> TypeIdentifier {
-    TypeIdentifier(Default::default(), range((pos, len)))
+fn type_id(resolver: &Resolver, pos: usize, len: usize) -> TypeIdentifier {
+    resolver.resolve_type_identifier(
+        TypeIdentifier(Default::default(), range((pos, len)))
+    )
 }
 
-fn var_id(pos: usize, len: usize) -> VariableIdentifier {
-    VariableIdentifier(Default::default(), range((pos, len)))
+fn var_id(resolver: &Resolver, pos: usize, len: usize) -> VariableIdentifier {
+    resolver.resolve_variable_identifier(
+        VariableIdentifier(Default::default(), range((pos, len)))
+    )
 }

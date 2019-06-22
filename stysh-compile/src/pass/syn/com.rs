@@ -284,24 +284,24 @@ impl<'a> std::fmt::Debug for ParserState<'a>  {
 
 #[cfg(test)]
 pub mod tests {
-    use basic::{com, mem};
-    use model::ast;
+    use std::rc;
+    use basic::mem;
     use model::ast::builder::{
         Factory, ExprFactory, ItemFactory, PatternFactory, StmtFactory,
         TypeFactory,
     };
-    use model::ast::interning::Scrubber;
+    use model::ast::interning::Resolver;
     use super::RawParser;
 
     pub struct Env {
-        interner: mem::Interner,
+        interner: rc::Rc<mem::Interner>,
         global_arena: mem::Arena,
     }
 
     pub struct LocalEnv<'g> {
-        raw: &'g [u8],
-        interner: &'g mem::Interner,
         global_arena: &'g mem::Arena,
+        interner: &'g rc::Rc<mem::Interner>,
+        resolver: Resolver<'g>,
         local_arena: mem::Arena,
     }
 
@@ -315,18 +315,20 @@ pub mod tests {
 
         pub fn local<'g>(&'g self, raw: &'g [u8]) -> LocalEnv<'g> {
             LocalEnv {
-                raw: raw,
-                interner: &self.interner,
                 global_arena: &self.global_arena,
+                interner: &self.interner,
+                resolver: Resolver::new(raw, self.interner.clone()),
                 local_arena: mem::Arena::new(),
             }
         }
+    }
 
-        pub fn factory<'g>(&'g self) -> Factory<'g> {
-            Factory::new(&self.global_arena)
+    impl<'g> LocalEnv<'g> {
+        pub fn factory(&self) -> Factory<'g> {
+            Factory::new(self.global_arena, self.resolver.clone())
         }
 
-        pub fn factories<'g>(&'g self) -> (
+        pub fn factories(&self) -> (
             ExprFactory<'g>,
             ItemFactory<'g>,
             PatternFactory<'g>,
@@ -338,51 +340,17 @@ pub mod tests {
             (f.expr(), f.item(), f.pat(), f.stmt(), f.type_())
         }
 
-        pub fn scrubber<'g>(&'g self) -> Scrubber<'g> {
-            Scrubber::new(&self.global_arena)
-        }
-    }
-
-    impl<'g> LocalEnv<'g> {
         pub fn raw<'local>(&'local self)
             -> RawParser<'local, 'g, 'local>
             where
                 'g: 'local
         {
             RawParser::from_raw(
-                self.raw,
+                self.resolver.source(),
                 self.interner,
                 self.global_arena,
                 &self.local_arena
             )
-        }
-
-        pub fn resolve(&self, pos: usize, len: usize)
-            -> (mem::InternId, com::Range)
-        {
-            let range = com::Range::new(pos, len);
-            (self.interner.insert(&self.raw[range]), range)
-        }
-
-        pub fn resolve_field(&self, pos: usize, len: usize)
-            -> (mem::InternId, com::Range)
-        {
-            let id = self.resolve(pos + 1, len - 1).0;
-            (id, com::Range::new(pos, len))
-        }
-
-        pub fn resolve_type(&self, pos: usize, len: usize)
-            -> ast::TypeIdentifier
-        {
-            let (id, range) = self.resolve(pos, len);
-            ast::TypeIdentifier(id, range)
-        }
-
-        pub fn resolve_variable(&self, pos: usize, len: usize)
-            -> ast::VariableIdentifier
-        {
-            let (id, range) = self.resolve(pos, len);
-            ast::VariableIdentifier(id, range)
         }
     }
 

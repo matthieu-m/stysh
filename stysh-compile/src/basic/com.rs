@@ -2,7 +2,9 @@
 //!
 //! A standard vocabulary used throughout the code.
 
-use std::{self, convert, fmt, num, ops, sync};
+use std::{self, cmp, convert, fmt, hash, marker, num, ops, sync};
+
+use basic::sea::TableIndex;
 
 /// A fragment of source code.
 #[derive(Clone)]
@@ -70,6 +72,77 @@ impl fmt::Display for CoreId {
 
 impl convert::From<CoreId> for u32 {
     fn from(core_id: CoreId) -> u32 { core_id.raw() }
+}
+
+/// An Id implementation based on CoreId.
+///
+/// It contains a default empty state, to represent empty streams.
+//  #[manual(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Id<T: ?Sized>(CoreId, marker::PhantomData<*const T>);
+
+impl<T: ?Sized> Id<T> {
+    /// Creates a new instance.
+    pub fn new(id: u32) -> Self { Id(CoreId::new(id), marker::PhantomData) }
+
+    /// Creates an empty instance.
+    pub fn empty() -> Self { Self::new(std::u32::MAX - 2) }
+
+    /// Returns whether the corresponding list is empty.
+    pub fn is_empty(&self) -> bool { *self == Self::empty() }
+}
+
+impl<T: ?Sized> Clone for Id<T> {
+    fn clone(&self) -> Self { *self }
+}
+
+impl<T: ?Sized> Copy for Id<T> {}
+
+impl<T: ?Sized> fmt::Debug for Id<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        //  More compact representation for `{:#?}`.
+        //
+        //  FIXME(matthieum): consider adding `std::intrinsics::type_name<T>()`
+        //  once it stabilizes.
+        if *self == Default::default() {
+            write!(f, "Id(default)")
+        } else if *self == Self::empty() {
+            write!(f, "Id(empty)")
+        } else {
+            write!(f, "Id({})", self.index())
+        }
+    }
+}
+
+impl<T: ?Sized> Default for Id<T> {
+    fn default() -> Self { Id(Default::default(), marker::PhantomData) }
+}
+
+impl<T: ?Sized> cmp::Eq for Id<T> {}
+
+impl<T: ?Sized> hash::Hash for Id<T> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl<T: ?Sized> cmp::Ord for Id<T> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.cmp(&other.0) }
+}
+
+impl<T: ?Sized> cmp::PartialEq for Id<T> {
+    fn eq(&self, other: &Self) -> bool { self.0.eq(&other.0) }
+}
+
+impl<T: ?Sized> cmp::PartialOrd for Id<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl<T: ?Sized> TableIndex for Id<T> {
+    fn from_index(index: usize) -> Self { Id::new(index as u32) }
+
+    fn index(&self) -> usize { self.0.raw() as usize }
 }
 
 /// A Range represents a start and end position in a buffer.

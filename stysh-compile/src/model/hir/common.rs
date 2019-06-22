@@ -1,6 +1,6 @@
 //! Common types.
 
-use std::{cmp, convert, fmt, hash, marker};
+use std::{convert, fmt};
 
 use basic::{com, mem};
 use basic::mem::DynArray;
@@ -11,14 +11,11 @@ use model::ast;
 //
 //  Public Types (IDs)
 //
+pub use self::com::Id;
 
 /// Index of an Expr in the Tree.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ExpressionId(com::CoreId);
-
-/// Index of a T in the ValueTree.
-//  #[manual(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Id<T: ?Sized>(com::CoreId, marker::PhantomData<*const T>);
 
 /// Index of a Path in the Tree.
 pub type PathId = Id<[ItemIdentifier]>;
@@ -152,17 +149,6 @@ impl TypeId {
     }
 }
 
-impl<T: ?Sized> Id<T> {
-    /// Creates a new instance.
-    pub fn new(id: u32) -> Self { Id(com::CoreId::new(id), marker::PhantomData) }
-
-    /// Creates an empty instance.
-    pub fn empty() -> Self { Id(empty_non_zero(), marker::PhantomData) }
-
-    /// Returns whether the corresponding list is empty.
-    pub fn is_empty(&self) -> bool { *self == Self::empty() }
-}
-
 impl Gvn {
     /// Converts Gvn into an ExpressionId, if possible.
     pub fn as_expression(self) -> Option<ExpressionId> {
@@ -271,33 +257,21 @@ impl Gvn {
 }
 
 impl TypeId {
-    const BOOL_ID: u32 = std::u32::MAX - 2;
-    const INT_ID: u32 = std::u32::MAX - 3;
-    const STRING_ID: u32 = std::u32::MAX - 4;
-    const VOID_ID: u32 = std::u32::MAX - 5;
-}
-
-fn empty_non_zero() -> com::CoreId {
-    com::CoreId::new(std::u32::MAX - 2)
+    const BOOL_ID: u32 = std::u32::MAX - 3;
+    const INT_ID: u32 = std::u32::MAX - 4;
+    const STRING_ID: u32 = std::u32::MAX - 5;
+    const VOID_ID: u32 = std::u32::MAX - 6;
 }
 
 //
 //  Traits Implementations
 //
 
-impl<T: ?Sized> Clone for Id<T> {
-    fn clone(&self) -> Self { Id(self.0, self.1) }
-}
-
-impl<T: ?Sized> Copy for Id<T> {}
-
 impl fmt::Debug for ExpressionId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         //  More compact representation for `{:#?}`.
-        if self.0 == Default::default() {
+        if *self == Default::default() {
             write!(f, "ExpressionId(default)")
-        } else if self.0 == empty_non_zero() {
-            write!(f, "ExpressionId(empty)")
         } else {
             write!(f, "ExpressionId({})", self.index())
         }
@@ -307,10 +281,8 @@ impl fmt::Debug for ExpressionId {
 impl fmt::Debug for PatternId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         //  More compact representation for `{:#?}`.
-        if self.0 == Default::default() {
+        if *self == Default::default() {
             write!(f, "PatternId(default)")
-        } else if self.0 == empty_non_zero() {
-            write!(f, "PatternId(empty)")
         } else {
             write!(f, "PatternId({})", self.index())
         }
@@ -320,28 +292,12 @@ impl fmt::Debug for PatternId {
 impl fmt::Debug for TypeId {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         //  More compact representation for `{:#?}`.
-        if self.0 == Default::default() {
+        if *self == Default::default() {
             write!(f, "TypeId(default)")
         } else if let Some(t) = self.builtin() {
             write!(f, "TypeId({:?})", t)
         } else {
             write!(f, "TypeId({})", self.index())
-        }
-    }
-}
-
-impl<T: ?Sized> fmt::Debug for Id<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        //  More compact representation for `{:#?}`.
-        //
-        //  FIXME(matthieum): consider adding `std::intrinsics::type_name<T>()`
-        //  once it stabilizes.
-        if self.0 == Default::default() {
-            write!(f, "Id(default)")
-        } else if self.0 == empty_non_zero() {
-            write!(f, "Id(empty)")
-        } else {
-            write!(f, "Id({})", self.index())
         }
     }
 }
@@ -366,10 +322,6 @@ impl fmt::Debug for ValueIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         write!(f, "ValueIdentifier({:?}, {})", self.0, self.1)
     }
-}
-
-impl<T: ?Sized> Default for Id<T> {
-    fn default() -> Self { Id(Default::default(), marker::PhantomData) }
 }
 
 impl Default for Field {
@@ -425,8 +377,6 @@ impl<T> fmt::Display for DynTuple<T>
     }
 }
 
-impl<T: ?Sized> cmp::Eq for Id<T> {}
-
 impl convert::From<BuiltinType> for TypeId {
     fn from(b: BuiltinType) -> Self {
         match b {
@@ -459,26 +409,6 @@ impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
 impl convert::From<ast::VariableIdentifier> for ValueIdentifier {
     fn from(value: ast::VariableIdentifier) -> Self {
         ValueIdentifier(value.id(), com::Span::span(&value))
-    }
-}
-
-impl<T: ?Sized> hash::Hash for Id<T> {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
-    }
-}
-
-impl<T: ?Sized> cmp::Ord for Id<T> {
-    fn cmp(&self, other: &Self) -> cmp::Ordering { self.0.cmp(&other.0) }
-}
-
-impl<T: ?Sized> cmp::PartialEq for Id<T> {
-    fn eq(&self, other: &Self) -> bool { self.0.eq(&other.0) }
-}
-
-impl<T: ?Sized> cmp::PartialOrd for Id<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
     }
 }
 
@@ -518,12 +448,6 @@ impl TableIndex for PatternId {
 
 impl TableIndex for TypeId {
     fn from_index(index: usize) -> Self { TypeId::new(index as u32) }
-
-    fn index(&self) -> usize { self.0.raw() as usize }
-}
-
-impl<T: ?Sized> TableIndex for Id<T> {
-    fn from_index(index: usize) -> Self { Id::new(index as u32) }
 
     fn index(&self) -> usize { self.0.raw() as usize }
 }

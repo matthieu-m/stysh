@@ -1770,13 +1770,13 @@ mod tests {
         );
     }
 
-    struct Env<'g> {
+    struct Env {
         tree: RcTree,
-        resolver: interning::Resolver<'g>
+        resolver: interning::Resolver
     }
 
-    impl<'g> Env<'g> {
-        fn new(fragment: &'g [u8]) -> Env<'g> {
+    impl Env {
+        fn new(fragment: &[u8]) -> Env {
             let interner = rc::Rc::new(mem::Interner::new());
             let resolver = interning::Resolver::new(fragment, interner);
             Env {

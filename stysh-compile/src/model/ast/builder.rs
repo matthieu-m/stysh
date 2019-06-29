@@ -1,13 +1,19 @@
 //! Builder for the syntactic model (aka AST).
 
-use std::{self, convert, marker};
+use std::{self, cell, rc};
 
-use basic::{com, mem};
-use basic::com::Span;
+use basic::com::{self, Span};
 
 use model::tt;
 use model::ast::*;
+use model::ast::store::{Store, MultiStore};
 use model::ast::interning::Resolver;
+
+//
+//  Module and Tree.
+//
+pub type RcModule = rc::Rc<cell::RefCell<Module>>;
+pub type RcTree = rc::Rc<cell::RefCell<Tree>>;
 
 //
 //  High-Level Builders
@@ -15,35 +21,39 @@ use model::ast::interning::Resolver;
 
 /// Factory
 #[derive(Clone)]
-pub struct Factory<'a> {
-    arena: &'a mem::Arena,
-    resolver: Resolver<'a>,
+pub struct Factory {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
 }
 
 /// ExprFactory
 #[derive(Clone)]
-pub struct ExprFactory<'a> {
-    arena: &'a mem::Arena,
-    resolver: Resolver<'a>,
+pub struct ExprFactory {
+    tree: RcTree,
+    resolver: Resolver,
 }
 
 /// ItemFactory
 #[derive(Clone)]
-pub struct ItemFactory<'a> {
-    arena: &'a mem::Arena,
-    resolver: Resolver<'a>,
+pub struct ItemFactory {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
 }
 
 /// PatternFactory
 #[derive(Clone)]
-pub struct PatternFactory<'a> {
-    arena: &'a mem::Arena,
-    resolver: Resolver<'a>,
+pub struct PatternFactory {
+    tree: RcTree,
+    resolver: Resolver,
 }
 
 /// StmtFactory
-#[derive(Clone, Copy)]
-pub struct StmtFactory<'a>(marker::PhantomData<&'a ()>);
+#[derive(Clone)]
+pub struct StmtFactory {
+    tree: RcTree,
+}
 
 //
 //  Expression Builders
@@ -51,69 +61,78 @@ pub struct StmtFactory<'a>(marker::PhantomData<&'a ()>);
 
 /// BinOpBuilder
 #[derive(Clone)]
-pub struct BinOpBuilder<'a> {
+pub struct BinOpBuilder {
+    tree: RcTree,
     op: BinaryOperator,
     pos: u32,
-    left: &'a Expression<'a>,
-    right: &'a Expression<'a>,
+    left: ExpressionId,
+    right: ExpressionId,
 }
 
 /// BlockBuilder
 #[derive(Clone)]
-pub struct BlockBuilder<'a> {
-    statements: mem::Array<'a, Statement<'a>>,
-    expr: Option<&'a Expression<'a>>,
+pub struct BlockBuilder {
+    tree: RcTree,
+    statements: Vec<StatementId>,
+    expr: Option<ExpressionId>,
     open: u32,
     close: u32,
 }
 
 /// FieldAccessBuilder
 #[derive(Clone)]
-pub struct FieldAccessBuilder<'a> {
-    resolver: Resolver<'a>,
-    accessed: &'a Expression<'a>,
+pub struct FieldAccessBuilder {
+    tree: RcTree,
+    resolver: Resolver,
+    accessed: ExpressionId,
     field: FieldIdentifier,
 }
 
 /// FunctionCallBuilder
 #[derive(Clone)]
-pub struct FunctionCallBuilder<'a> {
-    callee: &'a Expression<'a>,
-    arguments: TupleBuilder<'a, Expression<'a>>,
+pub struct FunctionCallBuilder {
+    tree: RcTree,
+    callee: ExpressionId,
+    arguments: TupleBuilder<Tree, Expression>,
 }
 
 /// IfElseBuilder
-#[derive(Clone, Copy)]
-pub struct IfElseBuilder<'a> {
-    condition: Expression<'a>,
-    true_: Block<'a>,
-    false_: Block<'a>,
+#[derive(Clone)]
+pub struct IfElseBuilder {
+    tree: RcTree,
+    condition: ExpressionId,
+    true_: ExpressionId,
+    false_: ExpressionId,
     if_: u32,
     else_: u32,
 }
 
 /// LiteralBuilder
 #[derive(Clone)]
-pub struct LiteralBuilder<'a> {
-    resolver: Resolver<'a>,
-    literal: Literal<'a>,
-    fragments: mem::Array<'a, tt::StringFragment>,
+pub struct LiteralBuilder {
+    tree: RcTree,
+    resolver: Resolver,
+    literal: Literal,
+    range: com::Range,
+    fragments: Vec<tt::StringFragment>,
 }
 
 /// LoopBuilder
-pub struct LoopBuilder<'a> {
-    statements: mem::Array<'a, Statement<'a>>,
+pub struct LoopBuilder {
+    tree: RcTree,
+    statements: Vec<StatementId>,
     loop_: u32,
     open: u32,
     close: u32,
 }
 
 /// PreOpBuilder
-#[derive(Clone, Copy)]
-pub struct PreOpBuilder<'a> {
+#[derive(Clone)]
+pub struct PreOpBuilder {
+    tree: RcTree,
     op: PrefixOperator,
     pos: u32,
-    expr: &'a Expression<'a>,
+    expr: ExpressionId,
 }
 
 //
@@ -122,34 +141,38 @@ pub struct PreOpBuilder<'a> {
 
 /// EnumBuilder
 #[derive(Clone)]
-pub struct EnumBuilder<'a> {
-    resolver: Resolver<'a>,
+pub struct EnumBuilder {
+    module: RcModule,
+    resolver: Resolver,
     name: TypeIdentifier,
     keyword: u32,
     open: u32,
     close: u32,
-    variants: mem::Array<'a, InnerRecord<'a>>,
-    commas: mem::Array<'a, u32>,
+    variants: Vec<InnerRecord>,
+    commas: Vec<u32>,
 }
 
 /// FunctionBuilder
 #[derive(Clone)]
-pub struct FunctionBuilder<'a> {
-    resolver: Resolver<'a>,
+pub struct FunctionBuilder {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
     name: VariableIdentifier,
-    result: Type<'a>,
-    body: Block<'a>,
+    result: TypeId,
+    body: ExpressionId,
     keyword: u32,
     open: u32,
     close: u32,
     arrow: u32,
-    arguments: mem::Array<'a, Argument<'a>>,
+    arguments: Vec<Argument>,
 }
 
 /// RecordBuilder
-#[derive(Clone, Copy)]
-pub struct RecordBuilder<'a> {
-    inner: InnerRecord<'a>,
+#[derive(Clone)]
+pub struct RecordBuilder {
+    module: RcModule,
+    inner: InnerRecord,
     keyword: u32,
     semi_colon: u32,
 }
@@ -163,33 +186,36 @@ pub struct RecordBuilder<'a> {
 //
 
 /// ReturnBuilder
-#[derive(Clone, Copy)]
-pub struct ReturnBuilder<'a> {
-    expr: Option<Expression<'a>>,
+#[derive(Clone)]
+pub struct ReturnBuilder {
+    tree: RcTree,
+    expr: Option<ExpressionId>,
     ret: u32,
     semi: u32,
 }
 
 /// VariableReBindingBuilder
-#[derive(Clone, Copy)]
-pub struct VariableReBindingBuilder<'a> {
-    left: Expression<'a>,
-    expr: Expression<'a>,
+#[derive(Clone)]
+pub struct VariableReBindingBuilder {
+    tree: RcTree,
+    left: ExpressionId,
+    expr: ExpressionId,
     set: u32,
     bind: u32,
     semi: u32,
 }
 
 /// VariableBindingBuilder
-#[derive(Clone, Copy)]
-pub struct VariableBindingBuilder<'a> {
-    pattern: Pattern<'a>,
-    expr: Expression<'a>,
+#[derive(Clone)]
+pub struct VariableBindingBuilder {
+    tree: RcTree,
+    pattern: PatternId,
+    expr: ExpressionId,
     var: u32,
     colon: u32,
     bind: u32,
     semi: u32,
-    type_: Option<Type<'a>>,
+    type_: Option<TypeId>,
 }
 
 //
@@ -198,156 +224,165 @@ pub struct VariableBindingBuilder<'a> {
 
 /// ConstructorBuilder
 #[derive(Clone)]
-pub struct ConstructorBuilder<'a, T:'a> {
-    type_: Type<'a>,
-    arguments: TupleBuilder<'a, T>,
+pub struct ConstructorBuilder<T> {
+    type_: TypeId,
+    arguments: TupleBuilder<Tree, T>,
 }
 
 /// TupleBuilder
 #[derive(Clone)]
-pub struct TupleBuilder<'a, T: 'a> {
-    resolver: Resolver<'a>,
-    fields: mem::Array<'a, T>,
-    commas: mem::Array<'a, u32>,
-    names: mem::Array<'a, (mem::InternId, com::Range)>,
-    separators: mem::Array<'a, u32>,
+pub struct TupleBuilder<S, T> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
+    fields: Vec<Id<T>>,
+    commas: Vec<u32>,
+    names: Vec<Identifier>,
+    separators: Vec<u32>,
     open: u32,
     close: u32,
 }
 
 /// TypeFactory
 #[derive(Clone)]
-pub struct TypeFactory<'a> {
-    arena: &'a mem::Arena,
-    resolver: Resolver<'a>,
+pub struct TypeFactory<S> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
 }
 
 /// NestedTypeBuilder
 #[derive(Clone)]
-pub struct NestedTypeBuilder<'a> {
-    resolver: Resolver<'a>,
+pub struct NestedTypeBuilder<S> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
     name: TypeIdentifier,
-    components: mem::Array<'a, TypeIdentifier>,
-    colons: mem::Array<'a, u32>,
+    components: Vec<Identifier>,
+    colons: Vec<u32>,
 }
 
 //
 //  Implementations of Factory
 //
-impl<'a> Factory<'a> {
+impl Factory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Factory<'a> {
-        Factory { arena, resolver }
+    pub fn new(module: RcModule, tree: RcTree, resolver: Resolver) -> Factory {
+        Factory { module, tree, resolver }
     }
 
     /// Creates a ExprFactory.
-    pub fn expr(&self) -> ExprFactory<'a> {
-        ExprFactory::new(self.arena, self.resolver.clone())
+    pub fn expr(&self) -> ExprFactory {
+        ExprFactory::new(self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates an ItemFactory.
-    pub fn item(&self) -> ItemFactory<'a> {
-        ItemFactory::new(self.arena, self.resolver.clone())
+    pub fn item(&self) -> ItemFactory {
+        ItemFactory::new(self.module.clone(), self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates a PatternFactory.
-    pub fn pat(&self) -> PatternFactory<'a> {
-        PatternFactory::new(self.arena, self.resolver.clone())
+    pub fn pat(&self) -> PatternFactory {
+        PatternFactory::new(self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates a StmtFactory.
-    pub fn stmt(&self) -> StmtFactory<'a> { StmtFactory::new(self.arena) }
+    pub fn stmt(&self) -> StmtFactory { StmtFactory::new(self.tree.clone()) }
 
     /// Creates a TupleBuilder.
-    pub fn tuple<T: 'a>(&self) -> TupleBuilder<'a, T> {
-        TupleBuilder::new(self.arena, self.resolver.clone())
+    pub fn module_tuple<T>(&self) -> TupleBuilder<Module, T> {
+        TupleBuilder::new(self.module.clone(), self.resolver.clone())
+    }
+
+    /// Creates a TupleBuilder.
+    pub fn tuple<T>(&self) -> TupleBuilder<Tree, T> {
+        TupleBuilder::new(self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates an Expression TupleBuilder.
-    pub fn expr_tuple(&self) -> TupleBuilder<'a, Expression<'a>> {
+    pub fn expr_tuple(&self) -> TupleBuilder<Tree, Expression> {
         self.tuple()
     }
 
-    /// Creates a Type TupleBuilder.
-    pub fn type_tuple(&self) -> TupleBuilder<'a, Type<'a>> { self.tuple() }
+    /// Creates a TypeFactory.
+    pub fn type_(&self) -> TypeFactory<Tree> {
+        TypeFactory::new(self.tree.clone(), self.resolver.clone())
+    }
 
     /// Creates a TypeFactory.
-    pub fn type_(&self) -> TypeFactory<'a> {
-        TypeFactory::new(self.arena, self.resolver.clone())
+    pub fn type_module(&self) -> TypeFactory<Module> {
+        TypeFactory::new(self.module.clone(), self.resolver.clone())
     }
 }
 
 //
 //  Implementations of Expr builders
 //
-impl<'a> ExprFactory<'a> {
+impl ExprFactory {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> ExprFactory<'a> {
-        ExprFactory { arena, resolver }
+    pub fn new(tree: RcTree, resolver: Resolver) -> ExprFactory {
+        ExprFactory { tree, resolver }
     }
 
     /// Creates a BinOpBuilder, defaults to Plus.
-    pub fn bin_op(&self, left: Expression<'a>, right: Expression<'a>)
-        -> BinOpBuilder<'a>
+    pub fn bin_op(&self, left: ExpressionId, right: ExpressionId)
+        -> BinOpBuilder
     {
-        BinOpBuilder::new(self.arena, left, right)
+        BinOpBuilder::new(self.tree.clone(), left, right)
     }
 
     /// Creates a BlockBuilder.
-    pub fn block(&self, expr: Expression<'a>) -> BlockBuilder<'a> {
-        BlockBuilder::new(self.arena, expr)
+    pub fn block(&self, expr: ExpressionId) -> BlockBuilder {
+        BlockBuilder::new(self.tree.clone(), expr)
     }
 
     /// Creates an expression-less BlockBuilder.
-    pub fn block_expression_less(&self) -> BlockBuilder<'a> {
-        BlockBuilder::expression_less(self.arena)
+    pub fn block_expression_less(&self) -> BlockBuilder {
+        BlockBuilder::expression_less(self.tree.clone())
     }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, name: Type<'a>)
-        -> ConstructorBuilder<'a, Expression<'a>>
+    pub fn constructor(&self, name: TypeId)
+        -> ConstructorBuilder<Expression>
     {
-        ConstructorBuilder::new(self.arena, self.resolver.clone(), name)
+        ConstructorBuilder::new(self.tree.clone(), self.resolver.clone(), name)
     }
 
     /// Creates a FieldAccess Expression.
-    pub fn field_access(&self, accessed: Expression<'a>)
-        -> FieldAccessBuilder<'a>
+    pub fn field_access(&self, accessed: ExpressionId)
+        -> FieldAccessBuilder
     {
-        FieldAccessBuilder::new(self.arena, self.resolver.clone(), accessed)
+        FieldAccessBuilder::new(self.tree.clone(), self.resolver.clone(), accessed)
     }
 
     /// Creates a FunctionCallBuilder.
-    pub fn function_call(&self, callee: Expression<'a>, open: u32, close: u32)
-        -> FunctionCallBuilder<'a>
+    pub fn function_call(&self, callee: ExpressionId, open: u32, close: u32)
+        -> FunctionCallBuilder
     {
-        FunctionCallBuilder::new(self.arena, self.resolver.clone(), callee, open, close)
+        FunctionCallBuilder::new(self.tree.clone(), self.resolver.clone(), callee, open, close)
     }
 
     /// Creates a IfElseBuilder.
     pub fn if_else(
         &self,
-        cond: Expression<'a>,
-        true_: Block<'a>,
-        false_: Block<'a>,
+        cond: ExpressionId,
+        true_: ExpressionId,
+        false_: ExpressionId,
     )
-        -> IfElseBuilder<'a>
+        -> IfElseBuilder
     {
-        IfElseBuilder::new(cond, true_, false_)
+        IfElseBuilder::new(self.tree.clone(), cond, true_, false_)
     }
 
     /// Creates a LiteralBuilder.
-    pub fn literal(&self, pos: usize, len: usize) -> LiteralBuilder<'a> {
-        LiteralBuilder::new(self.arena, self.resolver.clone(), (pos, len))
+    pub fn literal(&self, pos: u32, len: u32) -> LiteralBuilder {
+        LiteralBuilder::new(self.tree.clone(), self.resolver.clone(), pos, len)
     }
 
     /// Shortcut: creates a Bool Lit Expression.
-    pub fn bool_(&self, value: bool, pos: usize) -> Expression<'a> {
+    pub fn bool_(&self, value: bool, pos: u32) -> ExpressionId {
         self.literal(pos, if value { 4 } else { 5 }).bool_(value).build()
     }
 
     /// Shortcut: creates an Integral Lit Expression.
-    pub fn int(&self, value: i64, pos: usize) -> Expression<'a> {
+    pub fn int(&self, value: i64, pos: u32) -> ExpressionId {
         let mut len = 1;
         let mut n = value;
         if n < 0 {
@@ -362,41 +397,42 @@ impl<'a> ExprFactory<'a> {
     }
 
     /// Creates a Loop.
-    pub fn loop_(&self, pos: u32) -> LoopBuilder<'a> {
-        LoopBuilder::new(self.arena, pos)
+    pub fn loop_(&self, pos: u32) -> LoopBuilder {
+        LoopBuilder::new(self.tree.clone(), pos)
     }
 
     /// Creates a PreOpBuilder, defaults to Not.
-    pub fn pre_op(&self, expr: Expression<'a>) -> PreOpBuilder<'a> {
-        PreOpBuilder::new(self.arena, expr)
+    pub fn pre_op(&self, expr: ExpressionId) -> PreOpBuilder {
+        PreOpBuilder::new(self.tree.clone(), expr)
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TupleBuilder<'a, Expression<'a>> {
-        TupleBuilder::new(self.arena, self.resolver.clone())
+    pub fn tuple(&self) -> TupleBuilder<Tree, Expression> {
+        TupleBuilder::new(self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates a Var Expression.
-    pub fn var(&self, pos: usize, len: usize) -> Expression<'a> {
+    pub fn var(&self, pos: u32, len: u32) -> ExpressionId {
         let name = var_id(&self.resolver, pos, len);
-        Expression::Var(name)
+        self.tree.borrow_mut().push_expression(Expression::Var(name), range(pos, len))
     }
 }
 
-impl<'a> BinOpBuilder<'a> {
+impl BinOpBuilder {
     /// Creates an instance, default to Plus.
     pub fn new(
-        arena: &'a mem::Arena,
-        left: Expression<'a>,
-        right: Expression<'a>,
+        tree: RcTree,
+        left: ExpressionId,
+        right: ExpressionId,
     )
         -> Self
     {
         BinOpBuilder {
+            tree,
             op: BinaryOperator::Plus,
             pos: U32_NONE,
-            left: arena.insert(left),
-            right: arena.insert(right),
+            left,
+            right,
         }
     }
 
@@ -452,31 +488,38 @@ impl<'a> BinOpBuilder<'a> {
     pub fn xor(&mut self) -> &mut Self { self.operator(BinaryOperator::Xor) }
 
     /// Creates a BinOp Expression.
-    pub fn build(&self) -> Expression<'a> {
+    pub fn build(&self) -> ExpressionId {
+        let left_range = self.tree.borrow().get_expression_range(self.left);
+        let right_range = self.tree.borrow().get_expression_range(self.right);
+
         let pos = if self.pos == U32_NONE {
-            self.left.span().end_offset() as u32 + 1
+            left_range.end_offset() as u32 + 1
         } else {
             self.pos
         };
-        Expression::BinOp(self.op, pos, self.left, self.right)
+
+        let expr = Expression::BinOp(self.op, pos, self.left, self.right);
+        self.tree.borrow_mut().push_expression(expr, left_range.extend(right_range))
     }
 }
 
-impl<'a> BlockBuilder<'a> {
+impl BlockBuilder {
     /// Creates a new instance, defaults the range.
-    pub fn new(arena: &'a mem::Arena, expr: Expression<'a>) -> Self {
+    pub fn new(tree: RcTree, expr: ExpressionId) -> Self {
         BlockBuilder {
-            statements: mem::Array::new(arena),
-            expr: Some(arena.insert(expr)),
+            tree,
+            statements: vec!(),
+            expr: Some(expr),
             open: U32_NONE,
             close: U32_NONE,
         }
     }
 
     /// Creates a new instance, defaults the range.
-    pub fn expression_less(arena: &'a mem::Arena) -> Self {
+    pub fn expression_less(tree: RcTree) -> Self {
         BlockBuilder {
-            statements: mem::Array::new(arena),
+            tree,
+            statements: vec!(),
             expr: None,
             open: U32_NONE,
             close: U32_NONE,
@@ -484,24 +527,26 @@ impl<'a> BlockBuilder<'a> {
     }
 
     /// Sets the range of the block.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.open = pos as u32;
-        self.close = (pos + len - 1) as u32;
+    pub fn range(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.open = pos;
+        self.close = pos + len - 1;
         self
     }
 
     /// Appends a statement.
-    pub fn push_stmt(&mut self, stmt: Statement<'a>) -> &mut Self {
+    pub fn push_stmt(&mut self, stmt: StatementId) -> &mut Self {
         self.statements.push(stmt);
         self
     }
 
     /// Creates a Block.
-    pub fn build(&self) -> Block<'a> {
-        let ends =
-            ends(self.statements.as_slice())
-                .map(|e| (e.0.span(), e.1.span()));
-        let expr_range = self.expr.map(|e| e.span());
+    pub fn build(&self) -> ExpressionId {
+        let stmt_range = |id| self.tree.borrow().get_statement(id).span();
+
+        let expr_range = self.expr.map(|e| self.tree.borrow().get_expression_range(e));
+
+        let ends = ends(&self.statements)
+                .map(|(first, last)| (stmt_range(*first), stmt_range(*last)));
 
         let open = if self.open == U32_NONE {
             let range =
@@ -518,25 +563,25 @@ impl<'a> BlockBuilder<'a> {
             self.close
         };
 
-        Block {
-            statements: self.statements.clone().into_slice(),
-            expression: self.expr,
-            open: open,
-            close: close,
-        }
+        let mut tree = self.tree.borrow_mut();
+        let statements = tree.push_statement_ids(&self.statements);
+
+        let expr = Block { statements, expression: self.expr, open, close, };
+        tree.push_expression(expr.into(), range(open, close + 1 - open))
     }
 }
 
-impl<'a> FieldAccessBuilder<'a> {
+impl FieldAccessBuilder {
     /// Creates a new instance, default to Named.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        accessed: Expression<'a>
+        tree: RcTree,
+        resolver: Resolver,
+        accessed: ExpressionId,
     ) -> Self {
         FieldAccessBuilder {
+            tree,
             resolver,
-            accessed: arena.insert(accessed),
+            accessed,
             field: FieldIdentifier::Index(0, Default::default()),
         }
     }
@@ -549,55 +594,56 @@ impl<'a> FieldAccessBuilder<'a> {
     }
 
     /// Sets the name of the field.
-    pub fn name(&mut self, pos: usize, len: usize) -> &mut Self {
+    pub fn name(&mut self, pos: u32, len: u32) -> &mut Self {
         self.field = field_id(&self.resolver, pos, len);
         self
     }
 
     /// Sets the offset of the field.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.field = self.field.with_range(range((pos, len)));
+    pub fn range(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.field = self.field.with_range(range(pos, len));
         self
     }
 
     /// Creates a FieldAccess.
-    pub fn build<T: convert::From<FieldAccess<'a>>>(&self) -> T {
+    pub fn build(&self) -> ExpressionId {
+        let accessed_range = self.tree.borrow().get_expression_range(self.accessed);
+
         let field = if self.field.span() == Default::default() {
-            let range = range((self.accessed.span().end_offset(), 2));
+            let range = range(accessed_range.end_offset() as u32, 2);
             self.field.with_range(range)
         } else {
             self.field
         };
 
-        FieldAccess {
-            accessed: self.accessed,
-            field: field,
-        }.into()
+        let expr = FieldAccess { accessed: self.accessed, field, };
+        self.tree.borrow_mut().push_expression(expr.into(), accessed_range.extend(field.span()))
     }
 }
 
-impl<'a> FunctionCallBuilder<'a> {
+impl FunctionCallBuilder {
     /// Creates an instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        callee: Expression<'a>,
+        tree: RcTree,
+        resolver: Resolver,
+        callee: ExpressionId,
         open: u32,
         close: u32,
     )
         -> Self
     {
-        let mut arguments = TupleBuilder::new(arena, resolver);
+        let mut arguments = TupleBuilder::new(tree.clone(), resolver);
         arguments.parens(open, close);
 
         FunctionCallBuilder {
-            callee: arena.insert(callee),
+            tree,
+            callee,
             arguments: arguments,
         }
     }
 
     /// Appends an argument.
-    pub fn push(&mut self, arg: Expression<'a>) -> &mut Self {
+    pub fn push(&mut self, arg: ExpressionId) -> &mut Self {
         self.arguments.push(arg);
         self
     }
@@ -609,27 +655,35 @@ impl<'a> FunctionCallBuilder<'a> {
     }
 
     /// Creates a FunctionCall instance.
-    pub fn build<T: convert::From<FunctionCall<'a>>>(&mut self) -> T {
-        FunctionCall {
+    pub fn build(&mut self) -> ExpressionId {
+        let expr = FunctionCall {
             function: self.callee,
-            arguments: self.arguments.build(),
-        }.into()
+            arguments: self.arguments.build_tuple(),
+        };
+        let range = {
+            let callee = self.tree.borrow().get_expression_range(self.callee);
+            let arguments = expr.arguments.span();
+            callee.extend(arguments)
+        };
+        self.tree.borrow_mut().push_expression(expr.into(), range)
     }
 }
 
-impl<'a> IfElseBuilder<'a> {
+impl IfElseBuilder {
     /// Creates an instance, defaults the offset of :if and :else.
     pub fn new(
-        condition: Expression<'a>,
-        true_: Block<'a>,
-        false_: Block<'a>,
+        tree: RcTree,
+        condition: ExpressionId,
+        true_: ExpressionId,
+        false_: ExpressionId,
     )
         -> Self
     {
         IfElseBuilder {
-            condition: condition,
-            true_: true_,
-            false_: false_,
+            tree,
+            condition,
+            true_,
+            false_,
             if_: U32_NONE,
             else_: U32_NONE,
         }
@@ -648,80 +702,85 @@ impl<'a> IfElseBuilder<'a> {
     }
 
     /// Creates a IfElse.
-    pub fn build(&self) -> IfElse<'a> {
+    pub fn build(&self) -> ExpressionId {
+        let false_range = self.tree.borrow().get_expression_range(self.false_);
+
         let if_ = if self.if_ == U32_NONE {
-            self.condition.span().offset() as u32 - 4
+            self.tree.borrow().get_expression_range(self.condition).offset() as u32 - 4
         } else {
             self.if_
         };
 
         let else_ = if self.else_ == U32_NONE {
-            self.false_.span().offset() as u32 - 6
+            false_range.offset() as u32 - 6
         } else {
             self.else_
         };
 
-        IfElse {
+        let expr = IfElse {
             condition: self.condition,
             true_expr: self.true_,
             false_expr: self.false_,
-            if_: if_,
-            else_: else_,
-        }
+            if_,
+            else_,
+        };
+
+        let range = range(if_, false_range.end_offset() as u32 - if_);
+
+        self.tree.borrow_mut().push_expression(expr.into(), range)
     }
 }
 
-impl<'a> LiteralBuilder<'a> {
+impl LiteralBuilder {
     /// Creates an instance, defaults to an Integral.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        r: (usize, usize),
+        tree: RcTree,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
     )
         -> Self
     {
         LiteralBuilder {
+            tree,
             resolver,
-            literal: Literal::Integral(0, range(r)),
-            fragments: mem::Array::new(arena),
+            literal: Literal::Integral(0),
+            range: range(pos, len),
+            fragments: vec!(),
         }
     }
 
     /// Sets up a boolean.
     pub fn bool_(&mut self, value: bool) -> &mut Self {
-        let range = self.literal.span();
-        self.literal = Literal::Bool(value, range);
+        self.literal = Literal::Bool(value);
         self
     }
 
     /// Sets up bytes.
     pub fn bytes(&mut self) -> &mut Self {
-        let range = self.literal.span();
-        let id = self.resolver.resolve_range(range.skip_left(2).skip_right(1));
-        self.literal = Literal::Bytes(&[], id, range);
+        let id = self.resolver.resolve_range(self.range.skip_left(2).skip_right(1));
+        self.literal = Literal::Bytes(Id::empty(), id);
         self
     }
 
     /// Sets up an integral.
     pub fn integral(&mut self, value: i64) -> &mut Self {
-        let range = self.literal.span();
-        self.literal = Literal::Integral(value, range);
+        self.literal = Literal::Integral(value);
         self
     }
 
     /// Sets up a string.
     pub fn string(&mut self) -> &mut Self {
-        let range = self.literal.span();
-        let id = self.resolver.resolve_range(range.skip_left(1).skip_right(1));
-        self.literal = Literal::String(&[], id, range);
+        let id = self.resolver.resolve_range(self.range.skip_left(1).skip_right(1));
+        self.literal = Literal::String(Id::empty(), id);
         self
     }
 
     /// Appends a Text fragment.
-    pub fn push_text(&mut self, pos: usize, len: usize) -> &mut Self {
+    pub fn push_text(&mut self, pos: u32, len: u32) -> &mut Self {
         self.fragments.push(
             tt::StringFragment::Text(
-                tt::Token::new(tt::Kind::StringText, pos, len)
+                tt::Token::new(tt::Kind::StringText, pos as usize, len as usize)
             )
         );
         self
@@ -738,30 +797,35 @@ impl<'a> LiteralBuilder<'a> {
     }
 
     /// Appends an Unexpected fragment.
-    pub fn push_unexpected(&mut self, pos: usize, len: usize) -> &mut Self {
+    pub fn push_unexpected(&mut self, pos: u32, len: u32) -> &mut Self {
         self.fragments.push(
-            tt::StringFragment::Unexpected(range((pos, len)))
+            tt::StringFragment::Unexpected(range(pos, len))
         );
         self
     }
 
     /// Creates a Literal.
-    pub fn build<T: convert::From<Literal<'a>>>(&self) -> T {
+    pub fn build(&self) -> ExpressionId {
         use self::Literal::*;
 
-        match self.literal {
-            Bytes(_, a, r) => Bytes(self.fragments.clone().into_slice(), a, r),
-            String(_, a, r) => String(self.fragments.clone().into_slice(), a, r),
+        let fragments = self.tree.borrow_mut().push_string_fragments(&self.fragments);
+
+        let expr = match self.literal {
+            Bytes(_, a) => Bytes(fragments, a),
+            String(_, a) => String(fragments, a),
             other => other,
-        }.into()
+        };
+
+        self.tree.borrow_mut().push_expression(expr.into(), self.range)
     }
 }
 
-impl<'a> LoopBuilder<'a> {
+impl LoopBuilder {
     /// Creates a new instance, defaults the range.
-    pub fn new(arena: &'a mem::Arena, loop_: u32) -> Self {
+    pub fn new(tree: RcTree, loop_: u32) -> Self {
         LoopBuilder {
-            statements: mem::Array::new(arena),
+            tree,
+            statements: vec!(),
             loop_: loop_,
             open: U32_NONE,
             close: U32_NONE,
@@ -776,13 +840,13 @@ impl<'a> LoopBuilder<'a> {
     }
 
     /// Appends a statement.
-    pub fn push_stmt(&mut self, stmt: Statement<'a>) -> &mut Self {
+    pub fn push_stmt(&mut self, stmt: StatementId) -> &mut Self {
         self.statements.push(stmt);
         self
     }
 
     /// Creates a Loop.
-    pub fn build(&self) -> Expression<'a> {
+    pub fn build(&self) -> ExpressionId {
         let open = if self.open == U32_NONE {
             self.loop_ + 6
         } else {
@@ -791,7 +855,7 @@ impl<'a> LoopBuilder<'a> {
 
         let close = if self.close == U32_NONE {
             if let Some(s) = self.statements.last() {
-                s.span().end_offset() as u32 + 1
+                self.tree.borrow().get_statement(*s).span().end_offset() as u32 + 1
             } else {
                 open + 2
             }
@@ -799,22 +863,27 @@ impl<'a> LoopBuilder<'a> {
             self.close
         };
 
-        Expression::Loop(self.statements.arena().insert(Loop {
-            statements: self.statements.clone().into_slice(),
+        let statements = self.tree.borrow_mut().push_statement_ids(&self.statements);
+
+        let expr = Loop {
+            statements,
             loop_: self.loop_,
             open: open,
             close: close,
-        }))
+        }.into();
+
+        self.tree.borrow_mut().push_expression(expr, range(self.loop_, close + 1 - self.loop_))
     }
 }
 
-impl<'a> PreOpBuilder<'a> {
+impl PreOpBuilder {
     /// Creates an instance, default to Not.
-    pub fn new(arena: &'a mem::Arena, expr: Expression<'a>) -> Self {
+    pub fn new(tree: RcTree, expr: ExpressionId) -> Self {
         PreOpBuilder {
+            tree,
             op: PrefixOperator::Not,
             pos: U32_NONE,
-            expr: arena.insert(expr),
+            expr,
         }
     }
 
@@ -834,101 +903,109 @@ impl<'a> PreOpBuilder<'a> {
     pub fn not(&mut self) -> &mut Self { self.operator(PrefixOperator::Not) }
 
     /// Creates a PreOp Expression.
-    pub fn build(&self) -> Expression<'a> {
+    pub fn build(&self) -> ExpressionId {
+        let expr_range = self.tree.borrow().get_expression_range(self.expr);
         let pos = if self.pos == U32_NONE {
-            self.expr.span().offset() as u32 - 5
+            expr_range.offset() as u32 - 5
         } else {
             self.pos
         };
-        Expression::PreOp(self.op, pos, self.expr)
+        let expr = Expression::PreOp(self.op, pos, self.expr);
+        let range = range(pos, 1).extend(expr_range);
+        self.tree.borrow_mut().push_expression(expr, range)
     }
 }
 
 //
 //  Implementations of Item builders
 //
-impl<'a> ItemFactory<'a> {
+impl ItemFactory {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> ItemFactory<'a> {
-        ItemFactory { arena, resolver }
+    pub fn new(module: RcModule, tree: RcTree, resolver: Resolver)
+        -> ItemFactory
+    {
+        ItemFactory { module, tree, resolver }
     }
 
     /// Creates a EnumBuilder.
-    pub fn enum_(&self, pos: usize, len: usize) -> EnumBuilder<'a> {
-        EnumBuilder::new(self.arena, self.resolver.clone(), pos, len)
+    pub fn enum_(&self, pos: u32, len: u32) -> EnumBuilder {
+        EnumBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
     }
 
     /// Creates a EnumBuilder, named.
-    pub fn enum_named(&self, name: TypeIdentifier) -> EnumBuilder<'a> {
-        EnumBuilder::named(self.arena, self.resolver.clone(), name)
+    pub fn enum_named(&self, name: TypeIdentifier) -> EnumBuilder {
+        EnumBuilder::named(self.module.clone(), self.resolver.clone(), name)
     }
 
     /// Creates a FunctionBuilder.
     pub fn function(
         &self,
-        pos: usize,
-        len: usize,
-        result: Type<'a>,
-        body: Block<'a>,
+        pos: u32,
+        len: u32,
+        result: TypeId,
+        body: ExpressionId,
     )
-        ->  FunctionBuilder<'a>
+        ->  FunctionBuilder
     {
-        FunctionBuilder::new(self.arena, self.resolver.clone(), (pos, len), result, body)
+        FunctionBuilder::new(self.module.clone(), self.tree.clone(), self.resolver.clone(), pos, len, result, body)
     }
 
     /// Creates a FunctionBuilder, named.
     pub fn function_named(
         &self,
         name: VariableIdentifier,
-        result: Type<'a>,
-        body: Block<'a>,
+        result: TypeId,
+        body: ExpressionId,
     )
-        ->  FunctionBuilder<'a>
+        ->  FunctionBuilder
     {
-        FunctionBuilder::named(self.arena, self.resolver.clone(), name, result, body)
+        FunctionBuilder::named(self.module.clone(), self.tree.clone(), self.resolver.clone(), name, result, body)
     }
 
     /// Creates a wrapped RecordBuilder.
-    pub fn record(&self, pos: usize, len: usize) -> RecordBuilder<'a> {
-        RecordBuilder::new(self.resolver.clone(), pos, len)
+    pub fn record(&self, pos: u32, len: u32) -> RecordBuilder {
+        RecordBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
     }
 
     /// Creates a wrapped RecordBuilder, named.
-    pub fn record_named(&self, name: TypeIdentifier) -> RecordBuilder<'a> {
-        RecordBuilder::named(name)
+    pub fn record_named(&self, name: TypeIdentifier) -> RecordBuilder {
+        RecordBuilder::named(self.module.clone(), name)
     }
+
+    //  TODO: requires special type factory off RcModule.
 }
 
-impl<'a> EnumBuilder<'a> {
+impl EnumBuilder {
     /// Creates a new instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        pos: usize,
-        len: usize,
+        module: RcModule,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
     )
         -> Self
     {
         let name = type_id(&resolver, pos, len);
-        Self::named(arena, resolver, name)
+        Self::named(module, resolver, name)
     }
 
     /// Creates a new instance.
     pub fn named(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
+        module: RcModule,
+        resolver: Resolver,
         name: TypeIdentifier,
     )
         -> Self
     {
         EnumBuilder {
+            module,
             resolver,
             name,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
-            variants: mem::Array::new(arena),
-            commas: mem::Array::new(arena),
+            variants: vec!(),
+            commas: vec!(),
         }
     }
 
@@ -946,8 +1023,8 @@ impl<'a> EnumBuilder<'a> {
     }
 
     /// Appends a Missing InnerRecord.
-    pub fn push_missing(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.variants.push(InnerRecord::Missing(range((pos, len))));
+    pub fn push_missing(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.variants.push(InnerRecord::Missing(range(pos, len)));
         self.commas.push(U32_NONE);
         self
     }
@@ -955,9 +1032,9 @@ impl<'a> EnumBuilder<'a> {
     /// Appends a Tuple InnerRecord.
     pub fn push_tuple(
         &mut self,
-        pos: usize,
-        len: usize,
-        fields: Tuple<'a, Type<'a>>,
+        pos: u32,
+        len: u32,
+        fields: Tuple<Type>,
     )
         -> &mut Self
     {
@@ -969,7 +1046,7 @@ impl<'a> EnumBuilder<'a> {
     pub fn push_named_tuple(
         &mut self,
         name: TypeIdentifier,
-        fields: Tuple<'a, Type<'a>>,
+        fields: Tuple<Type>,
     )
         -> &mut Self
     {
@@ -979,14 +1056,14 @@ impl<'a> EnumBuilder<'a> {
     }
 
     /// Appends an Unexpected InnerRecord.
-    pub fn push_unexpected(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.variants.push(InnerRecord::Unexpected(range((pos, len))));
+    pub fn push_unexpected(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.variants.push(InnerRecord::Unexpected(range(pos, len)));
         self.commas.push(U32_NONE);
         self
     }
 
     /// Appends a Unit InnerRecord.
-    pub fn push_unit(&mut self, pos: usize, len: usize) -> &mut Self {
+    pub fn push_unit(&mut self, pos: u32, len: u32) -> &mut Self {
         let name = type_id(&self.resolver, pos, len);
         self.push_named_unit(name)
     }
@@ -1000,23 +1077,22 @@ impl<'a> EnumBuilder<'a> {
 
     /// Overrides the position of the last inserted comma.
     pub fn comma(&mut self, pos: u32) -> &mut Self {
-        if let Some(c) = self.commas.as_slice_mut().last_mut() {
+        if let Some(c) = self.commas.last_mut() {
             *c = pos;
         }
         self
     }
 
     /// Creates an Enum.
-    pub fn build<T: convert::From<Enum<'a>>>(&self) -> T {
+    pub fn build(&self) -> EnumId {
         assert_eq!(self.variants.len(), self.commas.len());
 
-        let variants = self.variants.clone().into_slice();
-        let commas = self.commas.clone().into_slice();
+        let mut commas = self.commas.clone();
 
-        for (i, (c, v)) in commas.iter_mut().zip(variants.iter()).enumerate() {
+        for (i, (c, v)) in commas.iter_mut().zip(self.variants.iter()).enumerate() {
             if *c != U32_NONE { continue; }
 
-            let offset = if i + 1 == variants.len() { 1 } else { 0 };
+            let offset = if i + 1 == self.variants.len() { 1 } else { 0 };
             let pos = v.span().end_offset() - offset;
 
             *c = pos as u32;
@@ -1040,43 +1116,53 @@ impl<'a> EnumBuilder<'a> {
             self.close
         };
 
-        Enum {
+        let variants = self.module.borrow_mut().push_inner_records(&self.variants);
+        let commas = self.module.borrow_mut().push_positions(&commas);
+
+        let enum_ = Enum {
             name: self.name,
-            variants: variants,
-            keyword: keyword,
-            open: open,
-            close: close,
-            commas: commas,
-        }.into()
+            variants,
+            keyword,
+            open,
+            close,
+            commas,
+        };
+
+        self.module.borrow_mut().push_enum(enum_)
     }
 }
 
-impl<'a> FunctionBuilder<'a> {
+impl FunctionBuilder {
     /// Creates a new instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        name: (usize, usize),
-        result: Type<'a>,
-        body: Block<'a>,
+        module: RcModule,
+        tree: RcTree,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
+        result: TypeId,
+        body: ExpressionId,
     )
         -> Self
     {
-        let name = var_id(&resolver, name.0, name.1);
-        Self::named(arena, resolver, name, result, body)
+        let name = var_id(&resolver, pos, len);
+        Self::named(module, tree, resolver, name, result, body)
     }
 
     /// Creates a new instance, named.
     pub fn named(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
+        module: RcModule,
+        tree: RcTree,
+        resolver: Resolver,
         name: VariableIdentifier,
-        result: Type<'a>,
-        body: Block<'a>,
+        result: TypeId,
+        body: ExpressionId,
     )
         -> Self
     {
         FunctionBuilder {
+            module,
+            tree,
             resolver,
             name,
             result,
@@ -1085,12 +1171,12 @@ impl<'a> FunctionBuilder<'a> {
             open: U32_NONE,
             close: U32_NONE,
             arrow: U32_NONE,
-            arguments: mem::Array::new(arena),
+            arguments: vec!(),
         }
     }
 
     /// Appends an argument.
-    pub fn push(&mut self, pos: usize, len: usize, type_: Type<'a>)
+    pub fn push(&mut self, pos: u32, len: u32, type_: TypeId)
         -> &mut Self
     {
         let name = var_id(&self.resolver, pos, len);
@@ -1124,7 +1210,7 @@ impl<'a> FunctionBuilder<'a> {
 
     /// Overrides the position of the colon in the last inserted argument.
     pub fn colon(&mut self, pos: u32) -> &mut Self {
-        if let Some(a) = self.arguments.as_slice_mut().last_mut() {
+        if let Some(a) = self.arguments.last_mut() {
             a.colon = pos;
         }
         self
@@ -1132,15 +1218,15 @@ impl<'a> FunctionBuilder<'a> {
 
     /// Overrides the position of the comma in the last inserted argument.
     pub fn comma(&mut self, pos: u32) -> &mut Self {
-        if let Some(a) = self.arguments.as_slice_mut().last_mut() {
+        if let Some(a) = self.arguments.last_mut() {
             a.comma = pos;
         }
         self
     }
 
     /// Creates a Function instance.
-    pub fn build<T: convert::From<Function<'a>>>(&self) -> T {
-        let arguments = self.arguments.clone().into_slice();
+    pub fn build(&self) -> FunctionId {
+        let mut arguments = self.arguments.clone();
 
         for (i, a) in arguments.iter_mut().enumerate() {
             if a.colon == U32_NONE {
@@ -1149,7 +1235,8 @@ impl<'a> FunctionBuilder<'a> {
 
             if a.comma == U32_NONE {
                 let offset = if i + 1 == self.arguments.len() { 1 } else { 0 };
-                a.comma = a.type_.span().end_offset() as u32 - offset;
+                let type_range = self.tree.borrow().get_type_range(a.type_);
+                a.comma = type_range.end_offset() as u32 - offset;
             }
         }
 
@@ -1173,33 +1260,38 @@ impl<'a> FunctionBuilder<'a> {
             self.close
         };
 
-        let arrow =
-            if self.arrow == U32_NONE { close + 2 } else { self.arrow };
+        let arrow = if self.arrow == U32_NONE { close + 2 } else { self.arrow };
 
-        Function {
+        let arguments = self.tree.borrow_mut().push_arguments(&arguments);
+
+        let fun = Function {
             name: self.name,
             result: self.result,
-            body: self.body,
-            keyword: keyword,
-            open: open,
-            close: close,
-            arrow: arrow,
-            arguments: arguments,
-        }.into()
+            keyword,
+            open,
+            close,
+            arrow,
+            arguments,
+        };
+
+        self.tree.borrow_mut().set_root(Root::Function(fun, self.body));
+
+        self.module.borrow_mut().push_function(self.tree.borrow().clone())
     }
 }
 
-impl<'a> RecordBuilder<'a> {
+impl RecordBuilder {
     /// Creates a new instance, defaults to Unit.
-    pub fn new(resolver: Resolver<'a>, pos: usize, len: usize) -> Self {
+    pub fn new(module: RcModule, resolver: Resolver, pos: u32, len: u32) -> Self {
         let name = type_id(&resolver, pos, len);
-        Self::named(name)
+        Self::named(module, name)
     }
 
     /// Overrides the name, defaults to Unit.
-    pub fn named(t: TypeIdentifier) -> Self {
+    pub fn named(module: RcModule, t: TypeIdentifier) -> Self {
         let inner = InnerRecord::Unit(t);
         RecordBuilder {
+            module,
             inner,
             keyword: U32_NONE,
             semi_colon: U32_NONE,
@@ -1226,7 +1318,7 @@ impl<'a> RecordBuilder<'a> {
     }
 
     /// Sets up a Tuple InnerRecord.
-    pub fn tuple(&mut self, fields: Tuple<'a, Type<'a>>) -> &mut Self {
+    pub fn tuple(&mut self, fields: Tuple<Type>) -> &mut Self {
         let name = self.name();
         self.inner = InnerRecord::Tuple(name, fields);
         self
@@ -1247,7 +1339,7 @@ impl<'a> RecordBuilder<'a> {
     }
 
     /// Creates a Record instance.
-    pub fn build<T: convert::From<Record<'a>>>(&self) -> T {
+    pub fn build(&self) -> RecordId {
         let keyword = if self.keyword == U32_NONE {
             self.inner.span().offset() as u32 - 5
         } else {
@@ -1260,11 +1352,13 @@ impl<'a> RecordBuilder<'a> {
             self.semi_colon
         };
 
-        Record {
+        let rec = Record {
             inner: self.inner,
             keyword: keyword,
             semi_colon: semi_colon,
-        }.into()
+        };
+
+        self.module.borrow_mut().push_record(rec)
     }
 
     /// Extracts the range of the name.
@@ -1281,70 +1375,69 @@ impl<'a> RecordBuilder<'a> {
 //
 //  Implementations of Pattern builds
 //
-impl<'a> PatternFactory<'a> {
+impl PatternFactory {
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>)
-        -> PatternFactory<'a>
-    {
-        PatternFactory { arena, resolver }
+    pub fn new(tree: RcTree, resolver: Resolver) -> PatternFactory {
+        PatternFactory { tree, resolver }
     }
 
     /// Creates a ConstructorBuilder.
-    pub fn constructor(&self, name: Type<'a>)
-        -> ConstructorBuilder<'a, Pattern<'a>>
-    {
-        ConstructorBuilder::new(self.arena, self.resolver.clone(), name)
+    pub fn constructor(&self, name: TypeId) -> ConstructorBuilder<Pattern> {
+        ConstructorBuilder::new(self.tree.clone(), self.resolver.clone(), name)
     }
 
     /// Creates an Ignored Pattern.
-    pub fn ignored(&self, pos: usize) -> Pattern<'static> {
-        Pattern::Ignored(range((pos, 1)))
+    pub fn ignored(&self, pos: u32) -> PatternId {
+        let range = range(pos, 1);
+        self.tree.borrow_mut().push_pattern(Pattern::Ignored(range), range)
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TupleBuilder<'a, Pattern<'a>> {
-        TupleBuilder::new(self.arena, self.resolver.clone())
+    pub fn tuple(&self) -> TupleBuilder<Tree, Pattern> {
+        TupleBuilder::new(self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates a Var Pattern.
-    pub fn var(&self, pos: usize, len: usize) -> Pattern<'static> {
-        Pattern::Var(var_id(&self.resolver, pos, len))
+    pub fn var(&self, pos: u32, len: u32) -> PatternId {
+        let id = var_id(&self.resolver, pos, len);
+        let range = range(pos, len);
+        self.tree.borrow_mut().push_pattern(Pattern::Var(id), range)
     }
 }
 
 //
 //  Implementations of Stmt builders
 //
-impl<'a> StmtFactory<'a> {
+impl StmtFactory {
     /// Creates a new instance.
-    pub fn new(_: &'a mem::Arena) -> Self { StmtFactory(marker::PhantomData) }
+    pub fn new(tree: RcTree) -> Self { StmtFactory { tree } }
 
     /// Creates a ReturnBuilder.
-    pub fn ret(&self) -> ReturnBuilder<'a> { ReturnBuilder::new() }
+    pub fn ret(&self) -> ReturnBuilder { ReturnBuilder::new(self.tree.clone()) }
 
     /// Creates a VariableReBindingBuilder.
-    pub fn set(&self, left: Expression<'a>, expr: Expression<'a>)
-        -> VariableReBindingBuilder<'a>
+    pub fn set(&self, left: ExpressionId, expr: ExpressionId)
+        -> VariableReBindingBuilder
     {
-        VariableReBindingBuilder::new(left, expr)
+        VariableReBindingBuilder::new(self.tree.clone(), left, expr)
     }
 
     /// Creates a VariableBindingBuilder.
-    pub fn var(&self, pattern: Pattern<'a>, expr: Expression<'a>)
-        -> VariableBindingBuilder<'a>
+    pub fn var(&self, pattern: PatternId, expr: ExpressionId)
+        -> VariableBindingBuilder
     {
-        VariableBindingBuilder::new(pattern, expr)
+        VariableBindingBuilder::new(self.tree.clone(), pattern, expr)
     }
 }
 
-impl<'a> ReturnBuilder<'a> {
+impl ReturnBuilder {
     /// Creates a new instance.
-    pub fn new() -> Self {
-        ReturnBuilder { expr: None, ret: U32_NONE, semi: U32_NONE }
+    pub fn new(tree: RcTree) -> Self {
+        ReturnBuilder { tree, expr: None, ret: U32_NONE, semi: U32_NONE }
     }
 
     /// Sets up an expression.
-    pub fn expr(&mut self, expr: Expression<'a>) -> &mut Self {
+    pub fn expr(&mut self, expr: ExpressionId) -> &mut Self {
         self.expr = Some(expr);
         self
     }
@@ -1357,33 +1450,33 @@ impl<'a> ReturnBuilder<'a> {
     }
 
     /// Creates a Return.
-    pub fn build<T: convert::From<Return<'a>>>(&self) -> T {
+    pub fn build(&self) -> StatementId {
+        let expr_range = self.expr.map(|id| self.tree.borrow().get_expression_range(id));
+
         let ret = if self.ret == U32_NONE {
-            self.expr.unwrap().span().offset() as u32 - 8
+            expr_range.unwrap().offset() as u32 - 8
         } else {
             self.ret
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.unwrap().span().end_offset() as u32
+            expr_range.unwrap().end_offset() as u32
         } else {
             self.semi
         };
 
-        Return {
-            expr: self.expr,
-            ret: ret,
-            semi: semi,
-        }.into()
+        let stmt = Return { expr: self.expr, ret: ret, semi: semi, };
+        self.tree.borrow_mut().push_statement(stmt.into())
     }
 }
 
-impl<'a> VariableReBindingBuilder<'a> {
+impl VariableReBindingBuilder {
     /// Creates a new instance.
-    pub fn new(left: Expression<'a>, expr: Expression<'a>) -> Self {
+    pub fn new(tree: RcTree, left: ExpressionId, expr: ExpressionId) -> Self {
         VariableReBindingBuilder {
-            left: left,
-            expr: expr,
+            tree,
+            left,
+            expr,
             set: U32_NONE,
             bind: U32_NONE,
             semi: U32_NONE,
@@ -1409,43 +1502,46 @@ impl<'a> VariableReBindingBuilder<'a> {
     }
 
     /// Creates a VariableReBinding.
-    pub fn build<T: convert::From<VariableReBinding<'a>>>(&self) -> T {
-        let range = self.left.span();
+    pub fn build(&self) -> StatementId {
+        let left_range = self.tree.borrow().get_expression_range(self.left);
+        let expr_range = self.tree.borrow().get_expression_range(self.expr);
 
         let set = if self.set == U32_NONE {
-            range.offset() as u32 - 5
+            left_range.offset() as u32 - 5
         } else {
             self.set
         };
 
         let bind = if self.bind == U32_NONE {
-            range.end_offset() as u32 + 1
+            left_range.end_offset() as u32 + 1
         } else {
             self.bind
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.span().end_offset() as u32
+            expr_range.end_offset() as u32
         } else {
             self.semi
         };
 
-        VariableReBinding {
+        let stmt = VariableReBinding {
             left: self.left,
             expr: self.expr,
-            set: set,
-            bind: bind,
-            semi: semi,
-        }.into()
+            set,
+            bind,
+            semi,
+        };
+        self.tree.borrow_mut().push_statement(stmt.into())
     }
 }
 
-impl<'a> VariableBindingBuilder<'a> {
+impl VariableBindingBuilder {
     /// Creates a new instance.
-    pub fn new(pattern: Pattern<'a>, expr: Expression<'a>) -> Self {
+    pub fn new(tree: RcTree, pattern: PatternId, expr: ExpressionId) -> Self {
         VariableBindingBuilder {
-            pattern: pattern,
-            expr: expr,
+            tree,
+            pattern,
+            expr,
             var: U32_NONE,
             colon: U32_NONE,
             bind: U32_NONE,
@@ -1467,7 +1563,7 @@ impl<'a> VariableBindingBuilder<'a> {
     }
 
     /// Sets up the type.
-    pub fn type_(&mut self, type_: Type<'a>) -> &mut Self {
+    pub fn type_(&mut self, type_: TypeId) -> &mut Self {
         self.type_ = Some(type_);
         self
     }
@@ -1485,55 +1581,59 @@ impl<'a> VariableBindingBuilder<'a> {
     }
 
     /// Creates a VariableBinding.
-    pub fn build<T: convert::From<VariableBinding<'a>>>(&self) -> T {
-        let range = self.pattern.span();
+    pub fn build(&self) -> StatementId {
+        let pat_range = self.tree.borrow().get_pattern_range(self.pattern);
+        let expr_range = self.tree.borrow().get_expression_range(self.expr);
+        let typ_range = self.type_.map(|id| self.tree.borrow().get_type_range(id));
 
         let var = if self.var == U32_NONE {
-            range.offset() as u32 - 5
+            pat_range.offset() as u32 - 5
         } else {
             self.var
         };
 
         let colon = if self.colon == U32_NONE {
-            if self.type_.is_some() { range.end_offset() as u32 } else { 0 }
+            if self.type_.is_some() { pat_range.end_offset() as u32 } else { 0 }
         } else {
             self.colon
         };
 
         let bind = if self.bind == U32_NONE {
-            let r = if let Some(t) = self.type_ { t.span() } else { range };
+            let r = typ_range.unwrap_or(pat_range);
             r.end_offset() as u32 + 1
         } else {
             self.bind
         };
 
         let semi = if self.semi == U32_NONE {
-            self.expr.span().end_offset() as u32
+            expr_range.end_offset() as u32
         } else {
             self.semi
         };
 
-        VariableBinding {
+        let stmt = VariableBinding {
             pattern: self.pattern,
             type_: self.type_,
             expr: self.expr,
-            var: var,
-            colon: colon,
-            bind: bind,
-            semi: semi,
-        }.into()
+            var,
+            colon,
+            bind,
+            semi,
+        };
+        self.tree.borrow_mut().push_statement(stmt.into())
     }
 }
 
 //
 //  Implementations of Low-Level builders
 //
-impl<'a, T: 'a> ConstructorBuilder<'a, T> {
+
+impl<T> ConstructorBuilder<T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>, name: Type<'a>) -> Self {
+    pub fn new(tree: RcTree, resolver: Resolver, name: TypeId) -> Self {
         ConstructorBuilder {
             type_: name,
-            arguments: TupleBuilder::new(arena, resolver)
+            arguments: TupleBuilder::new(tree, resolver)
         }
     }
 
@@ -1544,7 +1644,7 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 
     /// Appends an argument.
-    pub fn push(&mut self, arg: T) -> &mut Self {
+    pub fn push(&mut self, arg: Id<T>) -> &mut Self {
         self.arguments.push(arg);
         self
     }
@@ -1556,7 +1656,7 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 
     /// Appends a name.
-    pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
+    pub fn name(&mut self, pos: u32, length: u32) -> &mut Self {
         self.arguments.name(pos, length);
         self
     }
@@ -1568,25 +1668,41 @@ impl<'a, T: 'a> ConstructorBuilder<'a, T> {
     }
 }
 
-impl<'a, T: 'a + Clone + Span> ConstructorBuilder<'a, T> {
+impl<T> ConstructorBuilder<T>
+    where
+        Tree: Store<T> + MultiStore<Id<T>>,
+        T: Clone + From<Constructor<T>> + From<Tuple<T>>,
+{
     /// Creates a Constructor.
-    pub fn build<U: convert::From<Constructor<'a, T>>>(&self) -> U {
-        Constructor {
+    pub fn build(&self) -> Id<T> {
+        let type_range = self.arguments.store.borrow().get_type_range(self.type_);
+
+        let cons = Constructor {
             type_: self.type_,
-            arguments: self.arguments.build(),
-        }.into()
+            arguments: self.arguments.build_tuple(),
+        };
+
+        let range = if self.arguments.fields.is_empty() {
+            type_range
+        } else {
+            type_range.extend(cons.arguments.span())
+        };
+
+        let mut store = self.arguments.store.borrow_mut();
+        store.push(T::from(cons), range)
     }
 }
 
-impl<'a, T: 'a> TupleBuilder<'a, T> {
+impl<S, T> TupleBuilder<S, T> {
     /// Creates a new instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Self {
+    pub fn new(store: rc::Rc<cell::RefCell<S>>, resolver: Resolver) -> Self {
         TupleBuilder {
+            store,
             resolver,
-            fields: mem::Array::new(arena),
-            commas: mem::Array::new(arena),
-            names: mem::Array::new(arena),
-            separators: mem::Array::new(arena),
+            fields: vec!(),
+            commas: vec!(),
+            names: vec!(),
+            separators: vec!(),
             open: U32_NONE,
             close: U32_NONE,
         }
@@ -1600,7 +1716,7 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
     }
 
     /// Appends a field.
-    pub fn push(&mut self, field: T) -> &mut Self {
+    pub fn push(&mut self, field: Id<T>) -> &mut Self {
         self.fields.push(field);
         self.commas.push(U32_NONE);
         self
@@ -1608,33 +1724,46 @@ impl<'a, T: 'a> TupleBuilder<'a, T> {
 
     /// Overrides the position of the last inserted comma.
     pub fn comma(&mut self, pos: u32) -> &mut Self {
-        if let Some(c) = self.commas.as_slice_mut().last_mut() {
+        if let Some(c) = self.commas.last_mut() {
             *c = pos;
         }
         self
     }
 
     /// Appends a name.
-    pub fn name(&mut self, pos: usize, length: usize) -> &mut Self {
-        let range = range((pos, length));
+    pub fn name(&mut self, pos: u32, length: u32) -> &mut Self {
+        let range = range(pos, length);
         let id = self.resolver.resolve_range(range);
-        self.names.push((id, range));
+        self.names.push(Identifier(id, range));
         self.separators.push(U32_NONE);
         self
     }
 
     /// Overrides the position of the last inserted separator.
     pub fn separator(&mut self, pos: u32) -> &mut Self {
-        if let Some(s) = self.separators.as_slice_mut().last_mut() {
+        if let Some(s) = self.separators.last_mut() {
             *s = pos;
         }
         self
     }
 }
 
-impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
+impl<S, T> TupleBuilder<S, T>
+    where
+        S: Store<T> + MultiStore<Id<T>> + MultiStore<Identifier> + MultiStore<u32>,
+        T: Clone + From<Tuple<T>>,
+{
     /// Creates a new Tuple instance.
-    pub fn build<U: convert::From<Tuple<'a, T>>>(&self) -> U {
+    pub fn build(&self) -> Id<T> {
+        let tup = self.build_tuple();
+        let range = tup.span();
+
+        let mut store = self.store.borrow_mut();
+        store.push(T::from(tup), range)
+    }
+
+    /// Creates a new Tuple instance.
+    pub fn build_tuple(&self) -> Tuple<T> {
         assert_eq!(self.fields.len(), self.commas.len());
 
         if self.fields.is_empty() {
@@ -1646,11 +1775,13 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
             let mut result = Tuple::default();
             result.open = o;
             result.close = c;
-            return result.into();
+            return result;
         }
 
-        let names = self.names.clone().into_slice();
-        let separators = self.separators.clone().into_slice();
+        let mut store = self.store.borrow_mut();
+
+        let names = &self.names;
+        let mut separators = self.separators.clone();
 
         for (s, n) in separators.iter_mut().zip(names.iter()) {
             if *s != U32_NONE { continue; }
@@ -1658,14 +1789,14 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
             *s = n.1.end_offset() as u32;
         }
 
-        let fields = self.fields.clone().into_slice();
-        let commas = self.commas.clone().into_slice();
+        let fields = &self.fields;
+        let mut commas = self.commas.clone();
 
         for (i, (c, f)) in commas.iter_mut().zip(fields.iter()).enumerate() {
             if *c != U32_NONE { continue; }
 
             let offset = if i + 1 == fields.len() { 1 } else { 0 };
-            let pos = f.span().end_offset() - offset;
+            let pos = store.get_range(*f).end_offset() - offset;
 
             *c = pos as u32;
         }
@@ -1673,7 +1804,7 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
         let open = if self.open == U32_NONE {
             names.first()
                 .map(|r| r.1.offset())
-                .or_else(|| fields.first().map(|f| f.span().offset()))
+                .or_else(|| fields.first().map(|f| store.get_range(*f).offset()))
                 .map(|o| o as u32 - 1)
                 .unwrap_or(0)
         } else {
@@ -1686,81 +1817,92 @@ impl<'a, T: 'a + Clone + Span> TupleBuilder<'a, T> {
             self.close
         };
 
-        Tuple { fields, commas, names, separators, open, close }.into()
+        let fields = store.push_slice(fields);
+        let commas = store.push_slice(&commas);
+        let names = store.push_slice(names);
+        let separators = store.push_slice(&separators);
+
+        Tuple { fields, commas, names, separators, open, close }
     }
 }
 
-impl<'a> TypeFactory<'a> {
+impl<S> TypeFactory<S>
+    where
+        S: Store<Type>
+{
     /// Creates an instance.
-    pub fn new(arena: &'a mem::Arena, resolver: Resolver<'a>) -> Self {
-        TypeFactory { arena, resolver }
+    pub fn new(store: rc::Rc<cell::RefCell<S>>, resolver: Resolver) -> Self {
+        TypeFactory { store, resolver }
     }
 
     /// Creates a Missing Type.
-    pub fn missing(&self, pos: usize, len: usize) -> Type<'a> {
-        Type::Missing(range((pos, len)))
+    pub fn missing(&self, pos: u32, len: u32) -> TypeId {
+        let range = range(pos, len);
+        self.store.borrow_mut().push(Type::Missing(range), range)
     }
 
     /// Creates a NestedTypeBuilder.
-    pub fn nested(&self, pos: usize, len: usize) -> NestedTypeBuilder<'a> {
-        NestedTypeBuilder::new(self.arena, self.resolver.clone(), pos, len)
+    pub fn nested(&self, pos: u32, len: u32) -> NestedTypeBuilder<S> {
+        NestedTypeBuilder::new(self.store.clone(), self.resolver.clone(), pos, len)
     }
 
     /// Creates a Simple Type.
-    pub fn simple(&self, pos: usize, len: usize) -> Type<'a> {
+    pub fn simple(&self, pos: u32, len: u32) -> TypeId {
         let name = type_id(&self.resolver, pos, len);
         self.simple_named(name)
     }
 
     /// Creates a Simple Type with its ID.
-    pub fn simple_named(&self, name: TypeIdentifier) -> Type<'a> {
-        Type::Simple(name)
+    pub fn simple_named(&self, name: TypeIdentifier) -> TypeId {
+        self.store.borrow_mut().push(Type::Simple(name), name.1)
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TupleBuilder<'a, Type<'a>> {
-        TupleBuilder::new(self.arena, self.resolver.clone())
+    pub fn tuple(&self) -> TupleBuilder<S, Type> {
+        TupleBuilder::new(self.store.clone(), self.resolver.clone())
     }
 }
 
-impl<'a> NestedTypeBuilder<'a> {
+impl<S> NestedTypeBuilder<S> {
     /// Creates an instance.
     pub fn new(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
-        pos: usize,
-        len: usize,
+        store: rc::Rc<cell::RefCell<S>>,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
     )
         -> Self
     {
         let name = type_id(&resolver, pos, len);
-        Self::named(arena, resolver, name)
+        Self::named(store, resolver, name)
     }
 
     /// Creates an instance, named.
     pub fn named(
-        arena: &'a mem::Arena,
-        resolver: Resolver<'a>,
+        store: rc::Rc<cell::RefCell<S>>,
+        resolver: Resolver,
         name: TypeIdentifier,
     )
         -> Self
     {
         NestedTypeBuilder {
+            store,
             resolver,
             name,
-            components: mem::Array::new(arena),
-            colons: mem::Array::new(arena),
+            components: vec!(),
+            colons: vec!(),
         }
     }
 
     /// Appends a path component.
-    pub fn push(&mut self, pos: usize, len: usize) -> &mut Self {
-        let name = type_id(&self.resolver, pos, len);
-        self.push_named(name)
+    pub fn push(&mut self, pos: u32, len: u32) -> &mut Self {
+        let range = range(pos, len);
+        let id = self.resolver.resolve_range(range);
+        self.push_named(Identifier(id, range))
     }
 
     /// Appends a path component.
-    pub fn push_named(&mut self, name: TypeIdentifier) -> &mut Self {
+    pub fn push_named(&mut self, name: Identifier) -> &mut Self {
         self.components.push(name);
         self.colons.push(name.span().end_offset() as u32);
         self
@@ -1768,19 +1910,28 @@ impl<'a> NestedTypeBuilder<'a> {
 
     /// Overrides the position of the last inserted colon.
     pub fn colon(&mut self, pos: u32) -> &mut Self {
-        if let Some(c) = self.colons.as_slice_mut().last_mut() {
+        if let Some(c) = self.colons.last_mut() {
             *c = pos;
         }
         self
     }
+}
 
+impl<S> NestedTypeBuilder<S>
+    where
+        S: Store<Type> + MultiStore<Identifier> + MultiStore<u32>
+{
     /// Creates a Nested Type.
-    pub fn build(&self) -> Type<'a> {
-        let path = Path {
-            components: self.components.clone().into_slice(),
-            colons: self.colons.clone().into_slice(),
-        };
-        Type::Nested(self.name, path)
+    pub fn build(&self) -> TypeId {
+        let mut store = self.store.borrow_mut();
+        let components = store.push_slice(&self.components);
+        let colons = store.push_slice(&self.colons);
+
+        let path = Path { components, colons, };
+        let range = self.components.first()
+            .map(|r| r.1.extend(self.name.1))
+            .unwrap_or(self.name.1);
+        store.push(Type::Nested(self.name, path), range)
     }
 }
 
@@ -1797,22 +1948,22 @@ fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
     }
 }
 
-fn range(tup: (usize, usize)) -> com::Range { com::Range::new(tup.0, tup.1) }
+fn range(pos: u32, len: u32) -> com::Range { com::Range::new(pos as usize, len as usize) }
 
-fn field_id(resolver: &Resolver, pos: usize, len: usize) -> FieldIdentifier {
+fn field_id(resolver: &Resolver, pos: u32, len: u32) -> FieldIdentifier {
     resolver.resolve_field_identifier(
-        FieldIdentifier::Name(Default::default(), range((pos, len)))
+        FieldIdentifier::Name(Identifier(Default::default(), range(pos, len)))
     )
 }
 
-fn type_id(resolver: &Resolver, pos: usize, len: usize) -> TypeIdentifier {
+fn type_id(resolver: &Resolver, pos: u32, len: u32) -> TypeIdentifier {
     resolver.resolve_type_identifier(
-        TypeIdentifier(Default::default(), range((pos, len)))
+        TypeIdentifier(Default::default(), range(pos, len))
     )
 }
 
-fn var_id(resolver: &Resolver, pos: usize, len: usize) -> VariableIdentifier {
+fn var_id(resolver: &Resolver, pos: u32, len: u32) -> VariableIdentifier {
     resolver.resolve_variable_identifier(
-        VariableIdentifier(Default::default(), range((pos, len)))
+        VariableIdentifier(Default::default(), range(pos, len))
     )
 }

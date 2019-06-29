@@ -2,7 +2,7 @@
 //!
 //! Function parser.
 
-use basic::com::Span;
+use std::cell;
 
 use model::ast::*;
 use model::tt;
@@ -10,27 +10,35 @@ use model::tt;
 use super::com::RawParser;
 use super::{expr, typ};
 
-pub struct FunParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>
+pub struct FunParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>
 }
 
-pub fn parse_function<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Function<'g>
-{
-    let mut parser = FunParser::new(*raw);
-    let fun = parser.parse();
-    *raw = parser.into_raw();
-    fun
+pub fn parse_function<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> FunctionId {
+    let previous_tree: &'tree cell::RefCell<Tree> = raw.tree();
+
+    let tree = cell::RefCell::default();
+    {
+        let mut inner_raw = raw.rescope(&tree);
+        let mut parser = FunParser::new(inner_raw);
+
+        parser.parse();
+        inner_raw = parser.into_raw();
+
+        *raw = inner_raw.rescope(previous_tree);
+    }
+
+    raw.module().borrow_mut().push_function(tree.into_inner())
 }
 
-impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
-    pub fn new(raw: RawParser<'a, 'g, 'local>) -> FunParser<'a, 'g, 'local> {
+impl<'a, 'tree> FunParser<'a, 'tree> {
+    pub fn new(raw: RawParser<'a, 'tree>) -> FunParser<'a, 'tree> {
         FunParser { raw: raw }
     }
 
-    pub fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    pub fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    pub fn parse(&mut self) -> Function<'g> {
+    pub fn parse(&mut self) {
         use self::tt::Kind::*;
 
         let (keyword, name) = {
@@ -65,43 +73,50 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 
         let body = expr::parse_expression(&mut self.raw);
 
-        let block = if let Expression::Block(body) = body { 
-            *body
-        } else {
-            Block {
-                statements: &[],
-                expression: Some(self.raw.intern(body)),
-                open: body.span().offset() as u32,
-                close: body.span().end_offset() as u32 - 1
-            }
+        let body = if let Expression::Block(_) =
+            self.raw.tree().borrow().get_expression(body)
+        {
+            body
+        }
+        else
+        {
+            let range = self.raw.tree().borrow().get_expression_range(body);
+            let block = Block {
+                statements: Id::empty(),
+                expression: Some(body),
+                open: range.offset() as u32,
+                close: range.end_offset() as u32 - 1
+            };
+            self.raw.tree().borrow_mut().push_expression(block.into(), range)
         };
 
-        Function {
-            name: name,
-            arguments: arguments,
-            result: result,
-            body: block,
-            keyword: keyword,
-            open: open,
-            close: close,
-            arrow: arrow,
-        }
+        let fun = Function {
+            name,
+            arguments,
+            result,
+            keyword,
+            open,
+            close,
+            arrow,
+        };
+
+        self.raw.tree().borrow_mut().set_root(Root::Function(fun, body));
     }
 }
 
 //
 //  Implementation Details
 //
-impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
-    fn parse_arguments(&self, arguments: &'a [tt::Node]) -> &'g [Argument<'g>] {
+impl<'a, 'tree> FunParser<'a, 'tree> {
+    fn parse_arguments(&self, arguments: &'a [tt::Node]) -> Id<[Argument]> {
         use self::tt::Kind::*;
 
         if arguments.is_empty() {
-            return &[];
+            return Id::empty();
         }
 
         let mut raw = self.raw.spawn(arguments);
-        let mut buffer = raw.local_array();
+        let mut buffer = vec!();
 
         while raw.peek().is_some() {
             let name = raw.pop_kind(NameValue).expect("Name");
@@ -110,10 +125,11 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
                 .map(|t| t.offset() as u32).unwrap_or(0);
 
             let type_ = typ::parse_type(&mut raw);
+            let type_range = self.raw.tree().borrow().get_type_range(type_);
 
             let comma = raw.pop_kind(SignComma)
                 .map(|t| t.offset() as u32)
-                .unwrap_or(type_.span().end_offset() as u32 - 1);
+                .unwrap_or(type_range.end_offset() as u32 - 1);
 
             buffer.push(Argument {
                 name: self.raw.resolve_variable(name),
@@ -123,7 +139,7 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
             });
         }
 
-        self.raw.global().insert_slice(buffer.into_slice())
+        self.raw.tree().borrow_mut().push_arguments(&buffer)
     }
 
     fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
@@ -134,50 +150,72 @@ impl<'a, 'g, 'local> FunParser<'a, 'g, 'local> {
 //
 //  Tests
 //
+
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::{Env, LocalEnv};
+    use std::ops;
     use model::ast::*;
+    use super::super::com::tests::Env;
 
     #[test]
     fn basic_argument_less() {
-        let env = Env::new();
-        let local = env.local(b":fun add() -> Int { 1 + 2 }");
-        let (e, i, _, _, t) = local.factories();
+        let env = LocalEnv::new(b":fun add() -> Int { 1 + 2 }");
+        let (e, i, _, _, _, t) = env.factories();
+        i.function(
+            5,
+            3,
+            t.simple(14, 3),
+            e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
+        ).build();
 
-        assert_eq!(
-            funit(&local),
-            i.function(
-                5,
-                3,
-                t.simple(14, 3),
-                e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
-            ).build()
-        );
+        assert_eq!(env.actual_function(), env.expected_module());
     }
 
     #[test]
     fn basic_add() {
-        let env = Env::new();
-        let local = env.local(b":fun add(a: Int, b: Int) -> Int { a + b }");
-        let (e, i, _, _, t) = local.factories();
+        let env = LocalEnv::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
+        let (e, i, _, _, _, t) = env.factories();
+        let (a_type, b_type) = (t.simple(12, 3), t.simple(20, 3));
+        i.function(
+            5,
+            3,
+            t.simple(28, 3),
+            e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
+        )
+            .push(9, 1, a_type)
+            .push(17, 1, b_type)
+            .build();
 
-        assert_eq!(
-            funit(&local),
-            i.function(
-                5,
-                3,
-                t.simple(28, 3),
-                e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
-            )
-            .push(9, 1, t.simple(12, 3))
-            .push(17, 1, t.simple(20, 3))
-            .build()
-        );
+        assert_eq!(env.actual_function(), env.expected_module());
     }
 
-    fn funit<'g>(local: &LocalEnv<'g>) -> Function<'g> {
-        super::FunParser::new(local.raw()).parse()
+    struct LocalEnv { env: Env, }
+
+    impl LocalEnv {
+        fn new(source: &[u8]) -> LocalEnv {
+            LocalEnv { env: Env::new(source), }
+        }
+
+        fn actual_function(&self) -> Module {
+            let mut raw = self.env.raw();
+            super::parse_function(&mut raw);
+            let result = self.env.actual_module().borrow().clone();
+            println!("actual_function: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn expected_module(&self) -> Module {
+            let result = self.env.expected_module().borrow().clone();
+            println!("expected_module: {:#?}", result);
+            println!();
+            result
+        }
+    }
+
+    impl ops::Deref for LocalEnv {
+        type Target = Env;
+
+        fn deref(&self) -> &Env { &self.env }
     }
 }
-

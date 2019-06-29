@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(unify(&local, expr), Status::Unified);
     }
 
-    fn unify<'g>(local: &LocalEnv<'g>, e: ExpressionId) -> Status {
+    fn unify(local: &LocalEnv, e: ExpressionId) -> Status {
         println!("source before: {:?}", local.source());
         println!();
 

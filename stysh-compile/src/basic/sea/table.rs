@@ -27,7 +27,7 @@ pub trait TableIndex {
 /// Table.
 ///
 /// An append-only container mapping a key to a single value.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Table<K: TableIndex, V> {
     //  Pool of all values, in order of insertion.
     values: Vec<V>,
@@ -38,7 +38,7 @@ pub struct Table<K: TableIndex, V> {
 /// MultiTable.
 ///
 /// An append-only container mapping a key to multiple values.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct MultiTable<K: TableIndex, V> {
     //  Maps a key to the range of indices of its values.
     index: Vec<Range<u32>>,
@@ -501,6 +501,18 @@ impl<K: TableIndex, V> Default for MultiTable<K, V> {
             values: Default::default(),
             _marker: marker::PhantomData,
         }
+    }
+}
+
+impl<K: TableIndex + fmt::Debug, V: fmt::Debug> fmt::Debug for Table<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "Table {{ values: {:?} }}", self.values)
+    }
+}
+
+impl<K: TableIndex + fmt::Debug, V: fmt::Debug> fmt::Debug for MultiTable<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "MultiTable {{ index: {:?}, values: {:?} }}", self.index, self.values)
     }
 }
 

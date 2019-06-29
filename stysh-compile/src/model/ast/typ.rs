@@ -6,30 +6,33 @@ use basic::com::{self, Span};
 use basic::mem::InternId;
 
 use model::ast::*;
-use model::tt;
+use model::ast::store::{Store, MultiStore};
+
+/// A TypeId.
+pub type TypeId = Id<Type>;
 
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Type<'a> {
+pub enum Type {
     /// A missing type.
     Missing(com::Range),
     /// A nested nominal type.
-    Nested(TypeIdentifier, Path<'a>),
+    Nested(TypeIdentifier, Path),
     /// A simple nominal type.
     Simple(TypeIdentifier),
     /// A tuple.
-    Tuple(Tuple<'a, Type<'a>>),
+    Tuple(Tuple<Type>),
 }
 
 /// A Path.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Path<'a> {
+pub struct Path {
     /// Components of the path.
-    pub components: &'a [TypeIdentifier],
+    pub components: Id<[Identifier]>,
     /// Offsets of the double colons separating the arguments, an absent double
     /// colon is placed at the offset of the last character of the field it
     /// would have followed.
-    pub colons: &'a [u32],
+    pub colons: Id<[u32]>,
 }
 
 /// A Type Identifier.
@@ -39,7 +42,8 @@ pub struct TypeIdentifier(pub InternId, pub com::Range);
 //
 //  Implementations
 //
-impl<'a> Type<'a> {
+
+impl Type {
     /// Returns the name of the type.
     pub fn name(&self) -> Option<TypeIdentifier> {
         use self::Type::*;
@@ -61,41 +65,38 @@ impl TypeIdentifier {
     }
 }
 
-impl<'a> Path<'a> {
-    /// Returns the token of the comma following the i-th field, if there is no
-    /// such comma the position it would have been at is faked.
-    pub fn double_colon(&self, i: usize) -> Option<tt::Token> {
-        self.colons
-            .get(i)
-            .map(|&o| tt::Token::new(tt::Kind::SignDoubleColon, o as usize, 2))
+/// Recursively copies the given TypeId from source to target.
+pub fn replicate_type<Source, Target>(
+    id: TypeId,
+    source: &Source,
+    target: &mut Target
+)
+    -> TypeId
+    where
+        Source: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+        Target: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+{
+    use self::Type::*;
+
+    let ty = source.get(id);
+    let range = source.get_range(id);
+
+    match ty {
+        Missing(_) | Simple(_) => target.push(ty, range),
+        Nested(name, path) => {
+            let path = replicate_path(path, source, target);
+            target.push(Nested(name, path), range)
+        },
+        Tuple(tuple) => {
+            let tuple = replicate_tuple(tuple, source, target);
+            target.push(Tuple(tuple), range)
+        }
     }
 }
 
 //
 //  Implementations of Span
 //
-impl<'a> Span for Type<'a> {
-    /// Returns the range spanned by the type.
-    fn span(&self) -> com::Range {
-        use self::Type::*;
-
-        match *self {
-            Missing(r) => r,
-            Nested(t, p) => p.span().extend(t.span()),
-            Simple(t) => t.span(),
-            Tuple(t) => t.span(),
-        }
-    }
-}
-
-impl<'a> Span for Path<'a> {
-    /// Returns the range spanned by the path.
-    fn span(&self) -> com::Range {
-        self.components[0]
-            .span()
-            .extend(self.double_colon(self.colons.len() - 1).unwrap().span())
-    }
-}
 
 impl Span for TypeIdentifier {
     /// Returns the range spanned by the type identifier.
@@ -105,6 +106,50 @@ impl Span for TypeIdentifier {
 //
 //  Implementations of From
 //
-impl<'a> convert::From<Tuple<'a, Type<'a>>> for Type<'a> {
-    fn from(t: Tuple<'a, Type<'a>>) -> Type<'a> { Type::Tuple(t) }
+
+impl convert::From<Tuple<Type>> for Type {
+    fn from(t: Tuple<Type>) -> Type { Type::Tuple(t) }
+}
+
+//
+//  Private Functions
+//
+
+fn replicate_path<Source, Target>(
+    path: Path,
+    source: &Source,
+    target: &mut Target
+)
+    -> Path
+    where
+        Source: MultiStore<Identifier> + MultiStore<u32>,
+        Target: MultiStore<Identifier> + MultiStore<u32>,
+{
+    let components = target.push_slice(source.get_slice(path.components));
+    let colons = target.push_slice(source.get_slice(path.colons));
+    Path { components, colons }
+}
+
+fn replicate_tuple<Source, Target>(
+    tuple: Tuple<Type>,
+    source: &Source,
+    target: &mut Target
+)
+    -> Tuple<Type>
+    where
+        Source: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+        Target: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+{
+    let fields: Vec<_> = source.get_slice(tuple.fields)
+        .iter()
+        .map(|&id| replicate_type(id, source, target))
+        .collect();
+    let fields = target.push_slice(&fields);
+
+    let commas = target.push_slice(source.get_slice(tuple.commas));
+    let names = target.push_slice(source.get_slice(tuple.names));
+    let separators = target.push_slice(source.get_slice(tuple.separators));
+    let (open, close) = (tuple.open, tuple.close);
+
+    Tuple { fields, commas, names, separators, open, close, }
 }

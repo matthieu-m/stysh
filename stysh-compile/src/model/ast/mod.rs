@@ -14,11 +14,12 @@ pub mod interning;
 mod common;
 mod expr;
 mod item;
+mod module;
 mod pattern;
 mod stmt;
+mod store;
+mod tree;
 mod typ;
-
-use basic::com::{self, Span};
 
 pub use self::common::*;
 pub use self::expr::*;
@@ -26,70 +27,8 @@ pub use self::item::*;
 pub use self::pattern::*;
 pub use self::stmt::*;
 pub use self::typ::*;
+pub use self::module::Module;
+pub use self::store::{Store, MultiStore};
+pub use self::tree::{Root, Tree};
 
 pub use model::tt::StringFragment;
-
-/// A List of AST nodes.
-pub type List<'a> = &'a [Node<'a>];
-
-/// An AST node, the building piece of the graph.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Node<'a> {
-    /// An expression.
-    Expr(Expression<'a>),
-    /// An item.
-    Item(Item<'a>),
-    /// A statement.
-    Stmt(Statement<'a>),
-}
-
-//
-//  Implementations of Span
-//
-impl<'a> Span for Node<'a> {
-    /// Returns the range spanned by the node.
-    fn span(&self) -> com::Range {
-        use self::Node::*;
-
-        match *self {
-            Expr(expr) => expr.span(),
-            Item(item) => item.span(),
-            Stmt(stmt) => stmt.span(),
-        }
-    }
-}
-//
-//  Tests
-//
-#[cfg(test)]
-mod tests {
-    use basic::{com, mem};
-    use super::*;
-    use model::ast::{builder::Factory, interning::Resolver};
-
-    #[test]
-    fn range_node_binary_operator() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b"   1 + 1", Default::default());
-        let e = Factory::new(&global_arena, resolver).expr();
-
-        let node = Node::Expr(e.bin_op(e.int(1, 3), e.int(1, 7)).build());
-
-        assert_eq!(node.span(), range(3, 5));
-    }
-
-    #[test]
-    fn range_node_prefix_unary_operator() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b" !     1", Default::default());
-        let e = Factory::new(&global_arena, resolver).expr();
-
-        let node = Node::Expr(e.pre_op(e.int(1, 7)).offset(1).build());
-
-        assert_eq!(node.span(), range(1, 7));
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
-    }
-}

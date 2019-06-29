@@ -71,16 +71,16 @@ pub mod tests {
         target: RcTree,
     }
 
-    pub struct LocalEnv<'g> {
+    pub struct LocalEnv {
         registry: mocks::MockRegistry,
         context: Context,
         source: RcTree,
         target: RcTree,
-        resolver: Resolver<'g>,
+        resolver: Resolver,
     }
 
     impl Env {
-        pub fn local<'g>(&self, raw: &'g [u8]) -> LocalEnv<'g> {
+        pub fn local(&self, raw: &[u8]) -> LocalEnv {
             let interner = rc::Rc::new(mem::Interner::new());
             LocalEnv {
                 registry: mocks::MockRegistry::new(),
@@ -120,39 +120,29 @@ pub mod tests {
         }
     }
 
-    impl<'g> LocalEnv<'g> {
-        #[allow(dead_code)]
+    impl LocalEnv {
         pub fn core<'a>(&'a self) -> CoreUnifier<'a> {
             CoreUnifier::new(&self.context, &self.registry, &*self.source)
         }
 
-        #[allow(dead_code)]
         pub fn source(&self) -> &cell::RefCell<Tree> { &*self.source }
 
-        #[allow(dead_code)]
         pub fn target(&self) -> &cell::RefCell<Tree> { &*self.target }
 
-        #[allow(dead_code)]
         pub fn item_id(&self, pos: usize, len: usize) -> ItemIdentifier {
             let id = ItemIdentifier(Default::default(), com::Range::new(pos, len));
             self.resolver.resolve_item_id(id)
         }
 
-        #[allow(dead_code)]
         pub fn value_id(&self, pos: usize, len: usize) -> ValueIdentifier {
             let id = ValueIdentifier(Default::default(), com::Range::new(pos, len));
             self.resolver.resolve_value_id(id)
         }
 
-        #[allow(dead_code)]
-        pub fn link_gvns(&self, gvns: &[Gvn]) { self.context.link_gvns(gvns); }
-
-        #[allow(dead_code)]
         pub fn link_types(&self, ty: TypeId, rel: Relation<TypeId>) {
             self.context.link_types(ty, rel);
         }
 
-        #[allow(dead_code)]
         pub fn link_types_of(&self, gvn: Gvn, grel: Relation<Gvn>) {
             let ty = self.type_of(gvn);
             let rel = grel.map(|g| self.type_of(g));
@@ -162,10 +152,6 @@ pub mod tests {
             self.context.link_types(ty, rel);
         }
 
-        #[allow(dead_code)]
-        pub fn resolver(&self) -> &Resolver<'g> { &self.resolver }
-
-        #[allow(dead_code)]
         fn type_of(&self, gvn: Gvn) -> TypeId {
             if let Some(e) = gvn.as_expression() {
                 self.source.borrow().get_expression_type_id(e)

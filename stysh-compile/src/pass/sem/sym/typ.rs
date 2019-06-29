@@ -8,45 +8,53 @@
 use basic::mem;
 
 use model::{ast, hir};
+use model::ast::{Store, MultiStore};
 
 use super::scp::Scope;
 
 /// The Type Mapper.
 ///
 /// For each top-level reference to a symbol, resolves the symbol.
-pub struct TypeMapper<'a> {
+pub struct TypeMapper<'a, S> {
     scope: &'a Scope,
+    store: &'a S,
 }
 
-impl<'a> TypeMapper<'a> {
+impl<'a, S> TypeMapper<'a, S> {
     /// Creates a new instance.
     ///
     /// The global arena sets the lifetime of the returned objects, while the
     /// local arena is used as a scratch buffer and can be reset immediately.
-    pub fn new(scope: &'a Scope) -> Self {
-        TypeMapper { scope }
+    pub fn new(scope: &'a Scope, store: &'a S) -> Self {
+        TypeMapper { scope, store, }
     }
+}
 
+impl<'a, S> TypeMapper<'a, S>
+    where
+        S: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
+{
     /// Translates a type into... a type!
-    pub fn type_of(&self, t: &ast::Type) -> hir::TypeDefinition {
+    pub fn type_of(&self, t: ast::TypeId) -> hir::TypeDefinition {
         use model::ast::Type;
 
-        match *t {
+        match self.store.get(t) {
             Type::Missing(_) => unimplemented!(),
             Type::Nested(t, p) => self.type_of_nested(t, p),
             Type::Simple(t) => self.type_of_simple(t),
-            Type::Tuple(ref t) => self.type_of_tuple(t),
+            Type::Tuple(t) => self.type_of_tuple(t),
         }
     }
 
     /// Translates a tuple of types into a type.
-    pub fn tuple_of(&self, tup: &ast::Tuple<ast::Type>) -> hir::DynTuple<hir::TypeDefinition> {
-        debug_assert!(
-            tup.names.is_empty() || tup.names.len() == tup.fields.len()
-        );
+    pub fn tuple_of(&self, tup: ast::Tuple<ast::Type>) -> hir::DynTuple<hir::TypeDefinition> {
+        let fields = self.store.get_slice(tup.fields);
+        let names = self.store.get_slice(tup.names);
 
-        let fields = self.array_of(tup.fields, |t| self.type_of(t));
-        let names = self.array_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r));
+        debug_assert!(names.is_empty() || names.len() == fields.len());
+
+        let fields = self.array_of(fields, |&t| self.type_of(t));
+        let names = self.array_of(names, |&id| id.into());
 
         hir::DynTuple { fields, names }
     }
@@ -55,12 +63,16 @@ impl<'a> TypeMapper<'a> {
 //
 //  Implementation Details
 //
-impl<'a> TypeMapper<'a> {
+impl<'a, S> TypeMapper<'a, S>
+    where
+        S: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
+{
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::TypeDefinition
     {
-        let path = mem::DynArray::with_capacity(p.components.len());
-        for &c in p.components {
+        let components = self.store.get_slice(p.components);
+        let path = mem::DynArray::with_capacity(components.len());
+        for &c in components {
             path.push(hir::TypeDefinition::Unresolved(
                 c.into(),
                 Default::default(),
@@ -78,7 +90,7 @@ impl<'a> TypeMapper<'a> {
     }
 
     /// Translates a tuple of types into a type.
-    pub fn type_of_tuple(&self, t: &ast::Tuple<ast::Type>) -> hir::TypeDefinition {
+    pub fn type_of_tuple(&self, t: ast::Tuple<ast::Type>) -> hir::TypeDefinition {
         hir::TypeDefinition::Tuple(self.tuple_of(t))
     }
 

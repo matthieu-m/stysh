@@ -21,50 +21,49 @@ use super::scp::{BlockScope, CallableCandidate, Scope};
 pub struct SymbolMapper<'a> {
     scope: &'a Scope,
     context: &'a Context,
+    ast_tree: &'a ast::Tree,
     tree: &'a cell::RefCell<hir::Tree>,
 }
 
 impl<'a> SymbolMapper<'a> {
     /// Creates a new instance.
-    ///
-    /// The global arena sets the lifetime of the returned objects, while the
-    /// local arena is used as a scratch buffer and can be reset immediately.
     pub fn new(
         scope: &'a Scope,
         context: &'a Context,
+        ast_tree: &'a ast::Tree,
         tree: &'a cell::RefCell<hir::Tree>,
     )
         -> Self
     {
-        SymbolMapper { scope, context, tree }
+        SymbolMapper { scope, context, ast_tree, tree }
     }
 
     /// Translates a pattern into... a pattern!
-    pub fn pattern_of(&self, p: &ast::Pattern) -> hir::PatternId {
+    pub fn pattern_of(&self, p: ast::PatternId) -> hir::PatternId {
         use model::ast::Pattern;
 
-        match *p {
+        match self.ast_tree.get_pattern(p) {
             Pattern::Constructor(c) => self.pattern_of_constructor(c),
             Pattern::Ignored(v) => self.pattern_of_ignored(v),
-            Pattern::Tuple(t) => self.pattern_of_tuple(&t),
+            Pattern::Tuple(t) => self.pattern_of_tuple(t),
             Pattern::Var(v) => self.pattern_of_var(v),
         }
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&self, t: &ast::Type) -> hir::Type {
+    pub fn type_of(&self, t: ast::TypeId) -> hir::Type {
         use model::ast::Type;
 
-        match *t {
+        match self.ast_tree.get_type(t) {
             Type::Missing(_) => unimplemented!(),
             Type::Nested(t, p) => self.type_of_nested(t, p),
             Type::Simple(t) => self.type_of_simple(t),
-            Type::Tuple(ref t) => self.type_of_tuple(t),
+            Type::Tuple(t) => self.type_of_tuple(t),
         }
     }
 
     /// Translates an expression into a value.
-    pub fn value_of(&self, e: &ast::Expression) -> hir::ExpressionId {
+    pub fn value_of(&self, e: ast::ExpressionId) -> hir::ExpressionId {
         self.value_of_expr(e)
     }
 
@@ -88,17 +87,17 @@ impl<'a> SymbolMapper<'a> {
 //  Implementation Details
 //
 impl<'a> SymbolMapper<'a> {
-
     fn pattern_of_constructor(
         &self,
         c: ast::Constructor<ast::Pattern>,
     )
         -> hir::PatternId
     {
-        let typ = self.type_of(&c.type_);
-        let range = c.span();
+        let typ = self.type_of(c.type_);
+        let range = self.ast_tree.get_type_range(c.type_).extend(c.arguments.span());
         let tuple = self.tuple_of(
-            &c.arguments,
+            self.ast_tree.get_pattern_ids(c.arguments.fields),
+            self.ast_tree.get_identifiers(c.arguments.names),
             |p| self.pattern_of(p),
             |p| self.tree_mut().push_patterns(p),
         );
@@ -117,11 +116,12 @@ impl<'a> SymbolMapper<'a> {
         self.tree_mut().push_pattern(hir::Type::unresolved(), pattern, underscore)
     }
 
-    fn pattern_of_tuple(&self, tup: &ast::Tuple<ast::Pattern>)
+    fn pattern_of_tuple(&self, tup: ast::Tuple<ast::Pattern>)
         -> hir::PatternId
     {
         let pat = self.tuple_of(
-            tup,
+            self.ast_tree.get_pattern_ids(tup.fields),
+            self.ast_tree.get_identifiers(tup.names),
             |p| self.pattern_of(p),
             |p| self.tree_mut().push_patterns(p),
         );
@@ -153,16 +153,17 @@ impl<'a> SymbolMapper<'a> {
 
     fn statements<'b>(
         &self,
-        stmts: &[ast::Statement],
+        stmts: ast::Id<[ast::StatementId]>,
         scope: &mut BlockScope<'b>,
     )
         -> hir::Id<[hir::Stmt]>
     {
+        let stmts = self.ast_tree.get_statement_ids(stmts);
         let stmts = self.array_of(stmts, |&s| {
-            match s {
-                ast::Statement::Return(r) => self.stmt_of_return(&r, scope),
-                ast::Statement::Set(set) => self.stmt_of_set(&set, scope),
-                ast::Statement::Var(var) => self.stmt_of_var(&var, scope),
+            match self.ast_tree.get_statement(s) {
+                ast::Statement::Return(r) => self.stmt_of_return(r, scope),
+                ast::Statement::Set(set) => self.stmt_of_set(set, scope),
+                ast::Statement::Var(var) => self.stmt_of_var(var, scope),
             }
         });
 
@@ -170,13 +171,13 @@ impl<'a> SymbolMapper<'a> {
     }
 
     fn stmt_of_return<'b>(&self,
-        ret: &ast::Return,
+        ret: ast::Return,
         scope: &mut BlockScope<'b>,
     )
         -> hir::Stmt
     {
         let value = if let Some(e) = ret.expr {
-            self.rescope(scope).value_of_expr(&e)
+            self.rescope(scope).value_of_expr(e)
         } else {
             let typ = hir::Type::unit();
             let expr = hir::Expr::unit();
@@ -191,14 +192,14 @@ impl<'a> SymbolMapper<'a> {
 
     fn stmt_of_set<'b>(
         &self,
-        set: &ast::VariableReBinding,
+        set: ast::VariableReBinding,
         scope: &mut BlockScope<'b>,
     )
         -> hir::Stmt
     {
         let range = set.span();
-        let left = self.rescope(scope).value_of_expr(&set.left);
-        let right = self.rescope(scope).value_of_expr(&set.expr);
+        let left = self.rescope(scope).value_of_expr(set.left);
+        let right = self.rescope(scope).value_of_expr(set.expr);
 
         self.context.link_gvns(&[left.into(), right.into()]);
         self.link_gvn_types(left.into(), Relation::SuperTypeOf(right.into()));
@@ -208,13 +209,13 @@ impl<'a> SymbolMapper<'a> {
 
     fn stmt_of_var<'b>(
         &self,
-        var: &ast::VariableBinding,
+        var: ast::VariableBinding,
         scope: &mut BlockScope<'b>,
     )
         -> hir::Stmt
     {
-        let left = self.rescope(self.scope).pattern_of(&var.pattern);
-        let right = self.rescope(scope).value_of_expr(&var.expr);
+        let left = self.rescope(self.scope).pattern_of(var.pattern);
+        let right = self.rescope(scope).value_of_expr(var.expr);
         let range = var.span();
 
         scope.add_pattern(left, &self.tree());
@@ -227,7 +228,8 @@ impl<'a> SymbolMapper<'a> {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::Type
     {
-        let path: Vec<hir::ItemIdentifier> = p.components.iter().map(|&c| c.into()).collect();
+        let components = self.ast_tree.get_identifiers(p.components);
+        let path: Vec<hir::ItemIdentifier> = components.iter().map(|&c| c.into()).collect();
         let path = self.tree_mut().push_path(&path);
 
         hir::Type::Unresolved(t.into(), path)
@@ -237,30 +239,33 @@ impl<'a> SymbolMapper<'a> {
         self.convert_type(&self.scope.lookup_type(t.into()))
     }
 
-    fn type_of_tuple(&self, tup: &ast::Tuple<ast::Type>) -> hir::Type {
+    fn type_of_tuple(&self, tup: ast::Tuple<ast::Type>) -> hir::Type {
         hir::Type::Tuple(self.tuple_of(
-            tup,
+            self.ast_tree.get_type_ids(tup.fields),
+            self.ast_tree.get_identifiers(tup.names),
             |t| self.tree_mut().push_type(self.type_of(t)),
             |t| self.tree_mut().push_type_ids(t),
         ))
     }
 
-    fn value_of_expr(&self, expr: &ast::Expression) -> hir::ExpressionId {
+    fn value_of_expr(&self, expr: ast::ExpressionId) -> hir::ExpressionId {
         use model::ast::Expression::*;
 
-        match *expr {
+        let range = self.ast_tree.get_expression_range(expr);
+
+        match self.ast_tree.get_expression(expr) {
             BinOp(op, _, left, right)
                  => self.value_of_binary_operator(op, left, right),
             Block(b) => self.value_of_block(b),
-            Constructor(c) => self.value_of_constructor(c),
+            Constructor(c) => self.value_of_constructor(c, range),
             FieldAccess(f) => self.value_of_field(f),
             FunctionCall(fun) => self.value_of_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
-            Lit(lit) => self.value_of_literal(lit),
+            Lit(lit) => self.value_of_literal(lit, range),
             Loop(loop_) => self.value_of_loop(loop_),
             PreOp(op, _, e)
-                => self.value_of_prefix_operator(op, e, expr.span()),
-            Tuple(t) => self.value_of_tuple(&t),
+                => self.value_of_prefix_operator(op, e, range),
+            Tuple(t) => self.value_of_tuple(t),
             Var(id) => self.value_of_variable(id),
         }
     }
@@ -268,8 +273,8 @@ impl<'a> SymbolMapper<'a> {
     fn value_of_binary_operator(
         &self,
         op: ast::BinaryOperator,
-        left: &ast::Expression,
-        right: &ast::Expression
+        left: ast::ExpressionId,
+        right: ast::ExpressionId,
     )
         -> hir::ExpressionId
     {
@@ -312,10 +317,10 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn value_of_block(&self, block: &ast::Block) -> hir::ExpressionId {
+    fn value_of_block(&self, block: ast::Block) -> hir::ExpressionId {
         let mut scope = BlockScope::new(self.scope);
 
-        let stmts = self.statements(&block.statements, &mut scope);
+        let stmts = self.statements(block.statements, &mut scope);
         let expr = block.expression.map(
             |e| self.rescope(&scope).value_of_expr(e)
         );
@@ -339,25 +344,29 @@ impl<'a> SymbolMapper<'a> {
         }
     }
 
-    fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>)
+    fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>, range: com::Range)
         -> hir::ExpressionId
     {
         let arguments = self.tuple_of(
-            &c.arguments,
+            self.ast_tree.get_expression_ids(c.arguments.fields),
+            self.ast_tree.get_identifiers(c.arguments.names),
             |v| self.value_of(v),
             |e| self.tree_mut().push_expressions(e),
         );
 
-        let typ = self.type_of(&c.type_);
+        let typ = self.type_of(c.type_);
         let expr = hir::Expr::Constructor(arguments);
 
-        let result = self.tree_mut().push_expression(typ, expr, c.span());
+        let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
         result
     }
 
     fn value_of_call(&self, fun: ast::FunctionCall) -> hir::ExpressionId {
-        let candidate = if let ast::Expression::Var(id) = *fun.function {
+        let function = self.ast_tree.get_expression(fun.function);
+        let function_range = self.ast_tree.get_expression_range(fun.function);
+
+        let candidate = if let ast::Expression::Var(id) = function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!()
@@ -366,15 +375,17 @@ impl<'a> SymbolMapper<'a> {
         let callable = self.convert_callable(&candidate);
 
         let arguments = self.tuple_of(
-            &fun.arguments,
+            self.ast_tree.get_expression_ids(fun.arguments.fields),
+            self.ast_tree.get_identifiers(fun.arguments.names),
             |a| self.value_of(a),
             |e| self.tree_mut().push_expressions(e),
         );
 
         let typ = hir::Type::unresolved();
         let expr = hir::Expr::Call(callable, arguments);
+        let range = function_range.extend(fun.arguments.span());
 
-        let result = self.tree_mut().push_expression(typ, expr, fun.span());
+        let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
         result
     }
@@ -386,29 +397,32 @@ impl<'a> SymbolMapper<'a> {
 
         let f = match field.field {
             Index(i, r) => hir::Field::Index(i, r),
-            Name(n, r) =>
-                hir::Field::Unresolved(hir::ValueIdentifier(n, r)),
+            Name(id) => hir::Field::Unresolved(id.into()),
         };
 
         let typ = hir::Type::unresolved();
         let expr = hir::Expr::FieldAccess(accessed, f);
+        let range = self.ast_tree.get_expression_range(field.accessed)
+            .extend(field.field.span());
 
-        let result = self.tree_mut().push_expression(typ, expr, field.span());
+        let result = self.tree_mut().push_expression(typ, expr, range);
 
         self.context.link_gvns(&[result.into(), accessed.into()]);
 
         result
     }
 
-    fn value_of_if_else(&self, if_else: &ast::IfElse) -> hir::ExpressionId {
-        let condition = self.value_of_expr(&if_else.condition);
-        let true_branch = self.value_of_block(&if_else.true_expr);
-        let false_branch = self.value_of_block(&if_else.false_expr);
+    fn value_of_if_else(&self, if_else: ast::IfElse) -> hir::ExpressionId {
+        let condition = self.value_of_expr(if_else.condition);
+        let true_branch = self.value_of_expr(if_else.true_expr);
+        let false_branch = self.value_of_expr(if_else.false_expr);
 
         let typ = hir::Type::unresolved();
         let expr = hir::Expr::If(condition, true_branch, false_branch);
+        let range = com::Range::new(if_else.if_ as usize, 1)
+            .extend(self.ast_tree.get_expression_range(if_else.false_expr));
 
-        let result = self.tree_mut().push_expression(typ, expr, if_else.span());
+        let result = self.tree_mut().push_expression(typ, expr, range);
 
         self.context.link_gvns(
             &[result.into(), true_branch.into(), false_branch.into()]
@@ -420,14 +434,16 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn value_of_literal(&self, lit: ast::Literal) -> hir::ExpressionId {
+    fn value_of_literal(&self, lit: ast::Literal, r: com::Range)
+        -> hir::ExpressionId
+    {
         use model::ast::Literal::*;
 
         match lit {
-            Bool(b, r) => self.value_of_literal_bool(b, r),
-            Bytes(_, b, r) => self.value_of_literal_bytes(b, r),
-            Integral(i, r) => self.value_of_literal_integral(i, r),
-            String(_, s, r) => self.value_of_literal_string(s, r),
+            Bool(b) => self.value_of_literal_bool(b, r),
+            Bytes(_, b) => self.value_of_literal_bytes(b, r),
+            Integral(i) => self.value_of_literal_integral(i, r),
+            String(_, s) => self.value_of_literal_string(s, r),
         }
     }
 
@@ -472,9 +488,9 @@ impl<'a> SymbolMapper<'a> {
         self.tree_mut().push_expression(typ, expr, range)
     }
 
-    fn value_of_loop(&self, loop_: &ast::Loop) -> hir::ExpressionId {
+    fn value_of_loop(&self, loop_: ast::Loop) -> hir::ExpressionId {
         let mut scope = BlockScope::new(self.scope);
-        let stmts = self.statements(&loop_.statements, &mut scope);
+        let stmts = self.statements(loop_.statements, &mut scope);
 
         let typ = hir::Type::Builtin(hir::BuiltinType::Void);
         let expr = hir::Expr::Loop(stmts);
@@ -484,7 +500,7 @@ impl<'a> SymbolMapper<'a> {
 
     fn value_of_prefix_operator(&self, 
         op: ast::PrefixOperator,
-        expr: &ast::Expression,
+        expr: ast::ExpressionId,
         range: com::Range,
     )
         -> hir::ExpressionId
@@ -510,11 +526,12 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn value_of_tuple(&self, tup: &ast::Tuple<ast::Expression>)
+    fn value_of_tuple(&self, tup: ast::Tuple<ast::Expression>)
         -> hir::ExpressionId
     {
         let expr = self.tuple_of(
-            tup,
+            self.ast_tree.get_expression_ids(tup.fields),
+            self.ast_tree.get_identifiers(tup.names),
             |v| self.value_of(v),
             |e| self.tree_mut().push_expressions(e),
         );
@@ -565,6 +582,7 @@ impl<'a> SymbolMapper<'a> {
         SymbolMapper {
             scope: scope,
             context: self.context,
+            ast_tree: self.ast_tree,
             tree: self.tree,
         }
     }
@@ -711,21 +729,21 @@ impl<'a> SymbolMapper<'a> {
         input.iter().map(|e| transformer(&e)).collect()
     }
 
-    fn tuple_of<T, U, F: FnMut(&T) -> U, I: FnOnce(&[U]) -> hir::Id<[U]>>(
+    fn tuple_of<T, U, F: FnMut(ast::Id<T>) -> U, I: FnOnce(&[U]) -> hir::Id<[U]>>(
         &self,
-        tup: &ast::Tuple<'_, T>,
-        transformer: F,
+        fields: &[ast::Id<T>],
+        names: &[ast::Identifier],
+        mut transformer: F,
         inserter: I,
     )
         -> hir::Tuple<U>
     {
-        debug_assert!(
-            tup.names.is_empty() || tup.names.len() == tup.fields.len()
-        );
+        debug_assert!(names.is_empty() || names.len() == fields.len());
 
-        let fields = self.array_of(tup.fields, transformer);
+        let fields = self.array_of(fields, |&id| transformer(id));
         let fields = inserter(&fields);
-        let names = self.array_of(tup.names, |&(i, r)| hir::ValueIdentifier(i, r));
+
+        let names = self.array_of(names, |&id| id.into());
         let names = self.tree_mut().push_names(&names);
 
         hir::Tuple { fields, names }
@@ -770,8 +788,7 @@ mod tests {
 
     #[test]
     fn value_block_empty() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{}", &global_arena);
+        let env = Env::new(b"{}");
 
         let ast = env.ast().expr().block_expression_less().range(0, 2).build();
 
@@ -780,56 +797,49 @@ mod tests {
             v.block_expression_less().range(0, 2).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_builtin_boolean() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"true", &global_arena);
+        let env = Env::new(b"true");
         let e = env.ast().expr();
         let v = env.hir().value().bool_(true, 0);
 
         assert_eq!(
-            env.value_of(&e.bool_(true, 0)),
+            env.value_of(e.bool_(true, 0)),
             env.expression(v)
         );
     }
 
     #[test]
     fn value_builtin_string() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"'Hello, World!'", &global_arena);
+        let env = Env::new(b"'Hello, World!'");
         let e = env.ast().expr();
         let v = env.hir().value();
         let id = env.intern(b"Hello, World!");
 
         assert_eq!(
-            env.value_of(&e.literal(0, 15).push_text(1, 13).string().build()),
+            env.value_of(e.literal(0, 15).push_text(1, 13).string().build()),
             env.expression(v.string(id, 0, 15))
         );
     }
 
     #[test]
     fn value_call_add() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"1 + 2", &global_arena);
+        let env = Env::new(b"1 + 2");
         let e = env.ast().expr();
         let v = env.hir().value();
 
         assert_eq!(
-            env.value_of(&e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
+            env.value_of(e.bin_op(e.int(1, 0), e.int(2, 4)).build()),
             env.expression(v.call().push(v.int(1, 0)).push(v.int(2, 4)).build())
         );
     }
 
     #[test]
     fn value_call_basic() {
-        let global_arena = mem::Arena::new();
-        let mut env = Env::new(b"basic(1, 2)    basic", &global_arena);
+        let mut env = Env::new(b"basic(1, 2)    basic");
 
         let ast = {
             let e = env.ast().expr();
@@ -854,13 +864,12 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor() {
-        let global_arena = mem::Arena::new();
-        let mut env = Env::new(b"Rec   Rec", &global_arena);
+        let mut env = Env::new(b"Rec   Rec");
 
         let ast = {
             let f = env.ast();
@@ -880,13 +889,12 @@ mod tests {
             v.constructor(rec).range(0, 3).build()
         };
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor_arguments() {
-        let global_arena = mem::Arena::new();
-        let mut env = Env::new(b"Rec(1)   Rec", &global_arena);
+        let mut env = Env::new(b"Rec(1)   Rec");
 
         let ast = {
             let f = env.ast();
@@ -906,15 +914,13 @@ mod tests {
             v.constructor(rec).push(v.int(1, 4)).range(0, 6).build()
         };
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_constructor_nested() {
-        let global_arena = mem::Arena::new();
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
-            &global_arena
         );
 
         let ast = {
@@ -936,24 +942,21 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_if_else() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b":if true { 1 } :else { 0 }", &global_arena);
+        let env = Env::new(b":if true { 1 } :else { 0 }");
         let e = env.ast().expr();
         let v = env.hir().value();
 
         assert_eq!(
-            env.value_of(&ast::Expression::If(
-                &e.if_else(
-                    e.bool_(true, 4),
-                    e.block(e.int(1, 11)).build(),
-                    e.block(e.int(0, 23)).build(),
-                ).build()
-            )),
+            env.value_of(e.if_else(
+                e.bool_(true, 4),
+                e.block(e.int(1, 11)).build(),
+                e.block(e.int(0, 23)).build(),
+            ).build()),
             env.expression(v.if_(
                 v.bool_(true, 4),
                 v.block(v.int(1, 11)).build(),
@@ -964,19 +967,17 @@ mod tests {
 
     #[test]
     fn value_loop() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b":loop { }", &global_arena);
+        let env = Env::new(b":loop { }");
 
         let ast = env.ast().expr().loop_(0).build();
         let hir = env.hir().value().loop_().range(0, 9).build();
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_record_field_access() {
-        let global_arena = mem::Arena::new();
-        let mut env = Env::new(b":rec Rec(Int); Rec(42).0", &global_arena);
+        let mut env = Env::new(b":rec Rec(Int); Rec(42).0");
 
         let ast = {
             let f = env.ast();
@@ -1011,13 +1012,12 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(env.value_of(&ast), env.expression(hir));
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_return_basic() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{ :return 1; }", &global_arena);
+        let env = Env::new(b"{ :return 1; }");
 
         let ast = {
             let f = env.ast();
@@ -1035,18 +1035,13 @@ mod tests {
             v.block_expression_less().push(s.ret(v.int(1, 10))).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_return_if_and_else() {
-        let global_arena = mem::Arena::new();
         let env = Env::new(
             b":if true { :return 1; } :else { :return 2; }",
-            &global_arena
         );
 
         let ast = {
@@ -1075,16 +1070,12 @@ mod tests {
             ).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::If(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_set_basic() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{ :var a := 1; :set a := 2; a }", &global_arena);
+        let env = Env::new(b"{ :var a := 1; :set a := 2; a }");
 
         let ast = {
             let f = env.ast();
@@ -1108,19 +1099,12 @@ mod tests {
             v.block(v.name_ref(a, 28).pattern(0).build()).push(var).push(set).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_set_field() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(
-            b"{ :var a := (1,); :set a.0 := 2; a }",
-            &global_arena
-        );
+        let env = Env::new(b"{ :var a := (1,); :set a.0 := 2; a }");
 
         let ast = {
             let f = env.ast();
@@ -1158,23 +1142,19 @@ mod tests {
             v.block(v.name_ref(a, 33).pattern(0).build()).push(var).push(set).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_tuple_field_access() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"(42, 43).1", &global_arena);
+        let env = Env::new(b"(42, 43).1");
 
         let e = env.ast().expr();
         let v = env.hir().value();
 
         assert_eq!(
             env.value_of(
-                &e.field_access(
+                e.field_access(
                     e.tuple().push(e.int(42, 1)).push(e.int(43, 5)).build(),
                 )
                     .index(1)
@@ -1197,8 +1177,7 @@ mod tests {
 
     #[test]
     fn value_tuple_keyed_field_access() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"(.x := 42, .y := 43).y", &global_arena);
+        let env = Env::new(b"(.x := 42, .y := 43).y");
 
         let e = env.ast().expr();
         let v = env.hir().value();
@@ -1207,7 +1186,7 @@ mod tests {
 
         assert_eq!(
             env.value_of(
-                &e.field_access(
+                e.field_access(
                     e.tuple()
                         .push(e.int(42, 7)).name(1, 2)
                         .push(e.int(43, 17)).name(11, 2)
@@ -1232,8 +1211,7 @@ mod tests {
 
     #[test]
     fn value_var_basic() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }", &global_arena);
+        let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }");
 
         let ast = {
             let f = env.ast();
@@ -1260,16 +1238,12 @@ mod tests {
             v.block(add).push(set_a).push(set_b).build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_var_ignored() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{ :var a := 1; :var _ := 2; a }", &global_arena);
+        let env = Env::new(b"{ :var a := 1; :var _ := 2; a }");
 
         let ast = {
             let f = env.ast();
@@ -1295,18 +1269,13 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_var_pattern_constructor() {
-        let global_arena = mem::Arena::new();
         let mut env = Env::new(
             b":rec Some(Int); { :var Some(a) := Some(1); a }",
-            &global_arena
         );
 
         let ast = {
@@ -1349,18 +1318,13 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_var_pattern_keyed_constructor() {
-        let global_arena = mem::Arena::new();
         let mut env = Env::new(
             b":rec Some(.x: Int); { :var Some(.x: a) := Some(.x: 1); a }",
-            &global_arena
         );
 
         let ast = {
@@ -1406,16 +1370,12 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
     #[test]
     fn value_var_pattern_tuple() {
-        let global_arena = mem::Arena::new();
-        let env = Env::new(b"{ :var (a, b) := (1, 2); a }", &global_arena);
+        let env = Env::new(b"{ :var (a, b) := (1, 2); a }");
 
         let ast = {
             let f = env.ast();
@@ -1452,36 +1412,35 @@ mod tests {
                 .build()
         };
 
-        assert_eq!(
-            env.value_of(&ast::Expression::Block(&ast)),
-            env.expression(hir)
-        );
+        assert_eq!(env.value_of(ast), env.expression(hir));
     }
 
-    struct Env<'g> {
+    struct Env {
         scope: MockScope,
         context: Context,
-        global_arena: &'g mem::Arena,
-        ast_resolver: ast::interning::Resolver<'g>,
-        hir_resolver: hir::interning::Resolver<'g>,
+        ast_resolver: ast::interning::Resolver,
+        hir_resolver: hir::interning::Resolver,
+        ast_module: ast::builder::RcModule,
+        ast_tree: ast::builder::RcTree,
         tree: RcTree,
     }
 
-    impl<'g> Env<'g> {
-        fn new(fragment: &'g [u8], arena: &'g mem::Arena) -> Env<'g> {
+    impl Env {
+        fn new(fragment: &[u8]) -> Env {
             let interner = rc::Rc::new(mem::Interner::new());
             Env {
                 scope: MockScope::new(),
                 context: Context::default(),
-                global_arena: arena,
                 ast_resolver: ast::interning::Resolver::new(fragment, interner.clone()),
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
+                ast_module: ast::builder::RcModule::default(),
+                ast_tree: ast::builder::RcTree::default(),
                 tree: RcTree::default(),
             }
         }
 
-        fn ast(&self) -> AstFactory<'g> {
-            AstFactory::new(self.global_arena, self.ast_resolver.clone())
+        fn ast(&self) -> AstFactory {
+            AstFactory::new(self.ast_module.clone(), self.ast_tree.clone(), self.ast_resolver.clone())
         }
 
         fn hir(&self) -> HirFactory { HirFactory::new(self.tree.clone()) }
@@ -1565,14 +1524,17 @@ mod tests {
             hir::ValueIdentifier(self.hir_resolver.from_range(range), range)
         }
 
-        fn mapper<'a>(&'a self, tree: &'a cell::RefCell<hir::Tree>) -> super::SymbolMapper<'a> {
-            super::SymbolMapper::new(&self.scope, &self.context, tree)
-        }
+        fn value_of(&self, expr: ast::ExpressionId) -> hir::Tree {
+            use super::SymbolMapper as SM;
 
-        fn value_of(&self, expr: &ast::Expression) -> hir::Tree {
+            let ast_tree = self.ast_tree.borrow();
             let tree = cell::RefCell::new(hir::Tree::new());
 
-            let expr = self.mapper(&tree).value_of(expr);
+            println!("{:#?}", ast_tree);
+            println!();
+
+            let expr = SM::new(&self.scope, &self.context, &ast_tree, &tree)
+                .value_of(expr);
             tree.borrow_mut().set_root_expression(expr);
 
             println!("{:#?}", tree);
@@ -1585,4 +1547,5 @@ mod tests {
     fn range(start: usize, length: usize) -> com::Range {
         com::Range::new(start, length)
     }
+
 }

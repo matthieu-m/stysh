@@ -10,8 +10,8 @@ use basic::mem;
 use model::hir::*;
 
 /// Resolver
-pub struct Resolver<'g> {
-    source: &'g [u8],
+pub struct Resolver {
+    source: Vec<u8>,
     interner: rc::Rc<mem::Interner>,
 }
 
@@ -19,16 +19,19 @@ pub struct Resolver<'g> {
 //  Public interface of Resolver
 //
 
-impl<'g> Resolver<'g> {
+impl Resolver {
     /// Creates an instance.
     pub fn new(
-        source: &'g [u8],
+        source: &[u8],
         interner: rc::Rc<mem::Interner>,
     )
         -> Self
     {
-        Resolver { source, interner }
+        Resolver { source: source.to_vec(), interner }
     }
+
+    /// Returns reference to source.
+    pub fn source(&self) -> &[u8] { &self.source }
 
     /// Returns reference to Interner.
     pub fn interner(&self) -> &mem::Interner { &*self.interner }
@@ -48,7 +51,7 @@ impl<'g> Resolver<'g> {
         if range == Default::default() {
             Default::default()
         } else {
-            let raw = &self.source[range];
+            let raw = &self.source()[range];
             self.interner.insert(raw)
         }
     }

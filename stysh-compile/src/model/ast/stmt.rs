@@ -6,23 +6,26 @@ use basic::com::{self, Span};
 
 use model::ast::*;
 
+/// A Statement ID.
+pub type StatementId = Id<Statement>;
+
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Statement<'a> {
+pub enum Statement {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A variable re-binding.
-    Set(VariableReBinding<'a>),
+    Set(VariableReBinding),
     /// A return statement.
-    Return(Return<'a>),
+    Return(Return),
     /// A variable definition.
-    Var(VariableBinding<'a>),
+    Var(VariableBinding),
 }
 
 /// A return statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Return<'a> {
+pub struct Return {
     /// Expression being returned.
-    pub expr: Option<Expression<'a>>,
+    pub expr: Option<ExpressionId>,
     /// Offset of the :return keyword.
     pub ret: u32,
     /// Offset of the ; sign.
@@ -31,13 +34,13 @@ pub struct Return<'a> {
 
 /// A variable binding.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct VariableBinding<'a> {
+pub struct VariableBinding {
     /// Name of the binding.
-    pub pattern: Pattern<'a>,
+    pub pattern: PatternId,
     /// Type of the binding, if specified.
-    pub type_: Option<Type<'a>>,
+    pub type_: Option<TypeId>,
     /// Expression being bound.
-    pub expr: Expression<'a>,
+    pub expr: ExpressionId,
     /// Offset of the :var keyword.
     pub var: u32,
     /// Offset of the : sign, or 0 if none.
@@ -50,11 +53,11 @@ pub struct VariableBinding<'a> {
 
 /// A variable re-binding.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct VariableReBinding<'a> {
+pub struct VariableReBinding {
     /// Left-hand side identifying a binding.
-    pub left: Expression<'a>,
+    pub left: ExpressionId,
     /// Expression being bound.
-    pub expr: Expression<'a>,
+    pub expr: ExpressionId,
     /// Offset of the :set keyword.
     pub set: u32,
     /// Offset of the := sign.
@@ -66,7 +69,21 @@ pub struct VariableReBinding<'a> {
 //
 //  Implementations of Span
 //
-impl<'a> Span for Return<'a> {
+
+impl Span for Statement {
+    /// Returns the range spanned by the statement.
+    fn span(&self) -> com::Range {
+        use self::Statement::*;
+
+        match *self {
+            Set(s) => s.span(),
+            Return(r) => r.span(),
+            Var(v) => v.span(),
+        }
+    }
+}
+
+impl Span for Return {
     /// Returns the range spanned by the return statement.
     fn span(&self) -> com::Range {
         let len = self.semi + 1 - self.ret;
@@ -74,13 +91,9 @@ impl<'a> Span for Return<'a> {
     }
 }
 
-impl<'a> Span for VariableBinding<'a> {
+impl Span for VariableBinding {
     /// Returns the range spanned by the binding.
     fn span(&self) -> com::Range {
-        debug_assert!(
-            self.semi as usize >= self.expr.span().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.span()
-        );
         com::Range::new(
             self.var as usize,
             (self.semi + 1 - self.var) as usize
@@ -88,61 +101,29 @@ impl<'a> Span for VariableBinding<'a> {
     }
 }
 
-impl<'a> Span for VariableReBinding<'a> {
+impl Span for VariableReBinding {
     /// Returns the range spanned by the binding.
     fn span(&self) -> com::Range {
-        debug_assert!(
-            self.semi as usize >= self.expr.span().end_offset() - 1,
-            "{} should occur after {}", self.semi, self.expr.span()
-        );
         com::Range::new(
             self.set as usize,
             (self.semi + 1 - self.set) as usize
         )
-    } 
+    }
 }
+
 
 //
 //  Implementations of From
 //
-impl<'a> convert::From<Return<'a>> for Statement<'a> {
-    fn from(r: Return<'a>) -> Statement<'a> { Statement::Return(r) }
+
+impl convert::From<Return> for Statement {
+    fn from(r: Return) -> Statement { Statement::Return(r) }
 }
 
-impl<'a> convert::From<VariableBinding<'a>> for Statement<'a> {
-    fn from(v: VariableBinding<'a>) -> Statement<'a> { Statement::Var(v) }
+impl convert::From<VariableBinding> for Statement {
+    fn from(v: VariableBinding) -> Statement { Statement::Var(v) }
 }
 
-impl<'a> convert::From<VariableReBinding<'a>> for Statement<'a> {
-    fn from(v: VariableReBinding<'a>) -> Statement<'a> { Statement::Set(v) }
-}
-
-//
-//  Tests
-//
-#[cfg(test)]
-mod tests {
-    use basic::{com, mem};
-    use super::*;
-    use model::ast::{builder::Factory, interning::Resolver};
-
-    #[test]
-    fn range_stmt_variable_binding() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b"     :var fool := 1234;", Default::default());
-        let f = Factory::new(&global_arena, resolver);
-        let (e, p, s) = (f.expr(), f.pat(), f.stmt());
-
-        let mut var = s.var(p.var(10, 4), e.int(1234, 18));
-
-        let with_semi: Statement = var.build();
-        assert_eq!(with_semi.span(), range(5, 18));
-
-        let without_semi: Statement = var.semi_colon(21).build();
-        assert_eq!(without_semi.span(), range(5, 17));
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
-    }
+impl convert::From<VariableReBinding> for Statement {
+    fn from(v: VariableReBinding) -> Statement { Statement::Set(v) }
 }

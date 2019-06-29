@@ -2,6 +2,8 @@
 //!
 //! Type Parser.
 
+use std::cell;
+
 use basic::com::{self, Span};
 
 use model::tt::{Kind, Node};
@@ -9,37 +11,27 @@ use model::ast::*;
 
 use super::com::RawParser;
 
-pub fn parse_enum<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Enum<'g>
-{
+pub fn parse_enum<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> EnumId {
     let mut parser = EnumRecParser::new(*raw);
     let e = parser.parse_enum();
     *raw = parser.into_raw();
     e
 }
 
-pub fn parse_record<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Record<'g>
-{
+pub fn parse_record<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> RecordId {
     let mut parser = EnumRecParser::new(*raw);
     let r = parser.parse_record();
     *raw = parser.into_raw();
     r
 }
 
-pub fn parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Type<'g>
-{
-    let mut parser = TypeParser::new(*raw);
-    let t = parser.parse();
-    *raw = parser.into_raw();
-    t
+pub fn parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> TypeId {
+    let tree = raw.tree();
+    parse_type_impl(raw, tree)
 }
 
-pub fn try_parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Option<Type<'g>>
-{
-    let mut parser = TypeParser::new(*raw);
+pub fn try_parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> Option<TypeId> {
+    let mut parser = TypeParser::new(*raw, raw.tree());
     let t = parser.try_parse();
     *raw = parser.into_raw();
     t
@@ -48,22 +40,23 @@ pub fn try_parse_type<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 //
 //  Implementation Details
 //
-struct EnumRecParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>,
+struct EnumRecParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>,
 }
 
-struct TypeParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>,
+struct TypeParser<'a, 'tree, 'store, S> {
+    raw: RawParser<'a, 'tree>,
+    store: &'store cell::RefCell<S>,
 }
 
-impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> EnumRecParser<'a, 'g, 'local> {
+impl<'a, 'tree> EnumRecParser<'a, 'tree> {
+    fn new(raw: RawParser<'a, 'tree>) -> Self {
         EnumRecParser { raw: raw }
     }
 
-    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse_enum(&mut self) -> Enum<'g> {
+    fn parse_enum(&mut self) -> EnumId {
         //  Expects:
         //  -   :enum
         //  -   type-identifier
@@ -78,12 +71,12 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
                 .map(|t| self.raw.resolve_type(t))
                 .unwrap_or(TypeIdentifier::default());
 
-        match self.raw.peek() {
+        let enum_ = match self.raw.peek() {
             Some(Node::Braced(o, ns, c)) => {
                 let mut parser = EnumRecParser::new(self.raw.spawn(ns));
 
-                let mut variants = self.raw.local_array();
-                let mut commas = self.raw.local_array();
+                let mut variants = vec!();
+                let mut commas = vec!();
                 while let Some((v, c)) =
                     parser.parse_inner_record(Kind::SignComma)
                 {
@@ -91,27 +84,31 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
                     commas.push(c);
                 }
 
+                let mut module = self.raw.module().borrow_mut();
+
                 Enum {
                     name: name,
-                    variants: self.raw.intern_slice(variants.into_slice()),
+                    variants: module.push_inner_records(&variants),
                     keyword: keyword.offset() as u32,
                     open: o.offset() as u32,
                     close: c.offset() as u32,
-                    commas: self.raw.intern_slice(commas.into_slice()),
+                    commas: module.push_positions(&commas),
                 }
             },
             _ => Enum {
                 name: name,
-                variants: &[],
+                variants: Id::empty(),
                 keyword: keyword.offset() as u32,
                 open: 0,
                 close: 0,
-                commas: &[],
+                commas: Id::empty(),
             },
-        }
+        };
+
+        self.raw.module().borrow_mut().push_enum(enum_)
     }
 
-    fn parse_record(&mut self) -> Record<'g> {
+    fn parse_record(&mut self) -> RecordId {
         let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
         let missing = com::Range::new(keyword.span().end_offset(), 0);
 
@@ -119,14 +116,16 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
             self.parse_inner_record(Kind::SignSemiColon)
                 .unwrap_or((InnerRecord::Missing(missing), 0));
 
-        Record {
+        let record = Record {
             inner: inner,
             keyword: keyword.offset() as u32,
             semi_colon: semi
-        }
+        };
+
+        self.raw.module().borrow_mut().push_record(record)
     }
 
-    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord<'g>, u32)> {
+    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord, u32)> {
         if self.raw.peek().is_none() {
             return None;
         }
@@ -150,7 +149,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_inner_record_variant(&mut self) -> Option<InnerRecord<'g>> {
+    fn parse_inner_record_variant(&mut self) -> Option<InnerRecord> {
         let identifier =
             self.raw
                 .pop_kind(Kind::NameType)
@@ -158,7 +157,7 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
 
         if let Some(identifier) = identifier {
             if let Some(Node::Braced(..)) = self.raw.peek() {
-                let mut inner = TypeParser::new(self.raw.clone());
+                let mut inner = TypeParser::new(self.raw.clone(), self.raw.module());
                 let tuple = inner.parse_tuple();
                 self.raw = inner.into_raw();
 
@@ -172,38 +171,51 @@ impl<'a, 'g, 'local> EnumRecParser<'a, 'g, 'local> {
     }
 }
 
-impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> TypeParser<'a, 'g, 'local> {
-        TypeParser { raw: raw }
+impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
+    where
+        S: Store<Type> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
+{
+    fn new(raw: RawParser<'a, 'tree>, store: &'store cell::RefCell<S>) -> Self {
+        TypeParser { raw, store, }
     }
 
-    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse(&mut self) -> Type<'g> {
-        self.try_parse()
-            .or_else(||
-                self.raw.peek().map(|n|
-                    Type::Missing(com::Range::new(n.span().offset(), 0))
-                )
-            )
-            .unwrap_or(Type::Missing(com::Range::new(0, 0)))
+    fn parse(&mut self) -> TypeId {
+        if let Some(ty) = self.try_parse() {
+            return ty;
+        }
+
+        let range = if let Some(n) = self.raw.peek() {
+            com::Range::new(n.span().offset(), 0)
+        } else {
+            com::Range::new(0, 0)
+        };
+
+        self.store.borrow_mut().push(Type::Missing(range), range)
     }
 
-    fn parse_tuple(&mut self) -> Tuple<'g, Type<'g>> {
+    //  fn(&mut Self) -> ast::Id<T>
+    fn parse_tuple(&mut self) -> Tuple<Type> {
         if let Some(Node::Braced(o, ns, c)) = self.raw.peek() {
             self.raw.pop_node();
-            return self.raw.parse_tuple(parse_type, Kind::SignColon, ns, o, c);
+
+            let store = self.store;
+            let parser = |raw: &mut RawParser<'a, 'tree>| {
+                parse_type_impl(raw, store)
+            };
+            return self.raw.parse_tuple(self.store, parser, Kind::SignColon, ns, o, c);
         }
 
         panic!("Unreachable: should only be called on Node::Braced");
     }
 
-    fn try_parse(&mut self) -> Option<Type<'g>> {
+    fn try_parse(&mut self) -> Option<TypeId> {
         self.raw.peek().and_then(|node| {
             match node {
                 Node::Run(run) => {
-                    let mut components = self.raw.local_array();
-                    let mut colons = self.raw.local_array();
+                    let mut components = vec!();
+                    let mut colons = vec!();
 
                     if run[0].kind() != Kind::NameType {
                         return None;
@@ -211,32 +223,48 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 
                     let mut t =
                         self.raw.pop_kind(Kind::NameType).expect("Type");
+                    let mut range = t.span();
 
                     while let Some(c) =
                         self.raw.pop_kind(Kind::SignDoubleColon)
                     {
-                        components.push(self.raw.resolve_type(t));
+                        components.push(self.raw.resolve_identifier(t));
                         colons.push(c.offset() as u32);
 
                         t = self.raw.pop_kind(Kind::NameType).expect("Type");
+                        range = range.extend(t.span());
                     }
 
                     if components.is_empty() {
-                        Some(Type::Simple(self.raw.resolve_type(t)))
+                        Some((Type::Simple(self.raw.resolve_type(t)), range))
                     } else {
+                        let mut store = self.store.borrow_mut();
                         let path = Path {
-                            components:
-                                self.raw.intern_slice(components.into_slice()),
-                            colons: self.raw.intern_slice(colons.into_slice()),
+                            components: store.push_slice(&components),
+                            colons: store.push_slice(&colons),
                         };
-                        Some(Type::Nested(self.raw.resolve_type(t), path))
+                        Some((Type::Nested(self.raw.resolve_type(t), path), range))
                     }
                 },
-                Node::Braced(..) => Some(Type::Tuple(self.parse_tuple())),
+                Node::Braced(..) => {
+                    let tup = self.parse_tuple();
+                    Some((Type::Tuple(tup), tup.span()))
+                },
                 _ => unimplemented!()
             }
-        })
+        }).map(|(ty, range)| self.store.borrow_mut().push(ty, range))
     }
+}
+
+fn parse_type_impl<'a, 'tree, S>(raw: &mut RawParser<'a, 'tree>, store: &cell::RefCell<S>)
+    -> TypeId
+    where
+        S: Store<Type> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
+{
+    let mut parser  = TypeParser::new(*raw, store);
+    let t = parser.parse();
+    *raw = parser.into_raw();
+    t
 }
 
 //
@@ -244,276 +272,249 @@ impl<'a, 'g, 'local> TypeParser<'a, 'g, 'local> {
 //
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::{Env, LocalEnv};
+    use std::ops;
     use model::ast::*;
+    use super::super::com::tests::Env;
 
     #[test]
     fn enum_empty() {
-        let env = Env::new();
-        let local = env.local(b":enum Empty {}");
-        let i = local.factory().item();
+        let env = LocalEnv::new(b":enum Empty {}");
+        let i = env.factory().item();
+        i.enum_(6, 5).braces(12, 13).build();
 
-        assert_eq!(
-            enumit(&local),
-            i.enum_(6, 5).braces(12, 13).build()
-        );
+        assert_eq!(env.actual_enum(), env.expected_module());
     }
 
     #[test]
     fn enum_unit_single() {
-        let env = Env::new();
-        let local = env.local(b":enum Simple { First }");
-        let i = local.factory().item();
+        let env = LocalEnv::new(b":enum Simple { First }");
+        let i = env.factory().item();
+        i.enum_(6, 6).push_unit(15, 5).build();
 
-        assert_eq!(
-            enumit(&local),
-            i.enum_(6, 6).push_unit(15, 5).build()
-        );
+        assert_eq!(env.actual_enum(), env.expected_module());
     }
 
     #[test]
     fn enum_unit_single_trailing_comma() {
-        let env = Env::new();
-        let local = env.local(b":enum Simple { First ,}");
-        let i = local.factory().item();
+        let env = LocalEnv::new(b":enum Simple { First ,}");
+        let i = env.factory().item();
+        i.enum_(6, 6).braces(13, 22).push_unit(15, 5).comma(21).build();
 
-        assert_eq!(
-            enumit(&local),
-            i.enum_(6, 6).braces(13, 22).push_unit(15, 5).comma(21).build()
-        ); 
+        assert_eq!(env.actual_enum(), env.expected_module());
     }
 
     #[test]
     fn enum_unit_multiple() {
-        let env = Env::new();
-        let local = env.local(b":enum Simple { First, Second, Third }");
-        let i = local.factory().item();
+        let env = LocalEnv::new(b":enum Simple { First, Second, Third }");
+        let i = env.factory().item();
+        i.enum_(6, 6)
+            .push_unit(15, 5)
+            .push_unit(22, 6)
+            .push_unit(30, 5)
+            .build();
 
-        assert_eq!(
-            enumit(&local),
-            i.enum_(6, 6)
-                .push_unit(15, 5)
-                .push_unit(22, 6)
-                .push_unit(30, 5)
-                .build()
-        );
+        assert_eq!(env.actual_enum(), env.expected_module());
     }
 
     #[test]
     fn rec_tuple() {
-        let env = Env::new();
-        let local = env.local(b":rec Tup(Int, String);");
-        let (_, i, _, _, t) = local.factories();
+        let env = LocalEnv::new(b":rec Tup(Int, String);");
+        let (_, i, _, _, t, _) = env.factories();
+        let tuple = t.tuple().push(t.simple(9, 3)).push(t.simple(14, 6)).build_tuple();
+        i.record(5, 3).tuple(tuple).build();
 
-        assert_eq!(
-            recit(&local),
-            i.record(5, 3).tuple(
-                t.tuple()
-                    .push(t.simple(9, 3))
-                    .push(t.simple(14, 6))
-                    .build()
-            ).build()
-        );
+        assert_eq!(env.actual_record(), env.expected_module());
     }
 
     #[test]
     fn rec_tuple_keyed() {
-        let env = Env::new();
-        let local = env.local(b":rec Person(.name: String, .age: Int);");
-        let (_, i, _, _, t) = local.factories();
-
-        assert_eq!(
-            recit(&local),
-            i.record(5, 6).tuple(
-                t.tuple()
+        let env = LocalEnv::new(b":rec Person(.name: String, .age: Int);");
+        let (_, i, _, _, t, _) = env.factories();
+        let tuple = t.tuple()
                     .name(12, 5).push(t.simple(19, 6))
                     .name(27, 4).push(t.simple(33, 3))
-                    .build()
-            ).build()
-        );
+                    .build_tuple();
+        i.record(5, 6).tuple(tuple).build();
+
+        assert_eq!(env.actual_record(), env.expected_module());
     }
 
     #[test]
     fn rec_unit() {
-        let env = Env::new();
-        let local = env.local(b":rec Simple;");
-        let i = local.factory().item();
+        let env = LocalEnv::new(b":rec Simple;");
+        let i = env.factory().item();
+        i.record(5, 6).build();
 
-        assert_eq!(
-            recit(&local),
-            i.record(5, 6).build()
-        );
+        assert_eq!(env.actual_record(), env.expected_module());
     }
 
     #[test]
     fn type_simple() {
-        let env = Env::new();
-        let local = env.local(b"Int");
-        let t = local.factory().type_();
+        //  By default, types are parsed in the Tree, so test with the Module
+        //  to ensure that the non-default path works just as well.
+        let env = LocalEnv::new(b"Int");
+        env.factory().type_module().simple(0, 3);
 
-        assert_eq!(
-            typeit(&local),
-            t.simple(0, 3)
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn type_nested() {
-        let env = Env::new();
-        let local = env.local(b"Enum::Variant");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"Enum::Variant");
+        env.factory().type_module().nested(6, 7).push(0, 4).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.nested(6, 7).push(0, 4).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn type_nested_nested() {
-        let env = Env::new();
-        let local = env.local(b"Enum::Other::Variant");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"Enum::Other::Variant");
+        env.factory().type_module().nested(13, 7).push(0, 4).push(6, 5).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.nested(13, 7).push(0, 4).push(6, 5).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_unit() {
-        let env = Env::new();
-        let local = env.local(b"()");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"()");
+        env.factory().type_module().tuple().parens(0, 1).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple().parens(0, 1).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_unit_spaced() {
-        let env = Env::new();
-        let local = env.local(b"( )");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"( )");
+        env.factory().type_module().tuple().parens(0, 2).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple().parens(0, 2).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_simple() {
-        let env = Env::new();
-        let local = env.local(b"(Int)");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"(Int)");
+        let t = env.factory().type_module();
+        t.tuple().push(t.simple(1, 3)).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple().push(t.simple(1, 3)).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_simple_trailing_comma() {
-        let env = Env::new();
-        let local = env.local(b"(Int,)");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"(Int,)");
+        let t = env.factory().type_module();
+        t.tuple().push(t.simple(1, 3)).comma(4).build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple().push(t.simple(1, 3)).comma(4).build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_few() {
-        let env = Env::new();
-        let local = env.local(b"(Int,Int ,Int)");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"(Int,Int ,Int)");
+        let t = env.factory().type_module();
+        t.tuple()
+            .push(t.simple(1, 3))
+            .push(t.simple(5, 3))
+            .comma(9)
+            .push(t.simple(10, 3))
+            .build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple()
-                .push(t.simple(1, 3))
-                .push(t.simple(5, 3))
-                .comma(9)
-                .push(t.simple(10, 3))
-                .build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_few_spaces_and_commas() {
-        let env = Env::new();
-        let local = env.local(b" ( Int , Int, Int , )");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b" ( Int , Int, Int , )");
+        let t = env.factory().type_module();
+        t.tuple()
+            .parens(1, 20)
+            .push(t.simple(3, 3))
+            .comma(7)
+            .push(t.simple(9, 3))
+            .push(t.simple(14, 3))
+            .comma(18)
+            .build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple()
-                .parens(1, 20)
-                .push(t.simple(3, 3))
-                .comma(7)
-                .push(t.simple(9, 3))
-                .push(t.simple(14, 3))
-                .comma(18)
-                .build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_keyed() {
-        let env = Env::new();
-        let local = env.local(b"(.name: String, .age: Int)");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"(.name: String, .age: Int)");
+        let t = env.factory().type_module();
+        t.tuple()
+            .name(1, 5).push(t.simple(8, 6))
+            .name(16, 4).push(t.simple(22, 3))
+            .build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple()
-                .name(1, 5).push(t.simple(8, 6))
-                .name(16, 4).push(t.simple(22, 3))
-                .build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
     #[test]
     fn tuple_nested() {
-        let env = Env::new();
-        let local = env.local(b"((Int, Int), Int, )");
-        let t = local.factory().type_();
+        let env = LocalEnv::new(b"((Int, Int), Int, )");
+        let t = env.factory().type_module();
+        t.tuple()
+            .parens(0, 18)
+            .push(
+                t.tuple()
+                    .push(t.simple(2, 3))
+                    .push(t.simple(7, 3))
+                    .build(),
+            )
+            .push(t.simple(13, 3))
+            .comma(16)
+            .build();
 
-        assert_eq!(
-            typeit(&local),
-            t.tuple()
-                .parens(0, 18)
-                .push(
-                    t.tuple()
-                        .push(t.simple(2, 3))
-                        .push(t.simple(7, 3))
-                        .build(),
-                )
-                .push(t.simple(13, 3))
-                .comma(16)
-                .build()
-        );
+        assert_eq!(env.actual_type(), env.expected_module());
     }
 
-    fn enumit<'g>(local: &LocalEnv<'g>) -> Enum<'g> {
-        let mut raw = local.raw();
-        super::parse_enum(&mut raw)
+    struct LocalEnv { env: Env, }
+
+    impl LocalEnv {
+        fn new(source: &[u8]) -> LocalEnv {
+            LocalEnv { env: Env::new(source), }
+        }
+
+        fn actual_enum(&self) -> Module {
+            let mut raw = self.env.raw();
+            super::parse_enum(&mut raw);
+            let result = self.env.actual_module().borrow().clone();
+            println!("actual_enum: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn actual_record(&self) -> Module {
+            let mut raw = self.env.raw();
+            super::parse_record(&mut raw);
+            let result = self.env.actual_module().borrow().clone();
+            println!("actual_record: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn actual_type(&self) -> Module {
+            let mut raw = self.env.raw();
+            let module = raw.module();
+            super::parse_type_impl(&mut raw, module);
+            let result = self.env.actual_module().borrow().clone();
+            println!("actual_type: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn expected_module(&self) -> Module {
+            let result = self.env.expected_module().borrow().clone();
+            println!("expected_module: {:#?}", result);
+            println!();
+            result
+        }
     }
 
-    fn recit<'g>(local: &LocalEnv<'g>) -> Record<'g> {
-        let mut raw = local.raw();
-        super::parse_record(&mut raw)
-    }
+    impl ops::Deref for LocalEnv {
+        type Target = Env;
 
-    fn typeit<'g>(local: &LocalEnv<'g>) -> Type<'g> {
-        let mut raw = local.raw();
-        super::parse_type(&mut raw)
+        fn deref(&self) -> &Env { &self.env }
     }
 }

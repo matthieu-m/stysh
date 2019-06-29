@@ -3,34 +3,36 @@
 use std::convert;
 
 use basic::com::{self, Span};
-use basic::mem::{self, InternId};
+use basic::mem::InternId;
 
 use model::ast::*;
-use model::tt;
+
+/// An ExpressionId.
+pub type ExpressionId = Id<Expression>;
 
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Expression<'a> {
+pub enum Expression {
     /// A binary operation.
-    BinOp(BinaryOperator, u32, &'a Expression<'a>, &'a Expression<'a>),
+    BinOp(BinaryOperator, u32, ExpressionId, ExpressionId),
     /// A block expression.
-    Block(&'a Block<'a>),
+    Block(Block),
     /// A constructor expression.
-    Constructor(Constructor<'a, Expression<'a>>),
+    Constructor(Constructor<Expression>),
     /// A field access expression.
-    FieldAccess(FieldAccess<'a>),
+    FieldAccess(FieldAccess),
     /// A function call expression.
-    FunctionCall(FunctionCall<'a>),
+    FunctionCall(FunctionCall),
     /// A if expression.
-    If(&'a IfElse<'a>),
+    If(IfElse),
     /// A literal.
-    Lit(Literal<'a>),
+    Lit(Literal),
     /// A loop.
-    Loop(&'a Loop<'a>),
+    Loop(Loop),
     /// A prefix unary operation.
-    PreOp(PrefixOperator, u32, &'a Expression<'a>),
+    PreOp(PrefixOperator, u32, ExpressionId),
     /// A tuple.
-    Tuple(Tuple<'a, Expression<'a>>),
+    Tuple(Tuple<Expression>),
     /// A variable identifier.
     Var(VariableIdentifier),
 }
@@ -68,11 +70,11 @@ pub enum BinaryOperator {
 
 /// A Block.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Block<'a> {
+pub struct Block {
     /// Statements.
-    pub statements: &'a [Statement<'a>],
+    pub statements: Id<[StatementId]>,
     /// Last Expression.
-    pub expression: Option<&'a Expression<'a>>,
+    pub expression: Option<ExpressionId>,
     /// Offset of open brace.
     pub open: u32,
     /// Offset of close brace.
@@ -81,9 +83,9 @@ pub struct Block<'a> {
 
 /// A Field Access such .0 or .name.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct FieldAccess<'a> {
+pub struct FieldAccess {
     /// Record or Tuple accessed.
-    pub accessed: &'a Expression<'a>,
+    pub accessed: ExpressionId,
     /// Field identifier.
     pub field: FieldIdentifier,
 }
@@ -94,27 +96,27 @@ pub enum FieldIdentifier {
     /// Index of the field.
     Index(u16, com::Range),
     /// Interned ID of the name of the field.
-    Name(InternId, com::Range),
+    Name(Identifier),
 }
 
 /// A function call expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct FunctionCall<'a> {
+pub struct FunctionCall {
     /// Function called.
-    pub function: &'a Expression<'a>,
+    pub function: ExpressionId,
     /// Arguments.
-    pub arguments: Tuple<'a, Expression<'a>>,
+    pub arguments: Tuple<Expression>,
 }
 
 /// A if-else expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct IfElse<'a> {
+pub struct IfElse {
     /// Condition.
-    pub condition: Expression<'a>,
+    pub condition: ExpressionId,
     /// Expression evaluated if condition evaluates to true.
-    pub true_expr: Block<'a>,
+    pub true_expr: ExpressionId,
     /// Expression evaluated if condition evaluates to false.
-    pub false_expr: Block<'a>,
+    pub false_expr: ExpressionId,
     /// Offset of :if.
     pub if_: u32,
     /// Offset of :else.
@@ -123,22 +125,22 @@ pub struct IfElse<'a> {
 
 /// A Literal value.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Literal<'a> {
+pub enum Literal {
     /// A boolean value.
-    Bool(bool, com::Range),
+    Bool(bool),
     /// A bytes value.
-    Bytes(&'a [StringFragment], InternId, com::Range),
+    Bytes(Id<[StringFragment]>, InternId),
     /// An integral value.
-    Integral(i64, com::Range),
+    Integral(i64),
     /// A string value.
-    String(&'a [StringFragment], InternId, com::Range),
+    String(Id<[StringFragment]>, InternId),
 }
 
 /// A if-else expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Loop<'a> {
+pub struct Loop {
     /// Statements.
-    pub statements: &'a [Statement<'a>],
+    pub statements: Id<[StatementId]>,
     /// Offset of the :loop keyword.
     pub loop_: u32,
     /// Offset of open brace.
@@ -161,23 +163,6 @@ pub struct VariableIdentifier(pub InternId, pub com::Range);
 //
 //  Implementations
 //
-impl<'a> FunctionCall<'a> {
-    /// Returns the token of the comma following the i-th field, if there is no
-    /// such comma the position it would have been at is faked.
-    pub fn comma(&self, i: usize) -> Option<tt::Token> {
-        self.arguments.comma(i)
-    }
-
-    /// Returns the token of the opening parenthesis.
-    pub fn parenthesis_open(&self) -> tt::Token {
-        self.arguments.parenthesis_open()
-    }
-
-    /// Returns the token of the closing parenthesis.
-    pub fn parenthesis_close(&self) -> tt::Token {
-        self.arguments.parenthesis_close()
-    }
-}
 
 impl FieldIdentifier {
     /// Sets the InternId of the FieldIdentifier.
@@ -186,7 +171,7 @@ impl FieldIdentifier {
 
         match self {
             Index(i, r) => Index(i, r),
-            Name(_, r) => Name(id, r),
+            Name(i) => Name(i.with_id(id)),
         }
     }
 
@@ -196,7 +181,7 @@ impl FieldIdentifier {
 
         match self {
             Index(i, _) => Index(i, range),
-            Name(n, _) => Name(n, range),
+            Name(i) => Name(i.with_range(range)),
         }
     }
 }
@@ -214,104 +199,29 @@ impl VariableIdentifier {
 //
 //  Implementations of Span
 //
-impl<'a> Span for Expression<'a> {
-    /// Returns the range spanned by the expression.
-    fn span(&self) -> com::Range {
-        use self::Expression::*;
-
-        match *self {
-            BinOp(_, _, left, right) => left.span().extend(right.span()),
-            Block(b) => b.span(),
-            Constructor(c) => c.span(),
-            FieldAccess(f) => f.span(),
-            FunctionCall(fun) => fun.span(),
-            If(if_else) => if_else.span(),
-            Lit(lit) => lit.span(),
-            Loop(l) => l.span(),
-            PreOp(_, pos, expr)
-                => com::Range::new(pos as usize, 0).extend(expr.span()),
-            Tuple(t) => t.span(),
-            Var(v) => v.span(),
-        }
-    }
-}
-
-impl<'a> Span for Block<'a> {
-    /// Returns the range spanned by the block.
-    fn span(&self) -> com::Range {
-        let end_offset = self.close + 1;
-        com::Range::new(self.open as usize, (end_offset - self.open) as usize)
-    }
-}
-
-impl<'a> Span for FieldAccess<'a> {
-    /// Returns the range spanned by the constructor.
-    fn span(&self) -> com::Range {
-        self.accessed.span().extend(self.field.span())
-    }
-}
-
-impl<'a> Span for FunctionCall<'a> {
-    /// Returns the range spanned by the function call.
-    fn span(&self) -> com::Range {
-        self.function.span().extend(self.parenthesis_close().span())
-    }
-}
-
-impl<'a> Span for IfElse<'a> {
-    /// Returns the range spanned by the argument.
-    fn span(&self) -> com::Range {
-        let offset = self.if_ as usize;
-        let end_offset = self.false_expr.span().end_offset();
-        com::Range::new(offset, end_offset - offset)
-    }
-}
-
-impl<'a> Span for Loop<'a> {
-    /// Returns the range spanned by the argument.
-    fn span(&self) -> com::Range {
-        let offset = self.loop_ as usize;
-        let end_offset = self.close as usize + 1;
-        com::Range::new(offset, end_offset - offset)
-    }
-}
-
-impl<'a> Span for Statement<'a> {
-    /// Returns the range spanned by the statement.
-    fn span(&self) -> com::Range {
-        use self::Statement::*;
-
-        match *self {
-            Return(ret) => ret.span(),
-            Set(set) => set.span(),
-            Var(var) => var.span(),
-        }
-    }
-}
-
-impl<'a> Span for Literal<'a> {
-    /// Returns the range spanned by the literal.
-    fn span(&self) -> com::Range {
-        use self::Literal::*;
-
-        match *self {
-            Bool(_, r) => r,
-            Bytes(_, _, r) => r,
-            Integral(_, r) => r,
-            String(_, _, r) => r,
-        }
-    }
-}
 
 impl Span for FieldIdentifier {
     /// Returns the range spanned by the field identifier.
     fn span(&self) -> com::Range {
         use self::FieldIdentifier::*;
 
-        match *self {
-            Index(_, r) => r,
-            Name(_, r) => r,
+        match self {
+            Index(_, r) | Name(Identifier(_, r)) => *r,
         }
+    }
+}
+
+impl Span for Block {
+    /// Returns the range spanned by the loop.
+    fn span(&self) -> com::Range {
+        com::Range::new(self.open as usize, (self.close + 1 - self.open) as usize)
+    }
+}
+
+impl Span for Loop {
+    /// Returns the range spanned by the loop.
+    fn span(&self) -> com::Range {
+        com::Range::new(self.loop_ as usize, (self.close + 1 - self.loop_) as usize)
     }
 }
 
@@ -320,59 +230,61 @@ impl Span for VariableIdentifier {
     fn span(&self) -> com::Range { self.1 }
 }
 
-//
-//  Implementations of CloneInto
-//
-impl<'a, 'target> mem::CloneInto<'target> for Literal<'a> {
-    type Output = Literal<'target>;
-
-    fn clone_into(&self, arena: &'target mem::Arena) -> Self::Output {
-        use self::Literal::*;
-
-        match *self {
-            Bool(b, r) => Bool(b, r),
-            Bytes(f, b, r) => Bytes(arena.insert_slice(f), b, r),
-            Integral(i, r) => Integral(i, r),
-            String(f, s, r) => String(arena.insert_slice(f), s, r),
-        }
-    }
-}
 
 //
 //  Implementations of From
 //
-impl<'a> convert::From<Constructor<'a, Expression<'a>>> for Expression<'a> {
-    fn from(c: Constructor<'a, Expression<'a>>) -> Expression<'a> {
+
+impl convert::From<Constructor<Expression>> for Expression {
+    fn from(c: Constructor<Expression>) -> Expression {
         Expression::Constructor(c)
     }
 }
 
-impl<'a> convert::From<FieldAccess<'a>> for Expression<'a> {
-    fn from(f: FieldAccess<'a>) -> Expression<'a> {
+impl convert::From<Block> for Expression {
+    fn from(b: Block) -> Expression {
+        Expression::Block(b)
+    }
+}
+
+impl convert::From<FieldAccess> for Expression {
+    fn from(f: FieldAccess) -> Expression {
         Expression::FieldAccess(f)
     }
 }
 
-impl<'a> convert::From<FunctionCall<'a>> for Expression<'a> {
-    fn from(f: FunctionCall<'a>) -> Expression<'a> {
+impl convert::From<FunctionCall> for Expression {
+    fn from(f: FunctionCall) -> Expression {
         Expression::FunctionCall(f)
     }
 }
 
-impl<'a> convert::From<Literal<'a>> for Expression<'a> {
-    fn from(l: Literal<'a>) -> Expression<'a> {
+impl convert::From<IfElse> for Expression {
+    fn from(i: IfElse) -> Expression {
+        Expression::If(i)
+    }
+}
+
+impl convert::From<Literal> for Expression {
+    fn from(l: Literal) -> Expression {
         Expression::Lit(l)
     }
 }
 
-impl<'a> convert::From<Tuple<'a, Expression<'a>>> for Expression<'a> {
-    fn from(t: Tuple<'a, Expression<'a>>) -> Expression<'a> {
+impl convert::From<Loop> for Expression {
+    fn from(l: Loop) -> Expression {
+        Expression::Loop(l)
+    }
+}
+
+impl convert::From<Tuple<Expression>> for Expression {
+    fn from(t: Tuple<Expression>) -> Expression {
         Expression::Tuple(t)
     }
 }
 
-impl convert::From<VariableIdentifier> for Expression<'static> {
-    fn from(v: VariableIdentifier) -> Expression<'static> {
+impl convert::From<VariableIdentifier> for Expression {
+    fn from(v: VariableIdentifier) -> Expression {
         Expression::Var(v)
     }
 }
@@ -382,29 +294,27 @@ impl convert::From<VariableIdentifier> for Expression<'static> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
-    use super::*;
-    use model::ast::{builder::Factory, interning::Resolver};
+    use basic::com;
+    use super::super::common::tests::Env;
 
     #[test]
     fn range_expression_literal() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b"   1", Default::default());
-        let e = Factory::new(&global_arena, resolver).expr();
+        let env = Env::new(b"   1");
+        let e = env.factory().expr();
 
-        assert_eq!(e.int(1, 3).span(), range(3, 1));
+        let id = e.int(1, 3);
+
+        assert_eq!(env.tree().borrow().get_expression_range(id), range(3, 1));
     }
 
     #[test]
     fn range_expression_binary_operator() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b"   1 + 1", Default::default());
-        let e = Factory::new(&global_arena, resolver).expr();
+        let env = Env::new(b"   1 + 1");
+        let e = env.factory().expr();
 
-        assert_eq!(
-            e.bin_op(e.int(1, 3), e.int(1, 7)).build().span(),
-            range(3, 5)
-        );
+        let id = e.bin_op(e.int(1, 3), e.int(1, 7)).build();
+
+        assert_eq!(env.tree().borrow().get_expression_range(id), range(3, 5));
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

@@ -5,26 +5,34 @@ use std::convert;
 use basic::com::{self, Span};
 
 use model::ast::*;
-use model::tt;
+
+/// An EnumId.
+pub type EnumId = Id<Enum>;
+
+/// A FunctionId.
+pub type FunctionId = Id<Function>;
+
+/// A RecordId.
+pub type RecordId = Id<Record>;
 
 /// An Item.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Item<'a> {
+pub enum Item {
     /// An enum.
-    Enum(Enum<'a>),
+    Enum(EnumId),
     /// A function.
-    Fun(Function<'a>),
+    Fun(FunctionId),
     /// A record.
-    Rec(Record<'a>),
+    Rec(RecordId),
 }
 
 /// An Argument.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Argument<'a> {
+pub struct Argument {
     /// Name of the argument.
     pub name: VariableIdentifier,
     /// Type of the argument.
-    pub type_: Type<'a>,
+    pub type_: TypeId,
     /// Offset of the colon.
     pub colon: u32,
     /// Offset of the comma, if any.
@@ -33,11 +41,11 @@ pub struct Argument<'a> {
 
 /// An Enum.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Enum<'a> {
+pub struct Enum {
     /// Name of the enum.
     pub name: TypeIdentifier,
     /// Variants of the enum.
-    pub variants: &'a [InnerRecord<'a>],
+    pub variants: Id<[InnerRecord]>,
     /// Offset of the `:enum` keyword.
     pub keyword: u32,
     /// Offset of the opening brace.
@@ -46,20 +54,18 @@ pub struct Enum<'a> {
     pub close: u32,
     /// Offsets of the comma separating the variants, an absent comma is placed
     /// at the offset of the last character of the field it would have followed.
-    pub commas: &'a [u32],
+    pub commas: Id<[u32]>,
 }
 
 /// A Function.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Function<'a> {
+pub struct Function {
     /// Name of the function.
     pub name: VariableIdentifier,
     /// List of arguments of the function.
-    pub arguments: &'a [Argument<'a>],
+    pub arguments: Id<[Argument]>,
     /// Return type of the function.
-    pub result: Type<'a>,
-    /// Body of the function.
-    pub body: Block<'a>,
+    pub result: TypeId,
     /// Offset of the ":fun" keyword.
     pub keyword: u32,
     /// Offset of the "(" token.
@@ -72,11 +78,11 @@ pub struct Function<'a> {
 
 /// An InnerRecord.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum InnerRecord<'a> {
+pub enum InnerRecord {
     /// A missing record, when a semi-colon immediately appears for example.
     Missing(com::Range),
     /// A tuple record, where fields are identified by index.
-    Tuple(TypeIdentifier, Tuple<'a, Type<'a>>),
+    Tuple(TypeIdentifier, Tuple<Type>),
     /// An unexpected range of tokens.
     Unexpected(com::Range),
     /// A unit record, with no argument.
@@ -85,9 +91,9 @@ pub enum InnerRecord<'a> {
 
 /// A Record.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Record<'a> {
+pub struct Record {
     /// Inner representation of the record.
-    pub inner: InnerRecord<'a>,
+    pub inner: InnerRecord,
     /// Offset of the `:rec` keyword.
     pub keyword: u32,
     /// Offset of the semi-colon, for unit records.
@@ -97,205 +103,126 @@ pub struct Record<'a> {
 //
 //  Implementations
 //
-impl<'a> Enum<'a> {
-    /// Returns the `:enum` token.
-    pub fn keyword(&self) -> tt::Token {
-        tt::Token::new(tt::Kind::KeywordEnum, self.keyword as usize, 5)
-    }
 
-    /// Returns the `{` token.
-    pub fn brace_open(&self) -> tt::Token {
-        if self.open == 0 {
-            let start = self.name.span().end_offset();
-            tt::Token::new(tt::Kind::BraceOpen, start, 0)
-        } else {
-            tt::Token::new(tt::Kind::BraceOpen, self.open as usize, 1)
-        }
-    }
-
-    /// Returns the `}` token.
-    pub fn brace_close(&self) -> tt::Token {
-        if self.close == 0 {
-            let last_comma = self.comma(self.commas.len().wrapping_sub(1));
-            let last = last_comma.unwrap_or_else(|| self.brace_open());
-            tt::Token::new(tt::Kind::BraceClose, last.span().end_offset(), 0)
-        } else {
-            tt::Token::new(tt::Kind::BraceClose, self.close as usize, 1)
-        }
-    }
-
-    /// Returns the token of the comma following the i-th field, if there is no
-    /// such comma the position it would have been at is faked.
-    pub fn comma(&self, i: usize) -> Option<tt::Token> {
-        let make_semi = |&o| if o == 0 {
-            let position = self.variants[i].span().end_offset();
-            tt::Token::new(tt::Kind::SignComma, position, 0)
-        } else {
-            tt::Token::new(tt::Kind::SignComma, o as usize, 1)
-        };
-        self.commas.get(i).map(make_semi)
-    }
-}
-
-impl<'a> InnerRecord<'a> {
-    /// Returns the name of the inner record.
-    pub fn name(&self) -> TypeIdentifier {
+impl InnerRecord {
+    /// Returns the name of the InnerRecord, if any.
+    pub fn name(&self) -> Option<TypeIdentifier> {
         use self::InnerRecord::*;
 
         match *self {
-            Missing(r) | Unexpected(r)
-                => TypeIdentifier(Default::default(), r),
-            Tuple(t, _) | Unit(t) => t,
+            Tuple(name, _) | Unit(name) => Some(name),
+            _ => None,
         }
     }
 }
 
-impl<'a> Record<'a> {
-    /// Returns the `:rec` token.
-    pub fn keyword(&self) -> tt::Token {
-        tt::Token::new(tt::Kind::KeywordRec, self.keyword as usize, 4)
-    }
-
-    /// Returns the name of the record.
-    pub fn name(&self) -> TypeIdentifier { self.inner.name() }
-
-    /// Returns the token of the semi-colon following the record declaration,
-    /// if there is no such semi-colon, the position it would have been at is
-    /// faked.
-    pub fn semi_colon(&self) -> tt::Token {
-        let (offset, range) = if self.semi_colon == 0 {
-            (self.inner.span().end_offset(), 0)
-        } else {
-            (self.semi_colon as usize, 1)
-        };
-        tt::Token::new(tt::Kind::SignSemiColon, offset, range)
-    }
+impl Record {
+    /// Returns the name of the Record.
+    pub fn name(&self) -> TypeIdentifier { self.inner.name().expect("Name") }
 }
 
 //
 //  Implementations of Span
 //
-impl<'a> Span for Item<'a> {
-    /// Returns the range spanned by the item.
-    fn span(&self) -> com::Range {
-        use self::Item::*;
 
-        match *self {
-            Enum(e) => e.span(),
-            Fun(fun) => fun.span(),
-            Rec(r) => r.span(),
-        }
-    }
-}
-
-impl<'a> Span for Argument<'a> {
+impl Span for Argument {
     /// Returns the range spanned by the argument.
     fn span(&self) -> com::Range {
         let offset = self.name.span().offset();
-        let end_offset = self.type_.span().end_offset();
+        let end_offset = self.comma as usize + 1;
         com::Range::new(offset, end_offset - offset)
     }
 }
 
-impl<'a> Span for Enum<'a> {
+impl Span for Enum {
     /// Returns the range spanned by the enum.
     fn span(&self) -> com::Range {
-        self.keyword().span().extend(self.brace_close().span())
+        com::Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
     }
 }
 
-impl<'a> Span for InnerRecord<'a> {
+impl Span for InnerRecord {
     /// Returns the range spanned by the inner record.
     fn span(&self) -> com::Range {
         use self::InnerRecord::*;
 
         match *self {
             Missing(r) | Unexpected(r) => r,
-            Tuple(t, tup) => t.span().extend(tup.span()),
-            Unit(t) => t.span(),
+            Tuple(name, tuple) => name.1.extend(tuple.span()),
+            Unit(name) => name.1,
         }
     }
 }
 
-impl<'a> Span for Function<'a> {
-    /// Returns the range spanned by the function.
-    fn span(&self) -> com::Range {
-        com::Range::new(self.keyword as usize, 4).extend(self.body.span())
-    }
-}
-
-impl<'a> Span for Record<'a> {
+impl Span for Record {
     /// Returns the range spanned by the record.
     fn span(&self) -> com::Range {
-        self.keyword().span().extend(self.semi_colon().span())
+        com::Range::new(self.keyword as usize, (self.semi_colon + 1 - self.keyword) as usize)
     }
 }
 
 //
 //  Implementations of From
 //
-impl<'a> convert::From<Enum<'a>> for Item<'a> {
-    fn from(e: Enum<'a>) -> Item<'a> { Item::Enum(e) }
+
+impl convert::From<EnumId> for Item {
+    fn from(e: EnumId) -> Item { Item::Enum(e) }
 }
 
-impl<'a> convert::From<Function<'a>> for Item<'a> {
-    fn from(f: Function<'a>) -> Item<'a> { Item::Fun(f) }
+impl convert::From<FunctionId> for Item {
+    fn from(f: FunctionId) -> Item { Item::Fun(f) }
 }
 
-impl<'a> convert::From<Record<'a>> for Item<'a> {
-    fn from(r: Record<'a>) -> Item<'a> { Item::Rec(r) }
+impl convert::From<RecordId> for Item {
+    fn from(r: RecordId) -> Item { Item::Rec(r) }
 }
+
 //
 //  Tests
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
-    use super::*;
-    use model::ast::{builder::Factory, interning::Resolver};
+    use basic::com;
+    use super::super::common::tests::Env;
 
     #[test]
     fn range_enum_empty() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b" :enum Empty { }", Default::default());
-        let item = Factory::new(&global_arena, resolver).item();
+        let env = Env::new(b" :enum Empty { }");
+        let item = env.factory().item();
 
-        let e: Enum = item.enum_(7, 5).build();
-        assert_eq!(e.span(), range(1, 15));
+        let e = item.enum_(7, 5).build();
+        assert_eq!(env.module().borrow().get_enum_range(e), range(1, 15));
     }
 
     #[test]
     fn range_enum_minimal() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b":enum Minimal", Default::default());
-        let item = Factory::new(&global_arena, resolver).item();
+        let env = Env::new(b":enum Minimal");
+        let item = env.factory().item();
 
-        let e: Enum = item.enum_(6, 7).braces(12, 12).build();
-        assert_eq!(e.span(), range(0, 13));
+        let e = item.enum_(6, 7).braces(12, 12).build();
+        assert_eq!(env.module().borrow().get_enum_range(e), range(0, 13));
     }
 
     #[test]
     fn range_enum_simple() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b":enum Simple { One, Two }", Default::default());
-        let item = Factory::new(&global_arena, resolver).item();
+        let env = Env::new(b":enum Simple { One, Two }");
+        let item = env.factory().item();
 
-        let e: Enum =
+        let e =
             item.enum_(6, 6)
                 .push_unit(15, 3)
                 .push_unit(20, 3)
                 .build();
-        assert_eq!(e.span(), range(0, 25));
+        assert_eq!(env.module().borrow().get_enum_range(e), range(0, 25));
     }
 
     #[test]
     fn range_fun() {
-        let global_arena = mem::Arena::new();
-        let resolver = Resolver::new(b"   :fun add() -> Int { 1 + 1 }", Default::default());
-        let f = Factory::new(&global_arena, resolver);
+        let env = Env::new(b"   :fun add() -> Int { 1 + 1 }");
+        let f = env.factory();
         let e = f.expr();
 
-        let item: Item =
+        let item =
             f.item()
                 .function(
                     8,
@@ -304,7 +231,7 @@ mod tests {
                     e.block(e.bin_op(e.int(1, 23), e.int(1, 27)).build())
                         .build(),
                 ).build();
-        assert_eq!(item.span(), range(3, 27), "{:?}", item);
+        assert_eq!(env.module().borrow().get_function_range(item), range(3, 27));
     }
 
     fn range(offset: usize, length: usize) -> com::Range {

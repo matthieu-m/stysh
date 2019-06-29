@@ -2,18 +2,18 @@
 //!
 //! Expression parser.
 
-use std;
+use std::{cell, fmt};
 
 use basic::mem;
-use basic::com::Span;
+use basic::com::{Range, Span};
 use model::tt;
 use model::ast::*;
 use pass::syn::typ;
 
 use super::com::RawParser;
 
-pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Expression<'g>
+pub fn parse_expression<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
+    -> ExpressionId
 {
     let mut parser = ExprParser::new(*raw);
     let expr = parser.parse();
@@ -21,8 +21,8 @@ pub fn parse_expression<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     expr
 }
 
-pub fn parse_pattern<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Pattern<'g>
+pub fn parse_pattern<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
+    -> PatternId
 {
     let mut parser = PatternParser::new(*raw);
     let stmt = parser.parse();
@@ -30,8 +30,8 @@ pub fn parse_pattern<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
     stmt
 }
 
-pub fn parse_statement<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> Statement<'g>
+pub fn parse_statement<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
+    -> StatementId
 {
     let mut parser = StmtParser::new(*raw);
     let stmt = parser.parse();
@@ -42,19 +42,17 @@ pub fn parse_statement<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
 //
 //  Implementation Details (Expression)
 //
-struct ExprParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>,
+struct ExprParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 struct Precedence(u8);
 
-struct ShuntingYard<'g, 'local>
-    where 'g: 'local
-{
-    global_arena: &'g mem::Arena,
-    op_stack: mem::Array<'local, (Operator, u32, Precedence)>,
-    expr_stack: mem::Array<'local, Expression<'g>>,
+struct ShuntingYard<'a> {
+    tree: &'a cell::RefCell<Tree>,
+    op_stack: Vec<(Operator, u32, Precedence)>,
+    expr_stack: Vec<(Expression, Range)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -63,14 +61,14 @@ enum Operator {
     Pre(PrefixOperator),
 }
 
-impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> ExprParser<'a, 'g, 'local> {
+impl<'a, 'tree> ExprParser<'a, 'tree> {
+    fn new(raw: RawParser<'a, 'tree>) -> ExprParser<'a, 'tree> {
         ExprParser { raw: raw }
     }
 
-    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse(&mut self) -> Expression<'g> {
+    fn parse(&mut self) -> ExpressionId {
         use model::tt::Kind as K;
 
         fn binop(kind: tt::Kind) -> Option<(Operator, Precedence)> {
@@ -110,11 +108,11 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
         //  Use the Shunting Yard algorithm to parse this "expr [op expr]" into
         //  an expression tree.
-        let mut yard = ShuntingYard::new(self.raw.global(), self.raw.local());
+        let mut yard = ShuntingYard::new(self.raw.tree());
 
         while let Some(node) = self.raw.peek() {
             //  An expression.
-            let expr = match node {
+            let (expr, range) = match node {
                 tt::Node::Run(tokens) => {
                     let token = tokens[0];
                     let kind = token.kind();
@@ -141,7 +139,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                         },
                         K::NameValue => {
                             self.raw.pop_tokens(1);
-                            Expression::Var(self.raw.resolve_variable(token))
+                            (Expression::Var(self.raw.resolve_variable(token)), token.span())
                         },
                         K::SignBind => break,
                         _ => {
@@ -149,7 +147,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                             if let Some(ty) = ty {
                                 self.parse_constructor(ty)
                             } else {
-                                unimplemented!("Expected type, got {:?}", token);
+                                unimplemented!("Expected type, got {:?}\n{:?}", token, self.raw);
                             }
                         },
                     }
@@ -160,7 +158,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
                 tt::Node::UnexpectedBrace(..) => unimplemented!(),
             };
 
-            yard.push_expression(expr);
+            yard.push_expression(expr, range);
 
             //  Optionally followed by a binary operator and another expression.
             if let Some(tt::Node::Run(tokens)) = self.raw.peek() {
@@ -180,10 +178,11 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             };
         }
 
-        yard.pop_expression()
+        let (expr, range) = yard.pop_expression();
+        self.raw.tree().borrow_mut().push_expression(expr, range)
     }
 
-    fn parse_block(&mut self) -> Block<'g> {
+    fn parse_block(&mut self) -> Block {
         if let Some(tt::Node::Braced(o, n, c)) = self.raw.peek() {
             self.raw.pop_node();
             return self.parse_braces(n, o, c);
@@ -192,7 +191,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         unimplemented!("Expected block, got {:?}", self.raw.peek());
     }
 
-    fn parse_bool(&mut self, kind: tt::Kind) -> Expression<'g> {
+    fn parse_bool(&mut self, kind: tt::Kind) -> (Expression, Range) {
         use self::tt::Kind::*;
 
         let value = match kind {
@@ -202,10 +201,10 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         };
 
         let token = self.raw.pop_kind(kind).expect("true/false");
-        Expression::Lit(Literal::Bool(value, token.span()))
+        (Expression::Lit(Literal::Bool(value)), token.span())
     }
 
-    fn parse_braced(&mut self, node: tt::Node<'a>) -> Expression<'g> {
+    fn parse_braced(&mut self, node: tt::Node<'a>) -> (Expression, Range) {
         use model::tt::Kind as K;
 
         if let tt::Node::Braced(o, n, c) = node {
@@ -214,7 +213,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             match o.kind() {
                 K::BraceOpen => {
                     let block = self.parse_braces(n, o, c);
-                    Expression::Block(self.raw.intern(block))
+                    (Expression::Block(block), block.span())
                 },
                 K::ParenthesisOpen => self.parse_parens(n, o, c),
                 _ => unimplemented!(),
@@ -224,51 +223,51 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_braces(&self, ns: &[tt::Node], o: tt::Token, c: tt::Token)
-        -> Block<'g>
+    fn parse_braces(&self, ns: &'a [tt::Node], o: tt::Token, c: tt::Token)
+        -> Block
     {
         let mut raw = self.raw.spawn(ns);
         let statements = parse_statements_impl(&mut raw);
         let expression = if let Some(_) = raw.peek_kind() {
-            Some(raw.intern(ExprParser::new(raw).parse()))
+            Some(ExprParser::new(raw).parse())
         } else {
             None
         };
 
         Block {
-            statements: statements,
-            expression: expression,
+            statements,
+            expression,
             open: o.offset() as u32,
             close: c.offset() as u32,
         }
     }
 
-    fn parse_bytes(&mut self, node: tt::Node) -> Expression<'g> {
+    fn parse_bytes(&mut self, node: tt::Node) -> (Expression, Range) {
         if let tt::Node::Bytes(_, f, _) = node {
             self.raw.pop_node();
 
             let (fragments, result) = self.parse_string_impl(f);
-            Expression::Lit(Literal::Bytes(fragments, result, node.span()))
+            (Expression::Lit(Literal::Bytes(fragments, result)), node.span())
         } else {
             unreachable!("Not a Bytes node: {:?}", node);
         }
     }
 
-    fn parse_constructor(&mut self, ty: Type<'g>) -> Expression<'g> {
+    fn parse_constructor(&mut self, ty: TypeId) -> (Expression, Range) {
         let sep = tt::Kind::SignBind;
-        let c =
+        let (c, range) =
             parse_constructor_impl(&mut self.raw, parse_expression, sep, ty);
-        Expression::Constructor(c)
+        (Expression::Constructor(c), range)
     }
 
     fn parse_field_identifier(&mut self) -> FieldIdentifier {
         let token = self.raw.pop_kind(tt::Kind::NameField).expect("Token");
-        let id = self.raw.intern_id_of(token);
         let source = self.raw.source(token);
         debug_assert!(!source.is_empty());
 
         if source[0] < b'0' || source[0] > b'9' {
-            return FieldIdentifier::Name(id, token.span());
+            let id = self.raw.resolve_identifier(token);
+            return FieldIdentifier::Name(id);
         }
 
         if let Some(i) = parse_integral_impl(source, false) {
@@ -279,7 +278,7 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_if_else(&mut self) -> Expression<'g> {
+    fn parse_if_else(&mut self) -> (Expression, Range) {
         let if_ = self.raw.pop_kind(tt::Kind::KeywordIf).expect(":if");
 
         let condition = self.parse();
@@ -291,31 +290,34 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
 
             let false_expr = self.parse_block();
 
-            return Expression::If(self.raw.intern(IfElse {
-                condition: condition,
-                true_expr: true_expr,
-                false_expr: false_expr,
-                if_: if_.offset() as u32,
-                else_: else_.offset() as u32,
-            }));
+            return (
+                Expression::If(IfElse {
+                    condition,
+                    true_expr: self.insert_block(true_expr),
+                    false_expr: self.insert_block(false_expr),
+                    if_: if_.offset() as u32,
+                    else_: else_.offset() as u32,
+                }),
+                if_.span().extend(false_expr.span()),
+            );
         }
 
         //  FIXME(matthieum): ";" is legal.
         unimplemented!()
     }
 
-    fn parse_integral(&mut self) -> Expression<'g> {
+    fn parse_integral(&mut self) -> (Expression, Range) {
         let token = self.raw.pop_kind(tt::Kind::LitIntegral).expect("Token");
         let source = self.raw.source(token);
 
         if let Some(i) = parse_integral_impl(source, true) {
-            Expression::Lit(Literal::Integral(i, token.span()))
+            (Expression::Lit(Literal::Integral(i)), token.span())
         } else {
             unimplemented!("Cannot parse {:?} from {:?}", source, token)
         }
     }
 
-    fn parse_loop(&mut self) -> Expression<'g> {
+    fn parse_loop(&mut self) -> (Expression, Range) {
         let loop_ = self.raw.pop_kind(tt::Kind::KeywordLoop).expect(":loop");
         let loop_ = loop_.offset() as u32;
 
@@ -328,9 +330,8 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
             let open = o.offset() as u32;
             let close = c.offset() as u32;
 
-            return Expression::Loop(
-                self.raw.intern(Loop { statements, loop_, open, close })
-            );
+            let loop_ = Loop { statements, loop_, open, close };
+            return (Expression::Loop(loop_), loop_.span());
         }
 
         unimplemented!("Expected braces after :loop");
@@ -342,17 +343,17 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         o: tt::Token,
         c: tt::Token
     )
-        -> Expression<'g>
+        -> (Expression, Range)
     {
-        Expression::Tuple(self.parse_tuple(ns, o, c))
+        (Expression::Tuple(self.parse_tuple(ns, o, c)), o.span().extend(c.span()))
     }
 
-    fn parse_string(&mut self, node: tt::Node) -> Expression<'g> {
+    fn parse_string(&mut self, node: tt::Node) -> (Expression, Range) {
         if let tt::Node::String(_, f, _) = node {
             self.raw.pop_node();
 
             let (fragments, result) = self.parse_string_impl(f);
-            Expression::Lit(Literal::String(fragments, result, node.span()))
+            (Expression::Lit(Literal::String(fragments, result)), node.span())
         } else {
             unreachable!("Not a String node: {:?}", node);
         }
@@ -364,17 +365,19 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         o: tt::Token,
         c: tt::Token
     )
-        -> Tuple<'g, Expression<'g>>
+        -> Tuple<Expression>
     {
-        self.raw.parse_tuple(parse_expression, tt::Kind::SignBind, ns, o, c)
+        let sep = tt::Kind::SignBind;
+        let tree = self.raw.tree();
+        self.raw.parse_tuple(tree, parse_expression, sep, ns, o, c)
     }
 
     fn parse_string_impl(&self, f: &[StringFragment])
-        -> (&'g [StringFragment], mem::InternId)
+        -> (Id<[StringFragment]>, mem::InternId)
     {
         use self::StringFragment::*;
 
-        let mut buffer = self.raw.local_array();
+        let mut buffer = vec!();
         for &fragment in f {
             match fragment {
                 Text(tok) => buffer.extend(self.raw.source(tok)),
@@ -387,53 +390,53 @@ impl<'a, 'g, 'local> ExprParser<'a, 'g, 'local> {
         }
 
         (
-            self.raw.global().insert_slice(f),
-            self.raw.intern_bytes(buffer.into_slice()),
+            self.raw.tree().borrow_mut().push_string_fragments(f),
+            self.raw.intern_bytes(&buffer),
         )
+    }
+
+    fn insert(&self, expr: Expression, range: Range) -> ExpressionId {
+        self.raw.tree().borrow_mut().push_expression(expr, range)
+    }
+
+    fn insert_block(&self, block: Block) -> ExpressionId {
+        self.insert(Expression::Block(block), block.span())
     }
 }
 
-impl<'g, 'local> ShuntingYard<'g, 'local>
-    where 'g: 'local
-{
-    fn new(global_arena: &'g mem::Arena, local_arena: &'local mem::Arena)
-        -> ShuntingYard<'g, 'local>
-    {
+impl<'a> ShuntingYard<'a> {
+    fn new(tree: &'a cell::RefCell<Tree>) -> ShuntingYard<'a> {
         ShuntingYard {
-            global_arena: global_arena,
-            op_stack: mem::Array::new(local_arena),
-            expr_stack: mem::Array::new(local_arena),
+            tree,
+            op_stack: vec!(),
+            expr_stack: vec!(),
         }
     }
 
-    fn push_expression(&mut self, expr: Expression<'g>) {
+    fn push_expression(&mut self, expr: Expression, range: Range) {
         //  Function calls are distinguished from regular expression by having
         //  a normal expression immediately followed by a tuple expression
         //  without an intervening operator.
-        if let Expression::Tuple(tuple) = expr {
-            if let Some(callee) = self.pop_trailing_expression() {
-                self.expr_stack.push(
-                    Expression::FunctionCall(
-                        FunctionCall {
-                            function: self.global_arena.insert(callee),
-                            arguments: tuple,
-                        }
-                    )
-                );
+        if let Expression::Tuple(arguments) = expr {
+            if let Some((callee, range)) = self.pop_trailing_expression() {
+                let function = self.insert(callee, range);
+                self.expr_stack.push((
+                    FunctionCall { function, arguments, }.into(),
+                    range.extend(arguments.span()),
+                ));
                 return;
             }
         }
-        self.expr_stack.push(expr);
+        self.expr_stack.push((expr, range));
     }
 
     fn push_field(&mut self, field: FieldIdentifier) {
-        if let Some(accessed) = self.pop_trailing_expression() {
-            self.expr_stack.push(
-                Expression::FieldAccess(FieldAccess {
-                    accessed: self.global_arena.insert(accessed),
-                    field: field,
-                })
-            );
+        if let Some((accessed, range)) = self.pop_trailing_expression() {
+            let accessed = self.insert(accessed, range);
+            self.expr_stack.push((
+                FieldAccess { accessed, field, }.into(),
+                range.extend(field.span()),
+            ));
             return;
         }
 
@@ -450,33 +453,35 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
         self.op_stack.push((op, pos, prec));
     }
 
-    fn pop_expression(&mut self) -> Expression<'g> {
+    fn pop_expression(&mut self) -> (Expression, Range) {
         self.pop_operators(Precedence(0));
 
-        assert!(self.expr_stack.len() == 1, "{:?}", self);
-
-        self.expr_stack.pop().expect("Asserted")
+        if let Some(r) = self.expr_stack.pop() {
+            r
+        } else {
+            unreachable!("Could not pop expression - {:?}", self);
+        }
     }
 
     fn pop_operators(&mut self, threshold: Precedence) {
         while let Some((op, pos)) = self.pop_operator_impl(threshold) {
             match op {
                 Operator::Bin(op) => {
-                    let right_hand = self.expr_stack.pop().expect("Right");
-                    let left_hand = self.expr_stack.pop().expect("Left");
-                    self.expr_stack.push(Expression::BinOp(
-                        op,
-                        pos,
-                        self.global_arena.insert(left_hand),
-                        self.global_arena.insert(right_hand),
+                    let (right_hand, right_range) = self.expr_stack.pop().expect("Right");
+                    let (left_hand, left_range) = self.expr_stack.pop().expect("Left");
+                    let left = self.insert(left_hand, left_range);
+                    let right = self.insert(right_hand, right_range);
+                    self.expr_stack.push((
+                        Expression::BinOp(op, pos, left, right),
+                        left_range.extend(right_range),
                     ));
                 },
                 Operator::Pre(op) => {
-                    let expr = self.expr_stack.pop().expect("Expression");
-                    self.expr_stack.push(Expression::PreOp(
-                        op,
-                        pos,
-                        self.global_arena.insert(expr),
+                    let (expr, range) = self.expr_stack.pop().expect("Expression");
+                    let expr = self.insert(expr, range);
+                    self.expr_stack.push((
+                        Expression::PreOp(op, pos, expr),
+                        Range::new(pos as usize, 1).extend(range),
                     ));
                 },
             };
@@ -484,10 +489,10 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     }
 
     /// Pops the last expression if there was no operator afterwards
-    fn pop_trailing_expression(&mut self) -> Option<Expression<'g>> {
-        let last_op = self.op_stack.peek().map(|&(_, pos, _)| pos).unwrap_or(0);
-        if let Some(expr) = self.expr_stack.peek().cloned() {
-            if last_op as usize <= expr.span().offset() {
+    fn pop_trailing_expression(&mut self) -> Option<(Expression, Range)> {
+        let last_op = self.op_stack.last().map(|&(_, pos, _)| pos).unwrap_or(0);
+        if let Some((_, range)) = self.expr_stack.last().cloned() {
+            if last_op as usize <= range.offset() {
                 return self.expr_stack.pop();
             }
         }
@@ -497,7 +502,7 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
     fn pop_operator_impl(&mut self, threshold: Precedence)
         -> Option<(Operator, u32)>
     {
-        if let Some((op, pos, prec)) = self.op_stack.peek().cloned() {
+        if let Some((op, pos, prec)) = self.op_stack.last().cloned() {
             if threshold <= prec {
                 self.op_stack.pop();
                 return Some((op, pos));
@@ -505,10 +510,14 @@ impl<'g, 'local> ShuntingYard<'g, 'local>
         }
         None
     }
+
+    fn insert(&self, expr: Expression, range: Range) -> ExpressionId {
+        self.tree.borrow_mut().push_expression(expr, range)
+    }
 }
 
-impl<'g, 'local> std::fmt::Debug for ShuntingYard<'g, 'local> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Debug for ShuntingYard<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(
             f,
             "expr_stack: {:?}, op_stack: {:?}",
@@ -539,18 +548,18 @@ fn parse_integral_impl(raw: &[u8], allow_underscores: bool) -> Option<i64> {
 //  Implementation Details (Pattern)
 //
 #[derive(Debug)]
-struct PatternParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>,
+struct PatternParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>,
 }
 
-impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> Self {
+impl<'a, 'tree> PatternParser<'a, 'tree> {
+    fn new(raw: RawParser<'a, 'tree>) -> Self {
         PatternParser { raw: raw }
     }
 
-    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse(&mut self) -> Pattern<'g> {
+    fn parse(&mut self) -> PatternId {
         use model::tt::Kind as K;
 
         match self.raw.peek_kind() {
@@ -563,7 +572,7 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_parens(&mut self) -> Pattern<'g> {
+    fn parse_parens(&mut self) -> PatternId {
         match self.raw.peek() {
             Some(tt::Node::Braced(o, n, c)) => {
                 self.raw.pop_node();
@@ -573,26 +582,26 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_type_name(&mut self) -> Pattern<'g> {
+    fn parse_type_name(&mut self) -> PatternId {
         if let Some(ty) = typ::try_parse_type(&mut self.raw) {
             let sep = tt::Kind::SignColon;
-            let c =
+            let (c, range) =
                 parse_constructor_impl(&mut self.raw, parse_pattern, sep, ty);
-            Pattern::Constructor(c)
+            self.insert(Pattern::Constructor(c), range)
         } else {
             unimplemented!("parse_type_name - {:?}", self)
         }
     }
 
-    fn parse_underscore(&mut self) -> Pattern<'static> {
+    fn parse_underscore(&mut self) -> PatternId {
         let u =
             self.raw.pop_kind(tt::Kind::SignUnderscore).expect("underscore");
-        Pattern::Ignored(u.span())
+        self.insert(Pattern::Ignored(u.span()), u.span())
     }
 
-    fn parse_value_name(&mut self) -> Pattern<'static> {
+    fn parse_value_name(&mut self) -> PatternId {
         let name = self.raw.pop_kind(tt::Kind::NameValue).expect("name");
-        Pattern::Var(self.raw.resolve_variable(name))
+        self.insert(Pattern::Var(self.raw.resolve_variable(name)), name.span())
     }
 
     fn parse_tuple(
@@ -601,29 +610,34 @@ impl<'a, 'g, 'local> PatternParser<'a, 'g, 'local> {
         o: tt::Token,
         c: tt::Token
     )
-        -> Pattern<'g>
+        -> PatternId
     {
-        Pattern::Tuple(
-            self.raw.parse_tuple(parse_pattern, tt::Kind::SignColon, ns, o, c)
-        )
+        let sep = tt::Kind::SignColon;
+        let tree = self.raw.tree();
+        let tup = self.raw.parse_tuple(tree, parse_pattern, sep, ns, o, c);
+        self.insert(Pattern::Tuple(tup), tup.span())
+    }
+
+    fn insert(&self, pat: Pattern, range: Range) -> PatternId {
+        self.raw.tree().borrow_mut().push_pattern(pat, range)
     }
 }
 
 //
 //  Implementation Details (Statement)
 //
-struct StmtParser<'a, 'g, 'local> {
-    raw: RawParser<'a, 'g, 'local>,
+struct StmtParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>,
 }
 
-impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
-    fn new(raw: RawParser<'a, 'g, 'local>) -> Self {
+impl<'a, 'tree> StmtParser<'a, 'tree> {
+    fn new(raw: RawParser<'a, 'tree>) -> Self {
         StmtParser { raw: raw }
     }
 
-    fn into_raw(self) -> RawParser<'a, 'g, 'local> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse(&mut self) -> Statement<'g> {
+    fn parse(&mut self) -> StatementId {
         use model::tt::Kind as K;
 
         match self.raw.peek_kind() {
@@ -640,7 +654,7 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
         }
     }
 
-    fn parse_return(&mut self) -> Statement<'g> {
+    fn parse_return(&mut self) -> StatementId {
         use model::tt::Kind as K;
 
         let ret = self.pop(K::KeywordReturn).expect(":return");
@@ -651,24 +665,26 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
             None
         };
 
+        let expr_range = expr.map(|e| self.raw.tree().borrow().get_expression_range(e));
+
         let semi = self.pop(K::SignSemiColon).unwrap_or(
-            expr.map(|e| e.span().end_offset() as u32 - 1).unwrap_or(ret + 6)
+            expr_range.map(|e| e.end_offset() as u32 - 1).unwrap_or(ret + 6)
         );
 
-        Statement::Return(Return { expr, ret, semi })
+        self.insert(Statement::Return(Return { expr, ret, semi }))
     }
 
-    fn parse_set(&mut self) -> Statement<'g> {
+    fn parse_set(&mut self) -> StatementId {
         let set = self.pop(tt::Kind::KeywordSet).expect(":set");
 
         let left = parse_expression(&mut self.raw);
 
         let (expr, bind, semi) = self.parse_bind();
 
-        Statement::Set(VariableReBinding { left, expr, set, bind, semi })
+        self.insert(Statement::Set(VariableReBinding { left, expr, set, bind, semi }))
     }
 
-    fn parse_var(&mut self) -> Statement<'g> {
+    fn parse_var(&mut self) -> StatementId {
         let var = self.pop(tt::Kind::KeywordVar).expect(":var");
 
         let pattern = parse_pattern(&mut self.raw);
@@ -677,25 +693,26 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
 
         let (expr, bind, semi) = self.parse_bind();
 
-        Statement::Var(VariableBinding {
-            pattern: pattern,
+        self.insert(Statement::Var(VariableBinding {
+            pattern,
             type_: None,
-            expr: expr,
-            var: var,
+            expr,
+            var,
             colon: 0,
-            bind: bind,
-            semi: semi,
-        })
+            bind,
+            semi,
+        }))
     }
 
-    fn parse_bind(&mut self) -> (Expression<'g>, u32, u32) {
+    fn parse_bind(&mut self) -> (ExpressionId, u32, u32) {
         let bind = self.pop(tt::Kind::SignBind).unwrap_or(0);
 
         let expr = parse_expression(&mut self.raw);
+        let expr_range = self.raw.tree().borrow().get_expression_range(expr);
 
         let semi =
             self.pop(tt::Kind::SignSemiColon)
-                .unwrap_or(expr.span().end_offset() as u32 - 1);
+                .unwrap_or(expr_range.end_offset() as u32 - 1);
 
         (expr, bind, semi)
     }
@@ -705,34 +722,45 @@ impl<'a, 'g, 'local> StmtParser<'a, 'g, 'local> {
             .pop_kind(kind)
             .map(|t| t.offset() as u32)
     }
+
+    fn insert(&self, stmt: Statement) -> StatementId {
+        self.raw.tree().borrow_mut().push_statement(stmt)
+    }
 }
 
 //
 //  Implementation Details (Tuple)
 //
-fn parse_constructor_impl<'a, 'g, 'local, T: 'g + Copy + Span>(
-    raw: &mut RawParser<'a, 'g, 'local>,
-    inner_parser: fn(&mut RawParser<'a, 'g, 'local>) -> T,
+fn parse_constructor_impl<'a, 'tree, T: Copy>(
+    raw: &mut RawParser<'a, 'tree>,
+    inner_parser: fn(&mut RawParser<'a, 'tree>) -> Id<T>,
     separator: tt::Kind,
-    ty: Type<'g>,
+    type_: TypeId,
 )
-    -> Constructor<'g, T>
+    -> (Constructor<T>, Range)
+    where
+        Tree: Store<T> + MultiStore<Id<T>>
 {
-    let tuple = if let Some(tt::Node::Braced(o, ns, c)) = raw.peek() {
+    let arguments = if let Some(tt::Node::Braced(o, ns, c)) = raw.peek() {
         assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
 
         raw.pop_node();
-        raw.parse_tuple(inner_parser, separator, ns, o, c)
+        let tree = raw.tree();
+        raw.parse_tuple(tree, inner_parser, separator, ns, o, c)
     } else {
         Default::default()
     };
-    Constructor { type_: ty, arguments: tuple }
+
+    let range =
+        raw.tree().borrow().get_type_range(type_).extend(arguments.span());
+
+    (Constructor { type_, arguments }, range)
 }
 
-fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
-    -> &'g [Statement<'g>]
+fn parse_statements_impl<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
+    -> Id<[StatementId]>
 {
-    let mut stmts = raw.local_array();
+    let mut stmts = vec!();
 
     while let Some(tok) = raw.peek().map(|n| n.front()) {
         if tok.kind() != tt::Kind::KeywordReturn &&
@@ -743,502 +771,415 @@ fn parse_statements_impl<'a, 'g, 'local>(raw: &mut RawParser<'a, 'g, 'local>)
         stmts.push(parse_statement(raw));
     }
 
-    raw.intern_slice(&stmts)
+    raw.tree().borrow_mut().push_statement_ids(&stmts)
 }
 
 //
 //  Tests
 //
+
 #[cfg(test)]
 mod tests {
-    use super::super::com::tests::{Env, LocalEnv};
+    use std::ops;
     use model::ast::*;
+    use super::super::com::tests::Env;
 
     #[test]
     fn basic_add() {
-        let env = Env::new();
-        let local = env.local(b"1 + 2");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"1 + 2");
+        let e = env.factory().expr();
+        e.bin_op(e.int(1, 0), e.int(2, 4)).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.bin_op(e.int(1, 0), e.int(2, 4)).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_var() {
-        let env = Env::new();
-        let local = env.local(b" :var fool := 1234;");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b" :var fool := 1234;");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(p.var(6, 4), e.int(1234, 14)).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(p.var(6, 4), e.int(1234, 14)).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn basic_var_automatic_insertion() {
-        let env = Env::new();
-        let local = env.local(b" :var fool 1234");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b" :var fool 1234");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(p.var(6, 4), e.int(1234, 11))
+            .bind(0)
+            .semi_colon(14)
+            .build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(p.var(6, 4), e.int(1234, 11))
-                .bind(0)
-                .semi_colon(14)
-                .build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn basic_bytes() {
-        let env = Env::new();
-        let local = env.local(b"b'1 + 2'");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"b'1 + 2'");
+        let e = env.factory().expr();
+        e.literal(0, 8).push_text(2, 5).bytes().build();
 
-        assert_eq!(
-            exprit(&local),
-            e.literal(0, 8).push_text(2, 5).bytes().build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_constructor() {
-        let env = Env::new();
-        let local = env.local(b"True");
-        let (e, _, _, _, t) = local.factories();
+        let env = LocalEnv::new(b"True");
+        let (e, _, _, _, _, t) = env.factories();
+        e.constructor(t.simple(0, 4)).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.constructor(t.simple(0, 4)).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_constructor_arguments() {
-        let env = Env::new();
-        let local = env.local(b"Some(1)");
-        let (e, _, _, _, t) = local.factories();
+        let env = LocalEnv::new(b"Some(1)");
+        let (e, _, _, _, _, t) = env.factories();
+        e.constructor(t.simple(0, 4)).push(e.int(1, 5)).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.constructor(t.simple(0, 4)).push(e.int(1, 5)).build()
-        );
-
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_nested_constructor() {
-        let env = Env::new();
-        let local = env.local(b"Bool::True");
-        let (e, _, _, _, t) = local.factories();
+        let env = LocalEnv::new(b"Bool::True");
+        let (e, _, _, _, _, t) = env.factories();
+        e.constructor(t.nested(6, 4).push(0, 4).build()).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.constructor(
-                t.nested(6, 4).push(0, 4).build()
-            ).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_function_call() {
-        let env = Env::new();
-        let local = env.local(b"basic(1, 2)");
-        let (e, _, _, _, _) = local.factories();
+        let env = LocalEnv::new(b"basic(1, 2)");
+        let (e, _, _, _, _, _) = env.factories();
+        let (one, two) = (e.int(1, 6), e.int(2, 9));
+        e.function_call(e.var(0, 5), 5, 10).push(one).push(two).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.function_call(e.var(0, 5), 5, 10)
-                .push(e.int(1, 6))
-                .push(e.int(2, 9))
-                .build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_function_call_statement() {
-        let env = Env::new();
-        let local = env.local(b":var a := basic(1, 2);");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var a := basic(1, 2);");
+        let (e, _, p, s, _, _) = env.factories();
+        let (one, two) = (e.int(1, 16), e.int(2, 19));
+        let fun = e.function_call(e.var(10, 5), 15, 20)
+            .push(one)
+            .push(two)
+            .build();
+        s.var(p.var(5, 1), fun).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.var(5, 1),
-                e.function_call(e.var(10, 5), 15, 20)
-                    .push(e.int(1, 16))
-                    .push(e.int(2, 19))
-                    .build(),
-            )
-            .build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn basic_if_else() {
-        let env = Env::new();
-        let local = env.local(b":if true { 1 } :else { 0 }");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b":if true { 1 } :else { 0 }");
+        let e = env.factory().expr();
+        let (cond, one, two) = (e.bool_(true, 4), e.int(1, 11), e.int(0, 23));
+        e.if_else(cond, e.block(one).build(), e.block(two).build()).build();
 
-        assert_eq!(
-            exprit(&local),
-            Expression::If(
-                &e.if_else(
-                    e.bool_(true, 4),
-                    e.block(e.int(1, 11)).build(),
-                    e.block(e.int(0, 23)).build(),
-                ).build()
-            )
-        )
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn basic_string() {
-        let env = Env::new();
-        let local = env.local(b"'1 + 2'");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"'1 + 2'");
+        let e = env.factory().expr();
+        e.literal(0, 7).push_text(1, 5).string().build();
 
-        assert_eq!(
-            exprit(&local),
-            e.literal(0, 7).push_text(1, 5).string().build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn block_basic() {
-        let env = Env::new();
-        let local = env.local(b"{\n    :var fool := 1234;\n    fool\n}");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b"{\n    :var fool := 1234;\n    fool\n}");
+        let (e, _, p, s, _, _) = env.factories();
+        let int = e.int(1234, 19);
+        e.block(e.var(29, 4))
+            .range(0, 35)
+            .push_stmt(s.var(p.var(11, 4), int).build())
+            .build();
 
-        assert_eq!(
-            exprit(&local),
-            Expression::Block(
-                &e.block(e.var(29, 4))
-                    .range(0, 35)
-                    .push_stmt(s.var(p.var(11, 4), e.int(1234, 19)).build())
-                    .build()
-            )
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn block_return() {
-        let env = Env::new();
-        let local = env.local(b"{ :return 1; }");
-        let (e, _, _, s, _) = local.factories();
+        let env = LocalEnv::new(b"{ :return 1; }");
+        let (e, _, _, s, _, _) = env.factories();
+        e.block_expression_less()
+            .push_stmt(s.ret().expr(e.int(1, 10)).build())
+            .build();
 
-        assert_eq!(
-            exprit(&local),
-            Expression::Block(
-                &e.block_expression_less()
-                    .push_stmt(s.ret().expr(e.int(1, 10)).build())
-                    .build()
-            )
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn boolean_basic() {
-        let env = Env::new();
-        let local = env.local(b":var x := true;");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var x := true;");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(p.var(5, 1), e.bool_(true, 10)).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(p.var(5, 1), e.bool_(true, 10)).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn constructor_keyed() {
-        let env = Env::new();
-        let local = env.local(b"Person(.name := jack_jack, .age := 1)");
-        let (e, _, _, _, t) = local.factories();
+        let env = LocalEnv::new(b"Person(.name := jack_jack, .age := 1)");
+        let (e, _, _, _, _, t) = env.factories();
+        e.constructor(t.simple(0, 6))
+            .name(7, 5).separator(13).push(e.var(16, 9))
+            .name(27, 4).separator(32).push(e.int(1, 35))
+            .build();
 
-        assert_eq!(
-            exprit(&local),
-            e.constructor(t.simple(0, 6))
-                .name(7, 5).separator(13).push(e.var(16, 9))
-                .name(27, 4).separator(32).push(e.int(1, 35))
-                .build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn field_access_basic() {
-        let env = Env::new();
-        let local = env.local(b"tup.42");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"tup.42");
+        let e = env.factory().expr();
+        e.field_access(e.var(0, 3)).index(42).range(3, 3).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn field_access_keyed() {
-        let env = Env::new();
-        let local = env.local(b"tup.x");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"tup.x");
+        let e = env.factory().expr();
+        e.field_access(e.var(0, 3)).name(3, 2).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.field_access(e.var(0, 3)).name(3, 2).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn field_access_recursive() {
-        let env = Env::new();
-        let local = env.local(b"tup.42.53");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"tup.42.53");
+        let e = env.factory().expr();
+        let field = e.field_access(e.var(0, 3)).index(42).range(3, 3).build();
+        e.field_access(field).index(53).range(6, 3).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.field_access(
-                e.field_access(e.var(0, 3)).index(42).range(3, 3).build()
-            )
-                .index(53)
-                .range(6, 3)
-                .build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn loop_empty() {
-        let env = Env::new();
-        let local = env.local(b":loop { }");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b":loop { }");
+        let e = env.factory().expr();
+        e.loop_(0).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.loop_(0).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn set_basic() {
-        let env = Env::new();
-        let local = env.local(b" :set fool := 1234;");
-        let (e, _, _, s, _) = local.factories();
+        let env = LocalEnv::new(b" :set fool := 1234;");
+        let (e, _, _, s, _, _) = env.factories();
+        s.set(e.var(6, 4), e.int(1234, 14)).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.set(e.var(6, 4), e.int(1234, 14)).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn set_field() {
-        let env = Env::new();
-        let local = env.local(b" :set foo.0 := 1234;");
-        let (e, _, _, s, _) = local.factories();
+        let env = LocalEnv::new(b" :set foo.0 := 1234;");
+        let (e, _, _, s, _, _) = env.factories();
+        s.set(
+            e.field_access(e.var(6, 3)).index(0).build(),
+            e.int(1234, 15)
+        ).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.set(
-                e.field_access(e.var(6, 3)).index(0).build(),
-                e.int(1234, 15)
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_constructor() {
-        let env = Env::new();
-        let local = env.local(b":var Some(x) := Some(1);");
-        let (e, _, p, s, t) = local.factories();
+        let env = LocalEnv::new(b":var Some(x) := Some(1);");
+        let (e, _, p, s, _, t) = env.factories();
+        s.var(
+            p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
+            e.constructor(t.simple(16, 4)).push(e.int(1, 21)).build(),
+        ).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
-                e.constructor(t.simple(16, 4)).push(e.int(1, 21)).build(),
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_constructor_keyed() {
-        let env = Env::new();
-        let local = env.local(b":var Person(.name: n, .age: a) := p;");
-        let (e, _, p, s, t) = local.factories();
+        let env = LocalEnv::new(b":var Person(.name: n, .age: a) := p;");
+        let (e, _, p, s, _, t) = env.factories();
+        let pat = p.constructor(t.simple(5, 6))
+            .name(12, 5).push(p.var(19, 1))
+            .name(22, 4).push(p.var(28, 1))
+            .build();
+        s.var(pat, e.var(34, 1)).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.constructor(t.simple(5, 6))
-                    .name(12, 5).push(p.var(19, 1))
-                    .name(22, 4).push(p.var(28, 1))
-                    .build(),
-                e.var(34, 1),
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_ignored() {
-        let env = Env::new();
-        let local = env.local(b":var _ := 1;");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var _ := 1;");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(p.ignored(5), e.int(1, 10)).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(p.ignored(5), e.int(1, 10)).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_ignored_nested() {
-        let env = Env::new();
-        let local = env.local(b":var (_, b) := (1, 2);");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var (_, b) := (1, 2);");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(
+            p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
+            e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
+        ).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
-                e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_tuple() {
-        let env = Env::new();
-        let local = env.local(b":var (a, b) := (1, 2);");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var (a, b) := (1, 2);");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(
+            p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
+            e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
+        ).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
-                e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn var_tuple_keyed() {
-        let env = Env::new();
-        let local = env.local(b":var (.x: a, .y: b) := foo();");
-        let (e, _, p, s, _) = local.factories();
+        let env = LocalEnv::new(b":var (.x: a, .y: b) := foo();");
+        let (e, _, p, s, _, _) = env.factories();
+        s.var(
+            p.tuple()
+                .name(6, 2).push(p.var(10, 1))
+                .name(13, 2).push(p.var(17, 1))
+                .build(),
+            e.function_call(e.var(23, 3), 26, 27).build(),
+        ).build();
 
-        assert_eq!(
-            stmtit(&local),
-            s.var(
-                p.tuple()
-                    .name(6, 2).push(p.var(10, 1))
-                    .name(13, 2).push(p.var(17, 1))
-                    .build(),
-                e.function_call(e.var(23, 3), 26, 27).build(),
-            ).build()
-        );
+        assert_eq!(env.actual_statement(), env.expected_tree());
     }
 
     #[test]
     fn shunting_yard_prefix() {
-        let env = Env::new();
-        let local = env.local(b":not a :or b :and c");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b":not a :or b :and c");
+        let e = env.factory().expr();
+        let (a, b, c) = (e.var(5, 1), e.var(11, 1), e.var(18, 1));
+        e.bin_op(
+            e.pre_op(a).build(),
+            e.bin_op(b, c).and().build()
+        ).or().build();
 
-        assert_eq!(
-            exprit(&local),
-            e.bin_op(
-                e.pre_op(e.var(5, 1)).build(),
-                e.bin_op(e.var(11, 1), e.var(18, 1)).and().build()
-            ).or().build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn shunting_yard_simple() {
-        let env = Env::new();
-        let local = env.local(b"1 + 2 * 3 < 4 // 5");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"1 + 2 * 3 < 4 // 5");
+        let e = env.factory().expr();
 
-        let left = e.bin_op(
-            e.int(1, 0),
-            e.bin_op(e.int(2, 4), e.int(3, 8)).times().build()
-        ).build();
+        let (two, three, one) = (e.int(2, 4), e.int(3, 8), e.int(1, 0));
+        let mult = e.bin_op(two, three).times().build();
+        let (four, five) = (e.int(4, 12), e.int(5, 17));
 
-        let right =
-            e.bin_op(e.int(4, 12), e.int(5, 17)).floor_by().build();
+        let left = e.bin_op(one, mult).build();
+        let right = e.bin_op(four, five).floor_by().build();
 
-        assert_eq!(
-            exprit(&local),
-            e.bin_op(left, right).less_than().build()
-        )
+        e.bin_op(left, right).less_than().build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn tuple_basic() {
-        let env = Env::new();
-        let local = env.local(b"(1)");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"(1)");
+        let e = env.factory().expr();
+        e.tuple().push(e.int(1, 1)).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.tuple().push(e.int(1, 1)).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn tuple_keyed() {
-        let env = Env::new();
-        let local = env.local(b"(.x := 1, .y := 2)");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"(.x := 1, .y := 2)");
+        let e = env.factory().expr();
+        e.tuple()
+            .name(1, 2).separator(4).push(e.int(1, 7))
+            .name(10, 2).separator(13).push(e.int(2, 16))
+            .build();
 
-        assert_eq!(
-            exprit(&local),
-            e.tuple()
-                .name(1, 2).separator(4).push(e.int(1, 7))
-                .name(10, 2).separator(13).push(e.int(2, 16))
-                .build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn tuple_keyed_named() {
-        let env = Env::new();
-        let local = env.local(b"(.x := 1, .y := 2)");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"(.x := 1, .y := 2)");
+        let e = env.factory().expr();
+        e.tuple()
+            .name(1, 2).separator(4).push(e.int(1, 7))
+            .name(10, 2).separator(13).push(e.int(2, 16))
+            .build();
 
-        assert_eq!(
-            exprit(&local),
-            e.tuple()
-                .name(1, 2).separator(4).push(e.int(1, 7))
-                .name(10, 2).separator(13).push(e.int(2, 16))
-                .build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
     #[test]
     fn tuple_nested() {
-        let env = Env::new();
-        let local = env.local(b"(1, (2, 3), 4)");
-        let e = local.factory().expr();
+        let env = LocalEnv::new(b"(1, (2, 3), 4)");
+        let e = env.factory().expr();
 
+        let one = e.int(1, 1);
         let inner = e.tuple().push(e.int(2, 5)).push(e.int(3, 8)).build();
+        e.tuple().push(one).push(inner).push(e.int(4, 12)).build();
 
-        assert_eq!(
-            exprit(&local),
-            e.tuple().push(e.int(1, 1)).push(inner).push(e.int(4, 12)).build()
-        );
+        assert_eq!(env.actual_expression(), env.expected_tree());
     }
 
-    fn exprit<'g>(local: &LocalEnv<'g>) -> Expression<'g> {
-        let mut raw = local.raw();
-        super::parse_expression(&mut raw)
+    struct LocalEnv { env: Env, }
+
+    impl LocalEnv {
+        fn new(source: &[u8]) -> LocalEnv {
+            LocalEnv { env: Env::new(source), }
+        }
+
+        fn actual_expression(&self) -> Tree {
+            let mut raw = self.env.raw();
+            super::parse_expression(&mut raw);
+            let result = self.env.actual_tree().borrow().clone();
+            println!("actual_expression: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn actual_statement(&self) -> Tree {
+            let mut raw = self.env.raw();
+            super::parse_statement(&mut raw);
+            let result = self.env.actual_tree().borrow().clone();
+            println!("actual_statement: {:#?}", result);
+            println!();
+            result
+        }
+
+        fn expected_tree(&self) -> Tree {
+            let result = self.env.expected_tree().borrow().clone();
+            println!("expected_tree: {:#?}", result);
+            println!();
+            result
+        }
     }
 
-    fn stmtit<'g>(local: &LocalEnv<'g>) -> Statement<'g> {
-        let mut raw = local.raw();
-        super::parse_statement(&mut raw)
+    impl ops::Deref for LocalEnv {
+        type Target = Env;
+
+        fn deref(&self) -> &Env { &self.env }
     }
 }

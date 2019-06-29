@@ -2,51 +2,37 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
+use basic::com;
 
 use model::ast::*;
 
+/// A PatternId.
+pub type PatternId = Id<Pattern>;
+
 /// A Pattern.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Pattern<'a> {
+pub enum Pattern {
     /// A constructor.
-    Constructor(Constructor<'a, Pattern<'a>>),
+    Constructor(Constructor<Pattern>),
     /// An ignored binding, always '_'.
     Ignored(com::Range),
     /// A tuple.
-    Tuple(Tuple<'a, Pattern<'a>>),
+    Tuple(Tuple<Pattern>),
     /// A variable identifier.
     Var(VariableIdentifier),
 }
 
 //
-//  Implementations of Span
-//
-impl<'a> Span for Pattern<'a> {
-    /// Returns the range spanned by the item.
-    fn span(&self) -> com::Range {
-        use self::Pattern::*;
-
-        match *self {
-            Constructor(c) => c.span(),
-            Ignored(r) => r,
-            Tuple(t) => t.span(),
-            Var(v) => v.span(),
-        }
-    }
-}
-
-//
 //  Implementations of From
 //
-impl<'a> convert::From<Constructor<'a, Pattern<'a>>> for Pattern<'a> {
-    fn from(c: Constructor<'a, Pattern<'a>>) -> Pattern<'a> {
+impl convert::From<Constructor<Pattern>> for Pattern {
+    fn from(c: Constructor<Pattern>) -> Pattern {
         Pattern::Constructor(c)
     }
 }
 
-impl<'a> convert::From<Tuple<'a, Pattern<'a>>> for Pattern<'a> {
-    fn from(t: Tuple<'a, Pattern<'a>>) -> Pattern<'a> {
+impl convert::From<Tuple<Pattern>> for Pattern {
+    fn from(t: Tuple<Pattern>) -> Pattern {
         Pattern::Tuple(t)
     }
 }

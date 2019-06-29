@@ -37,35 +37,19 @@ fn interpret_impl<'a>(
 )
     -> int::Value
 {
-    let global_arena = mem::Arena::new();
-    let nodes = create_ast(raw, interner, &global_arena);
+    let (module, tree) = create_ast(raw, interner);
 
     //  Gather prototypes
     let mut prototypes = Vec::new();
-    let mut expression = None;
 
-    for &node in nodes {
-        match node {
-            ast::Node::Item(i) => {
-                use self::hir::Prototype::*;
+    for i in 0..(module.len_functions() as u32) {
+        let id = ast::Item::Fun(ast::FunctionId::new(i));
 
-                let prototype = create_prototype(&i, scope, def_registry);
-                prototypes.push((i, prototype.clone()));
+        let prototype = create_prototype(id, &module, &tree, scope, def_registry);
+        prototypes.push((id, prototype.clone()));
 
-                match prototype {
-                    Enum(_) => unimplemented!(),
-                    Fun(fun) => scope.add_function(fun),
-                    Rec(_) => unimplemented!(),
-                };
-            },
-            ast::Node::Expr(expr) => {
-                assert!(
-                    expression.is_none(),
-                    "Cannot replace {:?} by {:?}", expression, expr
-                );
-                expression = Some(expr);
-            },
-            ast::Node::Stmt(_) => panic!("No statement allowed at top-level"),
+        if let self::hir::Prototype::Fun(fun) = prototype {
+            scope.add_function(fun);
         }
     }
 
@@ -73,7 +57,7 @@ fn interpret_impl<'a>(
     for (i, p) in prototypes {
         use self::hir::Item::*;
 
-        let item = create_item(&i, &p, scope, def_registry);
+        let item = create_item(i, &p, &module, &tree, scope, def_registry);
 
         match item {
             Enum(_) => unimplemented!(),
@@ -87,7 +71,9 @@ fn interpret_impl<'a>(
 
     //  Finally, interpret the expression.
     let value = create_value(
-        &expression.expect("One expression is necessary!"),
+        tree.get_root_expression().expect("One expression is necessary!"),
+        &module,
+        &tree,
         scope,
         def_registry,
     );
@@ -96,24 +82,21 @@ fn interpret_impl<'a>(
     evaluate(&cfg, interner.snapshot(), cfg_registry)
 }
 
-fn create_ast<'g>(
+fn create_ast(
     raw: &[u8],
-    interner: &'g mem::Interner,
-    global_arena: &'g mem::Arena,
+    interner: &mem::Interner,
 )
-    -> ast::List<'g>
+    -> (ast::Module, ast::Tree)
 {
     use stysh_compile::pass::syn::Parser;
 
-    let mut local_arena = mem::Arena::new();
-    let result = Parser::new(global_arena, &local_arena).parse(raw, interner);
-    local_arena.recycle();
-
-    result
+    Parser::new().parse(raw, interner)
 }
 
 fn create_prototype(
-    item: &ast::Item,
+    item: ast::Item,
+    module: &ast::Module,
+    tree: &ast::Tree,
     scope: &scp::Scope,
     registry: &hir::Registry,
 )
@@ -122,7 +105,8 @@ fn create_prototype(
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context).prototype(item);
+    let result = GraphBuilder::new(scope, registry, &context, module, tree)
+        .prototype(item);
 
     println!("create_prototype - {:?}", result);
     println!("");
@@ -131,8 +115,10 @@ fn create_prototype(
 }
 
 fn create_item(
-    item: &ast::Item,
+    item: ast::Item,
     proto: &hir::Prototype,
+    module: &ast::Module,
+    tree: &ast::Tree,
     scope: &scp::Scope,
     registry: &hir::Registry,
 )
@@ -141,7 +127,7 @@ fn create_item(
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context)
+    let result = GraphBuilder::new(scope, registry, &context, module, tree)
         .item(proto.clone(), item);
 
     println!("create_item - {:#?}", result);
@@ -151,7 +137,9 @@ fn create_item(
 }
 
 fn create_value(
-    expr: &ast::Expression,
+    expr: ast::ExpressionId,
+    module: &ast::Module,
+    tree: &ast::Tree,
     scope: &scp::Scope,
     registry: &hir::Registry,
 )
@@ -160,7 +148,7 @@ fn create_value(
     use self::sem::{Context, GraphBuilder};
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, registry, &context).expression(expr);
+    let result = GraphBuilder::new(scope, registry, &context, module, tree).expression(expr);
 
     println!("create_value - {:#?}", result);
     println!("");

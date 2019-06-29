@@ -400,15 +400,27 @@ impl convert::From<PatternId> for Gvn {
     }
 }
 
+impl convert::From<ast::Identifier> for ItemIdentifier {
+    fn from(value: ast::Identifier) -> Self {
+        ItemIdentifier(value.0, value.1)
+    }
+}
+
 impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
     fn from(value: ast::TypeIdentifier) -> Self {
         ItemIdentifier(value.0, value.1)
     }
 }
 
+impl convert::From<ast::Identifier> for ValueIdentifier {
+    fn from(value: ast::Identifier) -> Self {
+        ValueIdentifier(value.0, value.1)
+    }
+}
+
 impl convert::From<ast::VariableIdentifier> for ValueIdentifier {
     fn from(value: ast::VariableIdentifier) -> Self {
-        ValueIdentifier(value.id(), com::Span::span(&value))
+        ValueIdentifier(value.0, value.1)
     }
 }
 

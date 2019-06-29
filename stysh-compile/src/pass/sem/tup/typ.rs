@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(unify(&local, ty, rel), None);
     }
 
-    fn fields<'g>(local: &LocalEnv<'g>, ty: TypeId) -> Vec<TypeId> {
+    fn fields(local: &LocalEnv, ty: TypeId) -> Vec<TypeId> {
         let typ = local.source().borrow().get_type(ty);
 
         let tup = match typ {
@@ -501,7 +501,7 @@ mod tests {
         local.source().borrow().get_type_ids(tup.fields).iter().cloned().collect()
     }
 
-    fn relations<'g>(local: &LocalEnv<'g>, ty: TypeId) -> Vec<Relation<Type>> {
+    fn relations(local: &LocalEnv, ty: TypeId) -> Vec<Relation<Type>> {
         local.core().context
             .get_type_links(ty)
             .iter()
@@ -509,7 +509,7 @@ mod tests {
             .collect()
     }
 
-    fn unify<'g>(local: &LocalEnv<'g>, ty: TypeId, rel: Relation<TypeId>)
+    fn unify(local: &LocalEnv, ty: TypeId, rel: Relation<TypeId>)
         -> Option<Action>
     {
         local.link_types(ty, rel);

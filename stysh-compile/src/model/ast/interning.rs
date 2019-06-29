@@ -4,33 +4,34 @@
 
 use std::rc;
 
-use basic::{com, mem};
+use basic::com::{self, Span};
+use basic::mem;
 
 use model::ast::*;
 
 /// Resolver
 #[derive(Clone)]
-pub struct Resolver<'g> {
-    source: &'g [u8],
+pub struct Resolver {
+    source: Vec<u8>,
     interner: rc::Rc<mem::Interner>,
 }
 
 //
 //  Public interface of Resolver
 //
-impl<'g> Resolver<'g> {
+impl Resolver {
     /// Creates an instance.
     pub fn new(
-        source: &'g [u8],
+        source: &[u8],
         interner: rc::Rc<mem::Interner>,
     )
         -> Self
     {
-        Resolver { source, interner }
+        Resolver { source: source.to_vec(), interner }
     }
 
     /// Returns reference to source.
-    pub fn source(&self) -> &'g [u8] { self.source }
+    pub fn source(&self) -> &[u8] { &self.source }
 
     /// Returns reference to Interner.
     pub fn interner(&self) -> rc::Rc<mem::Interner> { self.interner.clone() }
@@ -56,7 +57,7 @@ impl<'g> Resolver<'g> {
     ///
     /// This automatically strips leading `.`, if any.
     pub fn resolve_range(&self, range: com::Range) -> mem::InternId {
-        let mut raw = &self.source[range];
+        let mut raw = self.slice(range);
         if let Some((first, tail)) = raw.split_first() {
             if *first == b'.' {
                 raw = tail;
@@ -69,9 +70,14 @@ impl<'g> Resolver<'g> {
 //
 //  Implementation of Resolver
 //
-impl<'g> Resolver<'g> {
+impl Resolver {
     fn from_range(&self, range: com::Range) -> mem::InternId {
-        let raw = &self.source[range];
+        let raw = self.slice(range);
         self.interner.insert(raw)
+    }
+
+    fn slice(&self, range: com::Range) -> &[u8] {
+        let slice: &[u8] = &self.source;
+        &slice[range]
     }
 }

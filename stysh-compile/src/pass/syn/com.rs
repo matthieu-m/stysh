@@ -2,48 +2,54 @@
 //!
 //! Common helper functions.
 
-use std;
+use std::{cell, fmt};
 
 use basic::{com, mem};
 use basic::com::Span;
 use model::{tt, ast};
+use model::ast::MultiStore;
 use pass::lex;
 
 #[derive(Clone, Copy)]
-pub struct RawParser<'a, 'g, 'local> {
+pub struct RawParser<'a, 'tree> {
     state: ParserState<'a>,
     source: &'a [u8],
-    interner: &'g mem::Interner,
-    global_arena: &'g mem::Arena,
-    local_arena: &'local mem::Arena,
+    module: &'a cell::RefCell<ast::Module>,
+    tree: &'tree cell::RefCell<ast::Tree>,
+    interner: &'a mem::Interner,
+    arena: &'a mem::Arena,
 }
 
 //
 //  High-level parsing functions.
 //
-impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
-    pub fn parse_tuple<T: 'g + Copy + Span>(
+impl<'a, 'tree> RawParser<'a, 'tree> {
+    pub fn parse_tuple<F, S, T: Copy>(
         &mut self,
-        inner_parser: fn(&mut Self) -> T,
+        store: &cell::RefCell<S>,
+        inner_parser: F,
         separator: tt::Kind,
         ns: &'a [tt::Node<'a>],
         o: tt::Token,
         c: tt::Token,
     )
-        -> ast::Tuple<'g, T>
+        -> ast::Tuple<T>
+        where
+            F: Fn(&mut RawParser<'a, 'tree>) -> ast::Id<T>,
+            S: MultiStore<ast::Id<T>> + MultiStore<ast::Identifier> + MultiStore<u32>,
     {
         let mut inner = self.spawn(ns);
 
-        let mut fields = self.local_array();
-        let mut commas = self.local_array();
-        let mut names = self.local_array();
-        let mut separators = self.local_array();
+        let mut fields = vec!();
+        let mut commas = vec!();
+        let mut names = vec!();
+        let mut separators = vec!();
 
         let mut named = false;
 
         loop {
             if let Some(n) = inner.pop_kind(tt::Kind::NameField) {
-                names.push((self.intern_id_of(n), n.span()));
+                names.push(ast::Identifier(self.intern_id_of(n), n.span()));
                 named = true;
             }
 
@@ -56,7 +62,7 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
                 if names.len() < fields.len() {
                     let range = com::Range::new(t.span().offset(), 0);
-                    names.push((Default::default(), range));
+                    names.push(ast::Identifier(Default::default(), range));
                 }
 
                 if separators.len() < names.len() {
@@ -77,59 +83,77 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
         assert!(inner.peek().is_none());
 
-        let mut result = ast::Tuple {
-            fields: self.intern_slice(fields.into_slice()),
-            commas: self.intern_slice(commas.into_slice()),
-            names: &[],
-            separators: &[],
+        let mut store = store.borrow_mut();
+
+        ast::Tuple {
+            fields: store.push_slice(&fields),
+            commas: store.push_slice(&commas),
+            names: if named { store.push_slice(&names) } else { ast::Id::empty() },
+            separators: if named { store.push_slice(&separators) } else { ast::Id::empty() },
             open: o.offset() as u32,
             close: c.offset() as u32,
-        };
-
-        if named {
-            result.names = self.intern_slice(names.into_slice());
-            result.separators = self.intern_slice(separators.into_slice());
         }
-
-        result
     }
 }
 
 //
 //  Low-level parsing functions.
 //
-impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
+impl<'a, 'tree> RawParser<'a, 'tree> {
     pub fn from_raw(
-        raw: &'local [u8],
-        interner: &'g mem::Interner,
-        global: &'g mem::Arena,
-        local: &'local mem::Arena
+        source: &'a [u8],
+        module: &'a cell::RefCell<ast::Module>,
+        tree: &'tree cell::RefCell<ast::Tree>,
+        interner: &'a mem::Interner,
+        arena: &'a mem::Arena,
     )
-        -> RawParser<'local, 'g, 'local>
-        where
-            'g: 'local
+        -> RawParser<'a, 'tree>
     {
-        let lexer = lex::Lexer::new(interner, local, local);
+        let local_arena = mem::Arena::default();
+        let lexer = lex::Lexer::new(interner, arena, &local_arena);
         RawParser {
-            state: ParserState::new(lexer.parse(raw)),
-            source: raw,
-            interner: interner,
-            global_arena: global,
-            local_arena: local,
+            state: ParserState::new(lexer.parse(source)),
+            source,
+            module,
+            tree,
+            interner,
+            arena,
         }
     }
 
-    pub fn spawn<'b>(&self, nodes: &'b [tt::Node<'b>])
-        -> RawParser<'b, 'g, 'local>
-        where
-            'a: 'b
+    pub fn module(&self) -> &'a cell::RefCell<ast::Module> { self.module }
+
+    pub fn tree(&self) -> &'tree cell::RefCell<ast::Tree> { self.tree }
+
+    pub fn rescope<'b>(
+        &self,
+        tree: &'b cell::RefCell<ast::Tree>
+    )
+        -> RawParser<'a, 'b>
+    {
+        RawParser {
+            state: self.state,
+            source: self.source,
+            module: self.module,
+            tree,
+            interner: self.interner,
+            arena: self.arena,
+        } 
+    }
+
+    pub fn spawn(
+        &self,
+        nodes: &'a [tt::Node<'a>],
+    )
+        -> RawParser<'a, 'tree>
     {
         RawParser {
             state: ParserState::new(nodes),
             source: self.source,
+            module: self.module,
+            tree: self.tree,
             interner: self.interner,
-            global_arena: self.global_arena,
-            local_arena: self.local_arena,
+            arena: self.arena,
         }
     }
 
@@ -154,6 +178,19 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
         }
     }
 
+    pub fn resolve_identifier(&self, token: tt::Token) -> ast::Identifier {
+        debug_assert!(
+            token.kind() == tt::Kind::NameField ||
+            token.kind() == tt::Kind::NameType ||
+            token.kind() == tt::Kind::NameValue,
+            "{:?}",
+            token
+        );
+
+        let id = self.intern_id_of(token);
+        ast::Identifier(id, token.span())
+    }
+
     pub fn resolve_type(&self, token: tt::Token) -> ast::TypeIdentifier {
         debug_assert!(token.kind() == tt::Kind::NameType);
 
@@ -168,14 +205,6 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
 
         let id = self.intern_id_of(token);
         ast::VariableIdentifier(id, token.span())
-    }
-
-    pub fn global(&self) -> &'g mem::Arena { self.global_arena }
-
-    pub fn local(&self) -> &'local mem::Arena { self.local_arena }
-
-    pub fn local_array<T>(&self) -> mem::Array<'local, T> {
-        mem::Array::new(self.local_arena)
     }
 
     pub fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
@@ -197,18 +226,10 @@ impl<'a, 'g, 'local> RawParser<'a, 'g, 'local> {
     }
 
     pub fn pop_tokens(&mut self, nb: usize) { self.state.pop_tokens(nb); }
-
-    pub fn intern<T: 'g>(&self, t: T) -> &'g T {
-        self.global_arena.insert(t)
-    }
-
-    pub fn intern_slice<T: 'g>(&self, ts: &[T]) -> &'g [T] {
-        self.global_arena.insert_slice(ts)
-    }
 }
 
-impl<'a, 'g, 'local> std::fmt::Debug for RawParser<'a, 'g, 'local>  {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a, 'tree> fmt::Debug for RawParser<'a, 'tree>  {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "RawParser {{ {:?} }}", self.state)
     }
 }
@@ -264,8 +285,8 @@ impl<'a> ParserState<'a> {
     }
 }
 
-impl<'a> std::fmt::Debug for ParserState<'a>  {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Debug for ParserState<'a>  {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "ParserState {{ [")?;
         match self.nodes.first().cloned() {
             Some(tt::Node::Run(run)) => {
@@ -284,77 +305,90 @@ impl<'a> std::fmt::Debug for ParserState<'a>  {
 
 #[cfg(test)]
 pub mod tests {
-    use std::rc;
+    use std::{cell, rc};
     use basic::mem;
+    use model::ast;
     use model::ast::builder::{
         Factory, ExprFactory, ItemFactory, PatternFactory, StmtFactory,
-        TypeFactory,
+        TypeFactory, RcModule, RcTree,
     };
     use model::ast::interning::Resolver;
     use super::RawParser;
 
     pub struct Env {
+        actual_module: cell::RefCell<ast::Module>,
+        actual_tree: cell::RefCell<ast::Tree>,
+        expected_module: RcModule,
+        expected_tree: RcTree,
+        resolver: Resolver,
         interner: rc::Rc<mem::Interner>,
-        global_arena: mem::Arena,
-    }
-
-    pub struct LocalEnv<'g> {
-        global_arena: &'g mem::Arena,
-        interner: &'g rc::Rc<mem::Interner>,
-        resolver: Resolver<'g>,
-        local_arena: mem::Arena,
+        arena: mem::Arena,
     }
 
     impl Env {
-        pub fn new() -> Self {
+        pub fn new(source: &[u8]) -> Self {
+            let resolver = Resolver::new(source, Default::default());
+            let interner = resolver.interner();
             Env {
-                interner: Default::default(),
-                global_arena: mem::Arena::new(),
+                actual_module: cell::RefCell::default(),
+                actual_tree: cell::RefCell::default(),
+                expected_module: RcModule::default(),
+                expected_tree: RcTree::default(),
+                resolver,
+                interner,
+                arena: mem::Arena::default(),
             }
         }
 
-        pub fn local<'g>(&'g self, raw: &'g [u8]) -> LocalEnv<'g> {
-            LocalEnv {
-                global_arena: &self.global_arena,
-                interner: &self.interner,
-                resolver: Resolver::new(raw, self.interner.clone()),
-                local_arena: mem::Arena::new(),
-            }
+        pub fn actual_module(&self) -> &cell::RefCell<ast::Module> {
+            &self.actual_module
         }
-    }
 
-    impl<'g> LocalEnv<'g> {
-        pub fn factory(&self) -> Factory<'g> {
-            Factory::new(self.global_arena, self.resolver.clone())
+        pub fn actual_tree(&self) -> &cell::RefCell<ast::Tree> {
+            &self.actual_tree
+        }
+
+        pub fn expected_module(&self) -> &cell::RefCell<ast::Module> {
+            &self.expected_module
+        }
+
+        pub fn expected_tree(&self) -> &cell::RefCell<ast::Tree> {
+            &self.expected_tree
+        }
+
+        pub fn factory(&self) -> Factory {
+            Factory::new(
+                self.expected_module.clone(),
+                self.expected_tree.clone(),
+                self.resolver.clone(),
+            )
         }
 
         pub fn factories(&self) -> (
-            ExprFactory<'g>,
-            ItemFactory<'g>,
-            PatternFactory<'g>,
-            StmtFactory<'g>,
-            TypeFactory<'g>,
+            ExprFactory,
+            ItemFactory,
+            PatternFactory,
+            StmtFactory,
+            TypeFactory<ast::Module>,
+            TypeFactory<ast::Tree>,
         )
         {
             let f = self.factory();
-            (f.expr(), f.item(), f.pat(), f.stmt(), f.type_())
+            (f.expr(), f.item(), f.pat(), f.stmt(), f.type_module(), f.type_())
         }
 
-        pub fn raw<'local>(&'local self)
-            -> RawParser<'local, 'g, 'local>
-            where
-                'g: 'local
-        {
+        pub fn raw<'a>(&'a self) -> RawParser<'a, 'a> {
             RawParser::from_raw(
                 self.resolver.source(),
-                self.interner,
-                self.global_arena,
-                &self.local_arena
+                &self.actual_module,
+                &self.actual_tree,
+                &self.interner,
+                &self.arena
             )
         }
     }
 
-    impl<'g> Drop for LocalEnv<'g> {
-        fn drop(&mut self) { self.local_arena.recycle() }
+    impl Drop for Env {
+        fn drop(&mut self) { self.arena.recycle() }
     }
 }

@@ -17,7 +17,6 @@ mod item;
 mod module;
 mod pattern;
 mod stmt;
-mod store;
 mod tree;
 mod typ;
 
@@ -28,7 +27,6 @@ pub use self::pattern::*;
 pub use self::stmt::*;
 pub use self::typ::*;
 pub use self::module::Module;
-pub use self::store::{Store, MultiStore};
 pub use self::tree::{Root, Tree};
 
 pub use model::tt::StringFragment;

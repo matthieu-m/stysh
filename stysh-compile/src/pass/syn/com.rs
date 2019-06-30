@@ -4,10 +4,9 @@
 
 use std::{cell, fmt};
 
-use basic::{com, mem};
-use basic::com::Span;
+use basic::mem;
+use basic::com::{Range, Span, MultiStore};
 use model::{tt, ast};
-use model::ast::MultiStore;
 use pass::lex;
 
 #[derive(Clone, Copy)]
@@ -61,7 +60,7 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
                 fields.push(inner_parser(&mut inner));
 
                 if names.len() < fields.len() {
-                    let range = com::Range::new(t.span().offset(), 0);
+                    let range = Range::new(t.span().offset(), 0);
                     names.push(ast::Identifier(Default::default(), range));
                 }
 

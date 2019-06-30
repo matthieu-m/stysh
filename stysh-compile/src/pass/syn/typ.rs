@@ -4,7 +4,7 @@
 
 use std::cell;
 
-use basic::com::{self, Span};
+use basic::com::{self, Span, Store, MultiStore};
 
 use model::tt::{Kind, Node};
 use model::ast::*;

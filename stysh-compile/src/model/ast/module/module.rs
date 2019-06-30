@@ -22,12 +22,11 @@
 use std::fmt;
 use std::collections::HashMap;
 
-use basic::com::{Range, Span};
+use basic::com::{Range, Span, Store, MultiStore};
 use basic::sea::{MultiTable, Table};
 
 use model::com::ModuleId;
 use model::ast::*;
-use model::ast::store::{Store, MultiStore};
 
 //
 //  Public Types

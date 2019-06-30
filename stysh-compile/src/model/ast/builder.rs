@@ -2,11 +2,10 @@
 
 use std::{self, cell, rc};
 
-use basic::com::{self, Span};
+use basic::com::{self, Span, Store, MultiStore};
 
 use model::tt;
 use model::ast::*;
-use model::ast::store::{Store, MultiStore};
 use model::ast::interning::Resolver;
 
 //

@@ -6,9 +6,9 @@
 //! -   maps type or module to definition.
 
 use basic::mem;
+use basic::com::{Store, MultiStore};
 
 use model::{ast, hir};
-use model::ast::{Store, MultiStore};
 
 use super::scp::Scope;
 

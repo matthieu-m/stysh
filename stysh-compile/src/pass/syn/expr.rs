@@ -5,7 +5,7 @@
 use std::{cell, fmt};
 
 use basic::mem;
-use basic::com::{Range, Span};
+use basic::com::{Range, Span, Store, MultiStore};
 use model::tt;
 use model::ast::*;
 use pass::syn::typ;

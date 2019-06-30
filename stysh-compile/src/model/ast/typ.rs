@@ -2,11 +2,10 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
+use basic::com::{Range, Span, Store, MultiStore};
 use basic::mem::InternId;
 
 use model::ast::*;
-use model::ast::store::{Store, MultiStore};
 
 /// A TypeId.
 pub type TypeId = Id<Type>;
@@ -15,7 +14,7 @@ pub type TypeId = Id<Type>;
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Type {
     /// A missing type.
-    Missing(com::Range),
+    Missing(Range),
     /// A nested nominal type.
     Nested(TypeIdentifier, Path),
     /// A simple nominal type.
@@ -37,7 +36,7 @@ pub struct Path {
 
 /// A Type Identifier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct TypeIdentifier(pub InternId, pub com::Range);
+pub struct TypeIdentifier(pub InternId, pub Range);
 
 //
 //  Implementations
@@ -100,7 +99,7 @@ pub fn replicate_type<Source, Target>(
 
 impl Span for TypeIdentifier {
     /// Returns the range spanned by the type identifier.
-    fn span(&self) -> com::Range { self.1 }
+    fn span(&self) -> Range { self.1 }
 }
 
 //

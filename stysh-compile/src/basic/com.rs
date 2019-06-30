@@ -303,6 +303,30 @@ pub trait Span {
     fn span(&self) -> Range;
 }
 
+/// A Store trait, to abstract over the actual storage of individual elements.
+pub trait Store<T, I = Id<T>> {
+    /// Returns the number of items.
+    fn len(&self) -> usize;
+
+    /// Returns a copy of the item.
+    fn get(&self, id: I) -> T;
+
+    /// Returns the range of the item.
+    fn get_range(&self, id: I) -> Range;
+
+    /// Pushes an item.
+    fn push(&mut self, item: T, range: Range) -> I;
+}
+
+/// A MultiStore trait, to abstract over the actual storage of slices.
+pub trait MultiStore<T, I = Id<[T]>> {
+    /// Returns the slice of items.
+    fn get_slice(&self, id: I) -> &[T];
+
+    /// Pushes a slice of element.
+    fn push_slice(&mut self, items: &[T]) -> I;
+}
+
 //
 //  Tests
 //

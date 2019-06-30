@@ -12,7 +12,7 @@
 //!
 //! Thread Safety:  JaggedArray is not Sync, yet JaggedArraySnapshot is Send.
 
-use std::{cell, cmp, fmt, iter, marker, mem, ops, ptr, slice};
+use std::{cell, cmp, fmt, iter, marker, mem, ops, ptr, slice, sync};
 
 const NB_SLABS: usize = 21;
 
@@ -23,19 +23,20 @@ pub struct JaggedArray<T> {
     //  Number of allocated slabs.
     allocated: cell::Cell<usize>,
     //  Core
-    core: cell::UnsafeCell<Core<T>>,
+    core: sync::Arc<cell::UnsafeCell<Core<T>>>,
 }
 
 /// JaggedArraySnapshot
-pub struct JaggedArraySnapshot<'a, T: 'a> {
+pub struct JaggedArraySnapshot<T> {
     length: usize,
-    core: &'a Core<T>,
+    core: sync::Arc<cell::UnsafeCell<Core<T>>>,
 }
 
 /// JaggedArrayIterator
-pub struct JaggedArrayIterator<'a, T: 'a> {
+pub struct JaggedArrayIterator<'a, T> {
     current: usize,
-    snapshot: JaggedArraySnapshot<'a, T>,
+    snapshot: JaggedArraySnapshot<T>,
+    _marker: marker::PhantomData<&'a T>,
 }
 
 //
@@ -51,7 +52,7 @@ impl<T> JaggedArray<T> {
         JaggedArray {
             length: Default::default(),
             allocated: Default::default(),
-            core: cell::UnsafeCell::new(Core::new(log2_initial)),
+            core: sync::Arc::new(cell::UnsafeCell::new(Core::new(log2_initial))),
         }
     }
 
@@ -70,7 +71,7 @@ impl<T> JaggedArray<T> {
     pub fn max_capacity(&self) -> usize { self.inner().max_capacity() }
 
     /// Returns a snapshot.
-    pub fn snapshot<'a>(&'a self) -> JaggedArraySnapshot<'a, T> {
+    pub fn snapshot(&self) -> JaggedArraySnapshot<T> {
         JaggedArraySnapshot::new(self)
     }
 
@@ -82,7 +83,9 @@ impl<T> JaggedArray<T> {
     /// Returns the element at index `i` if `i < self.len()` or None.
     pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
         let length = self.len();
-        self.inner_mut().get_mut(i, length)
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        unsafe { self.inner_mut().get_mut(i, length) }
     }
 
     /// Returns the longest contiguous slice starting at index `i`.
@@ -93,7 +96,9 @@ impl<T> JaggedArray<T> {
     /// Returns the longest contiguous slice starting at index `i`.
     pub fn get_slice_mut(&mut self, i: usize) -> &mut [T] {
         let length = self.len();
-        self.inner_mut().get_slice_mut(i, length)
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        unsafe { self.inner_mut().get_slice_mut(i, length) }
     }
 
     /// Returns the element at index `i` if `i < self.len()`, otherwise the
@@ -107,6 +112,8 @@ impl<T> JaggedArray<T> {
     /// behavior is undefined.
     pub unsafe fn get_unchecked_mut(&mut self, i: usize) -> &mut T {
         debug_assert!(i < self.len(), "{} < {}", i, self.len());
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
         self.inner_mut().get_unchecked_mut(i)
     }
 
@@ -114,13 +121,18 @@ impl<T> JaggedArray<T> {
     ///
     /// The array retains its capacity; see shrink to deallocate unused memory.
     pub fn clear(&mut self) {
-        self.inner_mut().clear(self.len());
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        unsafe { self.inner_mut().clear(self.len()); }
         self.length.set(0);
     }
 
     /// Shrinks the array, deallocating unused memory.
     pub fn shrink(&mut self) {
-        self.allocated.set(self.inner_mut().shrink(self.len()));
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        let size = unsafe { self.inner_mut().shrink(self.len()) };
+        self.allocated.set(size);
     }
 
     /// Pushes a new element at the back of the array.
@@ -139,7 +151,9 @@ impl<T> JaggedArray<T> {
         }
 
         while target_capacity > self.capacity() {
-            self.inner_mut().allocate_slab(self.allocated.get());
+            //  Safety:
+            //  -   Not Sync, thus no other reference to Core exists.
+            unsafe { self.inner_mut().allocate_slab(self.allocated.get()); }
             self.allocated.set(self.allocated.get() + 1);
         }
     }
@@ -210,12 +224,12 @@ impl<T: Copy + Default> JaggedArray<T> {
 //
 //  Public interface of JaggedArraySnapshot
 //
-impl<'a, T: 'a> JaggedArraySnapshot<'a, T> {
+impl<T> JaggedArraySnapshot<T> {
     /// Creates a new instance.
-    pub fn new(array: &'a JaggedArray<T>) -> JaggedArraySnapshot<'a, T> {
+    pub fn new(array: &JaggedArray<T>) -> JaggedArraySnapshot<T> {
         JaggedArraySnapshot {
-            length: array.len(),
-            core: array.inner(),
+            length: array.length.get(),
+            core: array.core.clone(),
         }
     }
 
@@ -226,20 +240,20 @@ impl<'a, T: 'a> JaggedArraySnapshot<'a, T> {
     pub fn len(&self) -> usize { self.length }
 
     /// Returns the element at index `i` if `i < self.len()` or None.
-    pub fn get(&self, i: usize) -> Option<&'a T> {
-        self.core.get(i, self.length)
+    pub fn get(&self, i: usize) -> Option<&T> {
+        self.inner().get(i, self.length)
     }
 
     /// Returns the longest contiguous slice starting at index `i`.
-    pub fn get_slice(&self, i: usize) -> &'a [T] {
-        self.core.get_slice(i, self.length)
+    pub fn get_slice(&self, i: usize) -> &[T] {
+        self.inner().get_slice(i, self.length)
     }
 
     /// Returns the element at index `i` if `i < self.len()`, otherwise the
     /// behavior is undefined.
-    pub unsafe fn get_unchecked(&self, i: usize) -> &'a T {
+    pub unsafe fn get_unchecked(&self, i: usize) -> &T {
         debug_assert!(i < self.length);
-        self.core.get_unchecked(i)
+        self.inner().get_unchecked(i)
     }
 }
 
@@ -247,12 +261,13 @@ impl<'a, T: 'a> JaggedArraySnapshot<'a, T> {
 //  Public interface of JaggedArrayIterator
 //
 
-impl<'a, T: 'a> JaggedArrayIterator<'a, T> {
+impl<'a, T> JaggedArrayIterator<'a, T> {
     /// Creates an instance.
-    pub fn new(snapshot: JaggedArraySnapshot<'a, T>) -> Self {
+    pub fn new(snapshot: &'a JaggedArraySnapshot<T>) -> Self {
         JaggedArrayIterator {
             current: 0,
-            snapshot: snapshot,
+            snapshot: snapshot.clone(),
+            _marker: marker::PhantomData,
         }
     }
 }
@@ -287,12 +302,14 @@ struct Core<T> {
 impl<T> JaggedArray<T> {
     /// Returns a reference to the Core.
     fn inner(&self) -> &Core<T> {
+        //  Safety:
+        //  -   Reads are guaranteed to be okay even in concurrent mode.
         unsafe { &*(self.core.get() as *const Core<T>) }
     }
 
     /// Returns a mutable reference to the Core.
-    fn inner_mut(&self) -> &mut Core<T> {
-        unsafe { &mut *(self.core.get()) }
+    unsafe fn inner_mut(&self) -> &mut Core<T> {
+        &mut *(self.core.get())
     }
 
     /// Prepare the array for contiguous insertion of specified length, padding
@@ -327,27 +344,55 @@ impl<T> JaggedArray<T> {
         debug_assert!(self.allocated.get() > 0);
         debug_assert!(self.capacity() > self.len());
 
-        let inner = self.inner_mut();
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        let inner = unsafe { self.inner_mut() };
         let index = inner.slab_index(self.len());
+        //  Safety:
+        //  -   Index correctly computed by slab_index.
         unsafe { inner.slab_mut(index, self.len()) }
+    }
+}
+
+impl<T> JaggedArraySnapshot<T> {
+    /// Aligns lifetime of the instance on lifetime of the caller.
+    ///
+    /// With great power comes great responsibility.
+    unsafe fn with_lifetime<'a, C>(&self, _: &'a C) -> &'a Self {
+        mem::transmute(self)
+    }
+
+    /// Returns a reference to the Core.
+    fn inner(&self) -> &Core<T> {
+        //  Safety:
+        //  -   Reads are guaranteed to be okay even in concurrent mode.
+        unsafe { &*(self.core.get() as *const Core<T>) }
     }
 }
 
 impl<'a, T: 'a> Slab<'a, T> {
     /// Creates a new instance.
-    fn new(ptr: *const T, length: usize) -> Self {
+    ///
+    /// The caller must ensures that both pointer and length are valid,
+    /// unless the length is 0.
+    unsafe fn new(ptr: *const T, length: usize) -> Self {
         Slab { ptr: ptr, length: length, _marker: marker::PhantomData }
     }
 
     /// Get a slice of the elements.
     fn slice(&self) -> &'a [T] {
+        //  Safety:
+        //  -   Caller guaranteed correctness of pointer and length.
         unsafe { slice::from_raw_parts(self.ptr, self.length) }
     }
 }
 
 impl<'a, T: 'a> SlabMut<'a, T> {
     /// Creates a new instance.
-    fn new(ptr: *mut T, length: usize, capacity: usize) -> Self {
+    ///
+    /// The caller must ensures that both pointer, length and capacity are valid,
+    /// unless the length and capacity are 0.
+    unsafe fn new(ptr: *mut T, length: usize, capacity: usize) -> Self {
         let _marker = marker::PhantomData;
         SlabMut { ptr, length, capacity, _marker }
     }
@@ -357,23 +402,31 @@ impl<'a, T: 'a> SlabMut<'a, T> {
 
     /// Get a slice of the elements.
     fn slice(&self) -> &'a mut [T] {
+        //  Safety:
+        //  -   Caller guaranteed correctness of pointer and length.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
     }
 
     /// Clear elements.
     fn clear(&mut self) {
         for i in 0..self.length {
+            //  Safety:
+            //  -   Caller guaranteed correctness of pointer and length.
+            //  -   Index is bounded by length.
             unsafe { ptr::drop_in_place(self.ptr.offset(i as isize)) }
         }
     }
 
     /// Push element.
     fn push(&mut self, e: T) {
-        debug_assert!(
+        assert!(
             self.length < self.capacity,
             "{} < {}", self.length, self.capacity
         );
 
+        //  Safety:
+        //  -   Caller guaranteed correctness of pointer, length and capacity.
+        //  -   Length was just checked versus capacity.
         unsafe { ptr::write(self.ptr.offset(self.length as isize), e); }
         self.length += 1;
     }
@@ -387,6 +440,8 @@ impl<'a, T: 'a> SlabMut<'a, T> {
         let (dst, source, result) = self.prepare_extend(slice);
 
         for (index, e) in source.iter().enumerate() {
+            //  Safety:
+            //  -   prepare_extend correctly prepared `dst`.
             unsafe { ptr::write(dst.offset(index as isize), e.clone()); }
         }
 
@@ -403,6 +458,8 @@ impl<'a, T: 'a> SlabMut<'a, T> {
     {
         let (dst, source, result) = self.prepare_extend(slice);
 
+        //  Safety:
+        //  -   prepare_extend correctly prepared `dst`.
         unsafe {
             ptr::copy_nonoverlapping(source.as_ptr(), dst, source.len());
         }
@@ -419,6 +476,8 @@ impl<'a, T: 'a> SlabMut<'a, T> {
     fn prepare_extend<'b>(&mut self, slice: &'b [T])
         -> (*mut T, &'b [T], &'b [T])
     {
+        //  Safety:
+        //  -   Caller guaranteed correctness of pointer, length and capacity.
         let ptr = unsafe { self.ptr.offset(self.length as isize) };
         let free = self.capacity - self.length;
 
@@ -461,6 +520,8 @@ impl<T> Core<T> {
         if i >= length {
             None
         } else {
+            //  Safety:
+            //  -   Index just checked against length.
             unsafe { Some(self.get_unchecked(i)) }
         }
     }
@@ -470,6 +531,8 @@ impl<T> Core<T> {
         if i >= length {
             None
         } else {
+            //  Safety:
+            //  -   Index just checked against length.
             unsafe { Some(self.get_unchecked_mut(i)) }
         }
     }
@@ -477,6 +540,10 @@ impl<T> Core<T> {
     /// Returns the longest contiguous slice starting at index `i`.
     pub fn get_slice(&self, i: usize, length: usize) -> &[T] {
         let (outer, inner) = self.split(i);
+        //  Safety:
+        //  -   `split` guaranteed correctness of `outer`.
+        //  Unsafe:
+        //  -   `length` is not validated.
         let slab = unsafe { self.slab(outer, length) };
         slab.slice().split_at(inner).1
     }
@@ -484,6 +551,10 @@ impl<T> Core<T> {
     /// Returns the longest contiguous slice starting at index `i`.
     pub fn get_slice_mut(&mut self, i: usize, length: usize) -> &mut [T] {
         let (outer, inner) = self.split(i);
+        //  Safety:
+        //  -   `split` guaranteed correctness of `outer`.
+        //  Unsafe:
+        //  -   `length` is not validated.
         let slab = unsafe { self.slab_mut(outer, length) };
         slab.slice().split_at_mut(inner).1
     }
@@ -509,6 +580,8 @@ impl<T> Core<T> {
         }
 
         for index in self.slabs_used(length).rev() {
+            //  Safety:
+            //  -   `slabs_used` returns valid slabs.
             unsafe { self.slab_mut(index, length) }.clear();
         }
     }
@@ -610,6 +683,9 @@ impl<T> Core<T> {
         self.slabs[i] = ptr::null_mut();
 
         let capacity = self.slab_capacity(i);
+        //  Safety:
+        //  -   Memory was allocated via `Vec`.
+        //  -   `slab_capacity` was used to obtain the original capacity.
         unsafe { Vec::from_raw_parts(ptr, 0, capacity) };
     }
 
@@ -651,13 +727,15 @@ impl<T: Clone> Clone for JaggedArray<T> {
         let result = JaggedArray {
             length: Default::default(),
             allocated: Default::default(),
-            core: cell::UnsafeCell::new(
+            core: sync::Arc::new(cell::UnsafeCell::new(
                 Core::new(self.inner().log2_initial as usize)
-            ),
+            )),
         };
 
         result.reserve(self.len());
-        result.inner_mut().clone(self.inner(), self.len());
+        //  Safety:
+        //  -   Not Sync, thus no other reference to Core exists.
+        unsafe { result.inner_mut().clone(self.inner(), self.len()); }
 
         result
     }
@@ -678,7 +756,9 @@ impl<'a, T: 'a> iter::IntoIterator for &'a JaggedArray<T> {
     type IntoIter = JaggedArrayIterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        JaggedArraySnapshot::new(self).into_iter()
+        //  Safety:
+        //  -   Ties the lifetime of the reference to self, which is also correct.
+        unsafe { JaggedArraySnapshot::new(self).with_lifetime(self).into_iter() }
     }
 }
 
@@ -695,13 +775,16 @@ unsafe impl<T: marker::Send> marker::Send for JaggedArray<T> {}
 //  Implementation of traits for JaggedArraySnapshot
 //
 
-impl<'a, T: 'a> Clone for JaggedArraySnapshot<'a, T> {
-    fn clone(&self) -> Self { *self }
+impl<T> Clone for JaggedArraySnapshot<T> {
+    fn clone(&self) -> Self {
+        JaggedArraySnapshot {
+            length: self.length,
+            core: self.core.clone(),
+        }
+    }
 }
 
-impl<'a, T: 'a> Copy for JaggedArraySnapshot<'a, T> {}
-
-impl<'a, T: fmt::Debug + 'a> fmt::Debug for JaggedArraySnapshot<'a, T> {
+impl<T: fmt::Debug> fmt::Debug for JaggedArraySnapshot<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.is_empty() {
             return write!(f, "[]");
@@ -720,25 +803,16 @@ impl<'a, T: fmt::Debug + 'a> fmt::Debug for JaggedArraySnapshot<'a, T> {
     }
 }
 
-impl<'a, T: 'a> iter::IntoIterator for JaggedArraySnapshot<'a, T> {
+impl<'a, T> iter::IntoIterator for &'a JaggedArraySnapshot<T> {
     type Item = &'a [T];
     type IntoIter = JaggedArrayIterator<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter { JaggedArrayIterator::new(self) }
 }
 
-impl<'a, 'b, T: 'a> iter::IntoIterator for &'b JaggedArraySnapshot<'a, T> {
-    type Item = &'a [T];
-    type IntoIter = JaggedArrayIterator<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        JaggedArrayIterator::new(*self)
-    }
-}
-
-unsafe impl<'a, T> marker::Send for JaggedArraySnapshot<'a, T>
+unsafe impl<T> marker::Send for JaggedArraySnapshot<T>
     where
-        T: marker::Sync + 'a
+        T: marker::Sync
 {}
 
 //
@@ -746,16 +820,25 @@ unsafe impl<'a, T> marker::Send for JaggedArraySnapshot<'a, T>
 //
 
 impl<'a, T: 'a> Clone for JaggedArrayIterator<'a, T> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        JaggedArrayIterator {
+            current: self.current.clone(),
+            snapshot: self.snapshot.clone(),
+            _marker: marker::PhantomData,
+        }
+    }
 }
-
-impl<'a, T: 'a> Copy for JaggedArrayIterator<'a, T> {}
 
 impl<'a, T: 'a> iter::Iterator for JaggedArrayIterator<'a, T> {
     type Item = &'a [T];
 
     fn next(&mut self) -> Option<Self::Item> {
-        let slice = self.snapshot.get_slice(self.current);
+        //  Safety:
+        //  -   Ties the lifetime of the slice to that of the snapshot used to
+        //      create the iterator, which maintains the slice alive by itself.
+        let slice: &'a [T] = unsafe {
+            mem::transmute(self.snapshot.get_slice(self.current))
+        };
 
         if slice.is_empty() {
             None
@@ -771,11 +854,19 @@ impl<'a, T: 'a> iter::Iterator for JaggedArrayIterator<'a, T> {
 //
 
 impl<'a, T: 'a> Default for Slab<'a, T> {
-    fn default() -> Self { Slab::new(ptr::null(), 0) }
+    fn default() -> Self {
+        //  Safety:
+        //  -   The pointer is not derefenced if a length of 0 is used.
+        unsafe { Slab::new(ptr::null(), 0) }
+    }
 }
 
 impl<'a, T: 'a> Default for SlabMut<'a, T> {
-    fn default() -> Self { SlabMut::new(ptr::null_mut(), 0, 0) }
+    fn default() -> Self {
+        //  Safety:
+        //  -   The pointer is not derefenced if a length and a capacity of 0 are used.
+        unsafe { SlabMut::new(ptr::null_mut(), 0, 0) }
+    }
 }
 
 #[cfg(test)]
@@ -787,7 +878,7 @@ mod tests {
         fn check_send<T: Send>() {}
 
         check_send::<JaggedArray<i32>>();
-        check_send::<JaggedArraySnapshot<'static, i32>>();
+        check_send::<JaggedArraySnapshot<i32>>();
     }
 
     #[test]
@@ -796,8 +887,8 @@ mod tests {
 
         const POINTER_SIZE: usize = size_of::<usize>();
 
-        assert_eq!(size_of::<JaggedArray<i32>>(), 24 * POINTER_SIZE);
-        assert_eq!(size_of::<JaggedArraySnapshot<'static, i32>>(), 2 * POINTER_SIZE);
+        assert_eq!(size_of::<JaggedArray<i32>>(), 3 * POINTER_SIZE);
+        assert_eq!(size_of::<JaggedArraySnapshot<i32>>(), 2 * POINTER_SIZE);
     }
 
     #[test]

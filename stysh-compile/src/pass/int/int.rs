@@ -12,13 +12,13 @@ use super::reg::Registry;
 /// either a value, or an error if the interpretation cannot succeed (missing
 /// definitions, FFI call, ...).
 pub struct Interpreter<'a> {
-    interner: InternerSnapshot<'a>,
+    interner: InternerSnapshot,
     registry: &'a Registry,
 }
 
 impl<'a> Interpreter<'a> {
     /// Creates a new instance of an interpreter.
-    pub fn new(interner: InternerSnapshot<'a>, registry: &'a Registry)
+    pub fn new(interner: InternerSnapshot, registry: &'a Registry)
         -> Interpreter<'a>
     {
         Interpreter { interner, registry }
@@ -32,7 +32,7 @@ impl<'a> Interpreter<'a> {
     )
         -> Value
     {
-        let frame = FrameInterpreter::new(self.interner, self.registry);
+        let frame = FrameInterpreter::new(self.interner.clone(), self.registry);
         frame.evaluate(cfg, arguments)
     }
 }
@@ -60,12 +60,12 @@ pub enum Value {
 //  Implementation Details
 //
 struct FrameInterpreter<'a> {
-    interner: InternerSnapshot<'a>,
+    interner: InternerSnapshot,
     registry: &'a Registry,
 }
 
 impl<'a> FrameInterpreter<'a> {
-    fn new(interner: InternerSnapshot<'a>, registry: &'a Registry)
+    fn new(interner: InternerSnapshot, registry: &'a Registry)
         -> FrameInterpreter<'a>
     {
         FrameInterpreter { interner, registry }
@@ -81,7 +81,7 @@ impl<'a> FrameInterpreter<'a> {
         use self::BlockResult::*;
 
         fn interpret_block<'a>(
-            interner: InternerSnapshot<'a>,
+            interner: InternerSnapshot,
             registry: &'a Registry,
             block: &sir::BasicBlock,
             arguments: Vec<Value>,
@@ -98,7 +98,7 @@ impl<'a> FrameInterpreter<'a> {
         //  TODO(matthieum): add way to parameterize fuel.
         for _ in 0..1000 {
             let (i, args) = match interpret_block(
-                self.interner,
+                self.interner.clone(),
                 self.registry,
                 &cfg.blocks.at(index),
                 arguments
@@ -116,7 +116,7 @@ impl<'a> FrameInterpreter<'a> {
 }
 
 struct BlockInterpreter<'a> {
-    interner: InternerSnapshot<'a>,
+    interner: InternerSnapshot,
     registry: &'a Registry,
     arguments: Vec<Value>,
     bindings: Vec<Value>,
@@ -124,7 +124,7 @@ struct BlockInterpreter<'a> {
 
 impl<'a> BlockInterpreter<'a> {
     fn new(
-        interner: InternerSnapshot<'a>,
+        interner: InternerSnapshot,
         registry: &'a Registry,
         arguments: Vec<Value>
     )
@@ -198,7 +198,7 @@ impl<'a> BlockInterpreter<'a> {
         -> Value
     {
         let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
-        let interpreter = FrameInterpreter::new(self.interner, self.registry);
+        let interpreter = FrameInterpreter::new(self.interner.clone(), self.registry);
 
         let mut arguments = Vec::with_capacity(args.len());
         for a in args {
@@ -559,7 +559,7 @@ mod tests {
     }
 
     fn eval_with_registry(
-        interner: InternerSnapshot<'_>,
+        interner: InternerSnapshot,
         registry: &Registry,
         arguments: Vec<Value>,
         cfg: &sir::ControlFlowGraph,

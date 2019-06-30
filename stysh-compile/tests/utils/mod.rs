@@ -189,7 +189,7 @@ fn create_cfg_from_function(fun: &hir::Function) -> sir::ControlFlowGraph {
 
 fn evaluate(
     cfg: &sir::ControlFlowGraph,
-    interner: mem::InternerSnapshot<'_>,
+    interner: mem::InternerSnapshot,
     registry: &int::Registry,
 )
     -> int::Value

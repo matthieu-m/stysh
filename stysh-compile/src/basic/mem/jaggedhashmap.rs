@@ -12,7 +12,7 @@
 //!
 //! Thread Safety:  JaggedArray is not Sync, yet JaggedSlice is Send.
 
-use std::{fmt, iter};
+use std::{fmt, iter, mem, sync};
 use std::borrow::Borrow;
 use std::collections::hash_map;
 use std::hash::{self, BuildHasher, Hash, Hasher};
@@ -28,7 +28,7 @@ pub struct JaggedHashMap<K, V, H = DefaultState>
         H: BuildHasher,
 {
     /// BuildHasher.
-    hash_builder: H,
+    hash_builder: sync::Arc<H>,
     /// Hash residual -> index in data.
     index: JaggedArray<Index>,
     /// Elements.
@@ -37,15 +37,14 @@ pub struct JaggedHashMap<K, V, H = DefaultState>
 
 /// JaggedHashMapSnapshot
 #[derive(Debug)]
-pub struct JaggedHashMapSnapshot<'a, K, V, H = DefaultState>
+pub struct JaggedHashMapSnapshot<K, V, H = DefaultState>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher,
 {
-    hash_builder: &'a H,
-    index: JaggedArraySnapshot<'a, Index>,
-    data: JaggedArraySnapshot<'a, (K, V)>,
+    hash_builder: sync::Arc<H>,
+    index: JaggedArraySnapshot<Index>,
+    data: JaggedArraySnapshot<(K, V)>,
 }
 
 /// JaggedHashMapIterator
@@ -68,7 +67,7 @@ impl<K, V, H> JaggedHashMap<K, V, H>
     /// Creates an instance with a specific hasher.
     pub fn with_hasher(log2_initial: usize, hash_builder: H) -> Self {
         JaggedHashMap {
-            hash_builder: hash_builder,
+            hash_builder: sync::Arc::new(hash_builder),
             index: JaggedArray::new(log2_initial + LOG2_BUCKET_SIZE),
             data: JaggedArray::new(log2_initial),
         }
@@ -90,7 +89,7 @@ impl<K, V, H> JaggedHashMap<K, V, H>
     pub fn len(&self) -> usize { self.data.len() }
 
     /// Returns a snapshot.
-    pub fn snapshot<'a>(&'a self) -> JaggedHashMapSnapshot<'a, K, V, H> {
+    pub fn snapshot(&self) -> JaggedHashMapSnapshot<K, V, H> {
         JaggedHashMapSnapshot::new(self)
     }
 
@@ -114,7 +113,9 @@ impl<K, V, H> JaggedHashMap<K, V, H>
             K: Borrow<Q>,
             Q: Eq + Hash,
     {
-        self.snapshot().get(key)
+        //  Safety:
+        //  -   Ties the lifetime of the reference to self, which is also correct.
+        unsafe { self.snapshot().with_lifetime(self).get(key) }
     }
 
     /// Inserts the key and its value.
@@ -132,7 +133,9 @@ impl<K, V, H> JaggedHashMap<K, V, H>
         let index = self.data.len();
         self.data.push((key, value));
 
-        self.write_index(position, hash, index);
+        //  Safety:
+        //  -   `position` either returned or made valid.
+        unsafe { self.write_index(position, hash, index); }
         None
     }
 }
@@ -151,23 +154,22 @@ impl<K, V> JaggedHashMap<K, V, DefaultState>
 //  Public Interface of JaggedHashMapSnapshot
 //
 
-impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
+impl<K, V, H> JaggedHashMapSnapshot<K, V, H>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher,
 {
     /// Creates an instance.
-    pub fn new(map: &'a JaggedHashMap<K, V, H>) -> Self {
+    pub fn new(map: &JaggedHashMap<K, V, H>) -> Self {
         JaggedHashMapSnapshot {
-            hash_builder: &map.hash_builder,
+            hash_builder: map.hash_builder.clone(),
             index: JaggedArraySnapshot::new(&map.index),
             data: JaggedArraySnapshot::new(&map.data),
         }
     }
 
     /// Returns a reference to the map's BuilderHasher.
-    pub fn hasher(&self) -> &'a H { self.hash_builder }
+    pub fn hasher(&self) -> &H { &self.hash_builder }
 
     /// Returns whether the map is empty or not.
     pub fn is_empty(&self) -> bool { self.data.is_empty() }
@@ -178,7 +180,7 @@ impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
     /// Returns a reference to the value corresponding to the key.
     ///
     /// Complexity: O(log(self.capacity()))
-    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&'a V>
+    pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
         where
             K: Borrow<Q>,
             Q: Eq + Hash,
@@ -186,6 +188,8 @@ impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
         match self.lookup(key) {
             Lookup::Absent(..) | Lookup::Vacant(..) => None,
             Lookup::Found(index)
+                //  Safety:
+                //  -   Index just found.
                 => Some(unsafe { &self.data.get_unchecked(index).1 }),
         }
     }
@@ -197,10 +201,10 @@ impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
 
 impl<'a, K: 'a, V: 'a> JaggedHashMapIterator<'a, K, V> {
     /// Creates an instance.
-    pub fn new<H>(snapshot: JaggedHashMapSnapshot<'a, K, V, H>) -> Self
+    pub fn new<H>(snapshot: &'a JaggedHashMapSnapshot<K, V, H>) -> Self
         where
             K: Eq + Hash,
-            H: BuildHasher + 'a,
+            H: BuildHasher + Clone,
     {
         JaggedHashMapIterator { inner: snapshot.data.into_iter() }
     }
@@ -265,20 +269,28 @@ impl<K, V, H> JaggedHashMap<K, V, H>
     }
 
     /// Writes the index.
-    fn write_index(&self, position: usize, hash: u32, value: usize) {
-        let e = unsafe { self.index.get_unchecked(position) };
+    ///
+    /// Requires caller to specify a valid `position`.
+    unsafe fn write_index(&self, position: usize, hash: u32, value: usize) {
+        let e = self.index.get_unchecked(position);
         debug_assert!(!e.is_set(), "{:?} at {}", e, position);
 
         e.set(hash, value);
     }
 }
 
-impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
+impl<K, V, H> JaggedHashMapSnapshot<K, V, H>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher,
 {
+    /// Aligns lifetime of the instance on lifetime of the caller.
+    ///
+    /// With great power comes great responsibility.
+    unsafe fn with_lifetime<'a, C>(&self, _: &'a C) -> &'a Self {
+        mem::transmute(self)
+    }
+
     /// Hash the key.
     fn hash<Q: ?Sized>(&self, key: &Q) -> u32
         where
@@ -299,7 +311,7 @@ impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
         let hash = self.hash(key);
 
         let mut seen = 0;
-        for slice in self.index {
+        for slice in &self.index {
             debug_assert!(
                 slice.len().count_ones() == 1,
                 "Expected power of 2, got {}", slice.len()
@@ -308,9 +320,13 @@ impl<'a, K, V, H> JaggedHashMapSnapshot<'a, K, V, H>
             let start = bucket_position(hash, slice.len()) << LOG2_BUCKET_SIZE;
 
             for position in start..(start + (1 << LOG2_BUCKET_SIZE)) {
+                //  Safety:
+                //  -   `position` guaranted valid by interval checked.
                 let e = unsafe { &slice.get_unchecked(position) };
 
                 if let Some(index) = self.read_index(e, hash) {
+                    //  Safety:
+                    //  -   `index` guaranteed valid by successful read.
                     let k = unsafe { &self.data.get_unchecked(index).0 };
                     if key == k.borrow() {
                         return Lookup::Found(index);
@@ -389,42 +405,41 @@ impl<K, V> Default for JaggedHashMap<K, V, DefaultState>
 
 impl<'a, K, V, H> iter::IntoIterator for &'a JaggedHashMap<K, V, H>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher + Clone,
 {
     type Item = &'a [(K, V)];
     type IntoIter = JaggedHashMapIterator<'a, K, V>;
 
-    fn into_iter(self) -> Self::IntoIter { self.snapshot().into_iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        //  Safety:
+        //  -   Ties the lifetime of the reference to self, which is also correct.
+        unsafe { self.snapshot().with_lifetime(self).into_iter() }
+    }
 }
 
 //
 //  Implementation of traits for JaggedHashMapSnapshot
 //
 
-impl<'a, K, V, H> Clone for JaggedHashMapSnapshot<'a, K, V, H>
+impl<K, V, H> Clone for JaggedHashMapSnapshot<K, V, H>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher + Clone,
 {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        JaggedHashMapSnapshot {
+            hash_builder: self.hash_builder.clone(),
+            index: self.index.clone(),
+            data: self.data.clone(),
+        }
+    }
 }
 
-impl<'a, K, V, H> Copy for JaggedHashMapSnapshot<'a, K, V, H>
+impl<'a, K, V, H> iter::IntoIterator for &'a JaggedHashMapSnapshot<K, V, H>
     where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
-{
-}
-
-impl<'a, K, V, H> iter::IntoIterator for JaggedHashMapSnapshot<'a, K, V, H>
-    where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
+        K: Eq + Hash,
+        H: BuildHasher + Clone,
 {
     type Item = &'a [(K, V)];
     type IntoIter = JaggedHashMapIterator<'a, K, V>;
@@ -432,27 +447,15 @@ impl<'a, K, V, H> iter::IntoIterator for JaggedHashMapSnapshot<'a, K, V, H>
     fn into_iter(self) -> Self::IntoIter { JaggedHashMapIterator::new(self) }
 }
 
-impl<'a, 'b, K, V, H> iter::IntoIterator for &'b JaggedHashMapSnapshot<'a, K, V, H>
-    where
-        K: Eq + Hash + 'a,
-        V: 'a,
-        H: BuildHasher + 'a,
-{
-    type Item = &'a [(K, V)];
-    type IntoIter = JaggedHashMapIterator<'a, K, V>;
-
-    fn into_iter(self) -> Self::IntoIter { JaggedHashMapIterator::new(*self) }
-}
-
 //
 //  Implementation of traits for JaggedHashMapIterator
 //
 
 impl<'a, K: 'a, V: 'a> Clone for JaggedHashMapIterator<'a, K, V> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        JaggedHashMapIterator { inner: self.inner.clone() }
+    }
 }
-
-impl<'a, K: 'a, V: 'a> Copy for JaggedHashMapIterator<'a, K, V> {}
 
 impl<'a, K: 'a, V: 'a> iter::Iterator for JaggedHashMapIterator<'a, K, V> {
     type Item = &'a [(K, V)];
@@ -483,7 +486,7 @@ mod tests {
         fn check_send<T: Send>() {}
 
         check_send::<JaggedHashMap<i32, i32>>();
-        check_send::<JaggedHashMapSnapshot<'static, i32, i32>>();
+        check_send::<JaggedHashMapSnapshot<i32, i32>>();
     }
 
     #[test]

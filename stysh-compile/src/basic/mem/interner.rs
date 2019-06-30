@@ -33,11 +33,11 @@ pub struct Interner {
 ///
 /// A read-only reference to the Interner, capturing a snapshot of its state
 /// at the moment the reference was obtained.
-#[derive(Clone, Copy, Debug)]
-pub struct InternerSnapshot<'a> {
-    ranges: JaggedArraySnapshot<'a, Range>,
-    strings: JaggedArraySnapshot<'a, u8>,
-    reverse: JaggedHashMapSnapshot<'a, &'static [u8], InternId>,
+#[derive(Clone, Debug)]
+pub struct InternerSnapshot {
+    ranges: JaggedArraySnapshot<Range>,
+    strings: JaggedArraySnapshot<u8>,
+    reverse: JaggedHashMapSnapshot<&'static [u8], InternId>,
 }
 
 //
@@ -78,7 +78,11 @@ impl Interner {
     pub fn len(&self) -> usize { self.snapshot().len() }
 
     /// Returns the string associated to the InternId.
-    pub fn get(&self, id: InternId) -> Option<&[u8]> { self.snapshot().get(id) }
+    pub fn get(&self, id: InternId) -> Option<&[u8]> {
+        //  Safety:
+        //  -   Ties the lifetime of the reference to self, which is also correct.
+        unsafe { self.snapshot().with_lifetime(self).get(id) }
+    }
 
     /// Returns the InternId associated to the string, if any.
     pub fn lookup(&self, string: &[u8]) -> Option<InternId> {
@@ -101,7 +105,12 @@ impl Interner {
 
         //  Self-referential, the dirty way.
         {
-            let slice = self.snapshot().from_range(range);
+            let snapshot = self.snapshot();
+            let slice = snapshot.from_range(range);
+            //  Safety:
+            //  -   The structure is append only, and JaggedArray guarantees
+            //      the stability in memory of inserted elements, therefore
+            //      the slice is guaranteed to be alive as long as `self`.
             let slice: &'static [u8] = unsafe { mem::transmute(slice) };
             self.reverse.insert(slice, id);
         }
@@ -110,9 +119,9 @@ impl Interner {
     }
 }
 
-impl<'a> InternerSnapshot<'a> {
+impl InternerSnapshot {
     /// Creates a new instance.
-    pub fn new(interner: &'a Interner) -> Self {
+    pub fn new(interner: &Interner) -> Self {
         InternerSnapshot {
             ranges: interner.ranges.snapshot(),
             strings: interner.strings.snapshot(),
@@ -126,7 +135,7 @@ impl<'a> InternerSnapshot<'a> {
     }
 
     /// Returns the string associated to the InternId.
-    pub fn get(&self, id: InternId) -> Option<&'a [u8]> {
+    pub fn get(&self, id: InternId) -> Option<&[u8]> {
         if id == Default::default() {
             return None;
         }
@@ -209,12 +218,19 @@ impl InternId {
     fn index_offset() -> u32 { 300 }
 }
 
-impl<'a> InternerSnapshot<'a> {
-    fn from_index(&self, index: usize) -> Option<&'a [u8]> {
+impl InternerSnapshot {
+    /// Aligns lifetime of the instance on lifetime of the caller.
+    ///
+    /// With great power comes great responsibility.
+    unsafe fn with_lifetime<'a, C>(&self, _: &'a C) -> &'a Self {
+        mem::transmute(self)
+    }
+
+    fn from_index(&self, index: usize) -> Option<&[u8]> {
         self.ranges.get(index).map(|r| self.from_range(*r))
     }
 
-    fn from_range(&self, range: Range) -> &'a [u8] {
+    fn from_range(&self, range: Range) -> &[u8] {
         let offset = range.offset();
         let length = range.length();
 
@@ -287,7 +303,7 @@ mod tests {
         fn check_send<T: Send>() {}
 
         check_send::<Interner>();
-        check_send::<InternerSnapshot<'static>>();
+        check_send::<InternerSnapshot>();
     }
 
     #[test]

@@ -18,11 +18,10 @@
 //! Note:   this layout is inspired by the realization that ECS are a great fit
 //!         for Rust.
 
-use std::{cmp, fmt, iter};
 use std::collections::HashMap;
 
 use basic::com::Range;
-use basic::sea::{MultiTable, Table, TableIndex};
+use basic::sea::{MultiTable, Table};
 
 use model::hir::{self, *};
 
@@ -31,7 +30,7 @@ use model::hir::{self, *};
 //
 
 /// Tree.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Tree {
     //  # Invariants
     //
@@ -109,36 +108,6 @@ pub enum Root {
     Function(ItemIdentifier, Tuple<PatternId>, TypeId, ExpressionId),
     /// Pattern.
     Pattern(PatternId),
-}
-
-/// ExpressionHandle.
-///
-/// Combines all elements of an Expression into a single handle.
-#[derive(Clone, Copy, Debug)]
-pub struct ExpressionHandle {
-    /// Expression ID.
-    pub id: ExpressionId,
-    /// Expression.
-    pub expr: Expr,
-    /// Type of the expression.
-    pub typ: Type,
-    /// Range spanned by the expression.
-    pub range: Range,
-}
-
-/// PatternHandle.
-///
-/// Combines all elements of an Pattern into a single handle.
-#[derive(Clone, Copy, Debug)]
-pub struct PatternHandle {
-    /// Pattern ID.
-    pub id: PatternId,
-    /// Pattern.
-    pub pattern: Pattern,
-    /// Type of the pattern.
-    pub typ: Type,
-    /// Range spanned by the pattern.
-    pub range: Range,
 }
 
 //
@@ -249,13 +218,6 @@ impl Tree {
         Type::Rec(name, path, fields)
     }
 
-    /// Returns an Iterator over the fields of each Record.
-    pub fn iter_records<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a Tuple<TypeId>>
-    {
-        self.records.values()
-    }
-
 
     //  Gvns.
 
@@ -314,23 +276,6 @@ impl Tree {
         *self.expression.at(&id)
     }
 
-    /// Returns the expression handle.
-    pub fn get_expression_handle(&self, id: ExpressionId) -> ExpressionHandle {
-        ExpressionHandle {
-            id,
-            expr: self.get_expression(id),
-            typ: self.get_expression_type(id),
-            range: self.get_expression_range(id),
-        }
-    }
-
-    /// Returns an Iterator over ExpressionHandle.
-    pub fn iter_expression_handles<'a>(&'a self)
-        -> impl iter::Iterator<Item = ExpressionHandle> + 'a
-    {
-        ExpressionIter { tree: self, index: 0 }
-    }
-
     /// Inserts a new expression.
     ///
     /// Returns the ExpressionId created for it.
@@ -363,6 +308,9 @@ impl Tree {
 
     //  Patterns.
 
+    /// Returns the number of patterns.
+    pub fn len_patterns(&self) -> usize { self.pattern.len() }
+
     /// Returns the range associated to a pattern.
     pub fn get_pattern_range(&self, id: PatternId) -> Range {
         *self.pat_range.at(&id)
@@ -382,23 +330,6 @@ impl Tree {
     /// Returns the pattern associated to the id.
     pub fn get_pattern(&self, id: PatternId) -> Pattern {
         *self.pattern.at(&id)
-    }
-
-    /// Returns the pattern handle.
-    pub fn get_pattern_handle(&self, id: PatternId) -> PatternHandle {
-        PatternHandle {
-            id,
-            pattern: self.get_pattern(id),
-            typ: self.get_pattern_type(id),
-            range: self.get_pattern_range(id),
-        }
-    }
-
-    /// Returns an Iterator over PatternHandle.
-    pub fn iter_pattern_handles<'a>(&'a self)
-        -> impl iter::Iterator<Item = PatternHandle> + 'a
-    {
-        PatternIter { tree: self, index: 0 }
     }
 
     /// Inserts a new pattern.
@@ -452,7 +383,6 @@ impl Tree {
             panic!("Cannot update a built-in to a non built-in");
         }
 
-        //  FIXME(matthieum): Could implement compression.
         *self.tys.at_mut(&id) = ty;
 
         if let Type::Builtin(b) = ty {
@@ -466,13 +396,14 @@ impl Tree {
     ///
     /// Returns the id created for it.
     pub fn push_type(&mut self, typ: Type) -> TypeId {
-        if let Type::Builtin(b) = typ {
-            return TypeId::from(b);
-        }
-
         let ty = TypeId::new(self.tys.len() as u32);
         self.tys.push(&ty, typ);
-        ty
+
+        if let Type::Builtin(b) = typ {
+            TypeId::from(b)
+        } else {
+            ty
+        }
     }
 
     /// Inserts a new type.
@@ -483,7 +414,7 @@ impl Tree {
 
         //  FIXME(matthieum): handle paths.
         match typ {
-            Builtin(builtin) => TypeId::from(*builtin),
+            Builtin(builtin) => self.push_type(Type::Builtin(*builtin)),
             Enum(e, _) => {
                 let e = self.insert_enum(e);
                 self.push_type(e)
@@ -512,12 +443,6 @@ impl Tree {
         }
     }
 
-    /// Returns an Iterator over references to Types.
-    pub fn iter_types<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a Type>
-    {
-        self.tys.iter()
-    }
 
     /// Returns the callables associated to the id.
     pub fn get_callables(&self, id: Id<[Callable]>) -> &[Callable] {
@@ -531,12 +456,6 @@ impl Tree {
         Self::push_slice(&mut self.callables, callables)
     }
 
-    /// Returns an Iterator over Callables.
-    pub fn iter_callables<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a Callable>
-    {
-        self.callables.iter().flatten()
-    }
 
     /// Returns the expressions associated to the id.
     pub fn get_expressions(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
@@ -549,6 +468,7 @@ impl Tree {
     pub fn push_expressions(&mut self, expressions: &[ExpressionId]) -> Id<[ExpressionId]> {
         Self::push_slice(&mut self.expressions, expressions)
     }
+
 
     /// Returns the names associated to the id.
     pub fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
@@ -564,12 +484,6 @@ impl Tree {
         Self::push_slice(&mut self.names, names)
     }
 
-    /// Returns an Iterator over sequences of ValueIdentifier.
-    pub fn iter_names<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a ValueIdentifier>
-    {
-        self.names.iter().flatten()
-    }
 
     /// Returns the path associated to the id.
     pub fn get_path(&self, id: Id<[ItemIdentifier]>) -> &[ItemIdentifier] {
@@ -583,12 +497,6 @@ impl Tree {
         Self::push_slice(&mut self.paths, path)
     }
 
-    /// Returns an Iterator over path components.
-    pub fn iter_path<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a ItemIdentifier>
-    {
-        self.paths.iter().flatten()
-    }
 
     /// Returns the patterns associated to the id.
     pub fn get_patterns(&self, id: Id<[PatternId]>) -> &[PatternId] {
@@ -602,6 +510,7 @@ impl Tree {
         Self::push_slice(&mut self.patterns, patterns)
     }
 
+
     /// Returns the statements associated to the id.
     pub fn get_statements(&self, id: Id<[Stmt]>) -> &[Stmt] {
         self.stmts.get(&id)
@@ -613,6 +522,7 @@ impl Tree {
     pub fn push_statements(&mut self, stmts: &[Stmt]) -> Id<[Stmt]> {
         Self::push_slice(&mut self.stmts, stmts)
     }
+
 
     /// Returns the type ids associated to the id.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
@@ -633,13 +543,6 @@ impl Tree {
         let types: Vec<_> = types.iter().map(|t| self.push_type(*t)).collect();
         Self::push_slice(&mut self.types, &types)
     }
-
-    /// Returns an Iterator over type ids.
-    pub fn iter_type_ids<'a>(&'a self)
-        -> impl iter::Iterator<Item = &'a TypeId>
-    {
-        self.types.iter().flatten()
-    }
 }
 
 //
@@ -648,15 +551,6 @@ impl Tree {
 
 type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
 
-struct ExpressionIter<'a> {
-    tree: &'a Tree,
-    index: usize,
-}
-
-struct PatternIter<'a> {
-    tree: &'a Tree,
-    index: usize,
-}
 
 //
 //  Private methods
@@ -712,65 +606,8 @@ impl Tree {
 }
 
 //
-//  Public Trait Implementations
-//
-
-impl fmt::Display for Tree {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        TreePrinter::tree(self).write(f)
-    }
-}
-
-impl<'a> iter::IntoIterator for &'a Tree {
-    type Item = DepthTreeItem<'a>;
-    type IntoIter = DepthTreeIter<'a>;
-
-    fn into_iter(self) -> DepthTreeIter<'a> { DepthTreeIter::from_tree(self) }
-}
-
-impl cmp::PartialEq for Tree {
-    fn eq(&self, other: &Tree) -> bool {
-        TreeComparator::new(self, other).trees_eq()
-    }
-}
-
-impl cmp::Eq for Tree {}
-
-//
 //  Private Trait Implementations
 //
-
-impl<'a> iter::Iterator for ExpressionIter<'a> {
-    type Item = ExpressionHandle;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.tree.expression.len() {
-            let index = ExpressionId::from_index(self.index);
-            debug_assert!(index.index() == self.index);
-
-            self.index += 1;
-            Some(self.tree.get_expression_handle(index))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a> iter::Iterator for PatternIter<'a> {
-    type Item = PatternHandle;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.tree.pattern.len() {
-            let index = PatternId::from_index(self.index);
-            debug_assert!(index.index() == self.index);
-
-            self.index += 1;
-            Some(self.tree.get_pattern_handle(index))
-        } else {
-            None
-        }
-    }
-}
 
 #[cfg(test)]
 pub mod samples {

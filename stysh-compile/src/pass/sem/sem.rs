@@ -223,14 +223,16 @@ impl<'a> GraphBuilder<'a> {
         {
             let tree = tree.borrow();
 
-            for p in tree.iter_pattern_handles() {
-                self.context.push_unfetched(p.id.into());
-                self.context.push_diverging(p.id.into());
+            for p in 0..(tree.len_patterns() as u32) {
+                let id = hir::PatternId::new(p);
+                self.context.push_unfetched(id.into());
+                self.context.push_diverging(id.into());
             }
 
-            for e in tree.iter_expression_handles() {
-                self.context.push_unfetched(e.id.into());
-                self.context.push_diverging(e.id.into());
+            for e in 0..(tree.len_expressions() as u32) {
+                let id = hir::ExpressionId::new(e);
+                self.context.push_unfetched(id.into());
+                self.context.push_diverging(id.into());
             }
         }
 
@@ -487,14 +489,13 @@ mod tests {
             let a = v.name_ref(a, 34).pattern(0).type_(t.int()).build();
             let b = v.name_ref(b, 38).pattern(1).type_(t.int()).build();
 
-            v.block(
-                v.call()
-                    .builtin(hir::BuiltinFunction::Add, t.int())
-                    .push(a)
-                    .push(b)
-                    .build()
-            )
-                .build_with_type()
+            let call = v.call()
+                .builtin(hir::BuiltinFunction::Add, t.int())
+                .push(a)
+                .push(b)
+                .build();
+
+            v.block(call).build_with_type()
         };
 
         assert_eq!(

@@ -229,7 +229,9 @@ impl<'a> SymbolMapper<'a> {
         -> hir::Type
     {
         let components = self.ast_tree.get_identifiers(p.components);
-        let path: Vec<hir::ItemIdentifier> = components.iter().map(|&c| c.into()).collect();
+        let path: Vec<hir::ItemIdentifier> = components.iter()
+            .map(|&c| self.scope.lookup_type(c.into()).name())
+            .collect();
         let path = self.tree_mut().push_path(&path);
 
         hir::Type::Unresolved(t.into(), path)
@@ -858,7 +860,7 @@ mod tests {
             env.insert_function(p.fun(basic, td.int()).build(), &[0]);
 
             v.call()
-                .function(basic, hir::Tuple::default(), ti.int())
+                .function(basic, hir::Tuple::unit(), ti.int())
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
                 .build()
@@ -1127,13 +1129,14 @@ mod tests {
             let (p, s, v) = (f.pat(), f.stmt(), f.value());
 
             let a = env.var_id(7, 1);
+            let pat = p.var(a);
             let tup =
                 v.tuple()
                     .push(v.int(1, 13))
                     .range(12, 4)
                     .build();
 
-            let var = s.var(p.var(a), tup);
+            let var = s.var(pat, tup);
             let set = s.set(
                     v.field_access(v.name_ref(a, 23).pattern(0).build()).build(),
                     v.int(2, 30)
@@ -1179,34 +1182,33 @@ mod tests {
     fn value_tuple_keyed_field_access() {
         let env = Env::new(b"(.x := 42, .y := 43).y");
 
-        let e = env.ast().expr();
-        let v = env.hir().value();
+        let ast = {
+            let e = env.ast().expr();
+            e.field_access(
+                e.tuple()
+                    .push(e.int(42, 7)).name(1, 2)
+                    .push(e.int(43, 17)).name(11, 2)
+                    .build(),
+            )
+                .name(20, 2)
+                .build()
+        };
 
-        let (x, y) = (env.field_id(1, 2), env.field_id(11, 2));
-
-        assert_eq!(
-            env.value_of(
-                e.field_access(
-                    e.tuple()
-                        .push(e.int(42, 7)).name(1, 2)
-                        .push(e.int(43, 17)).name(11, 2)
-                        .build(),
-                )
-                    .name(20, 2)
-                    .build()
-            ),
-            env.expression(
-                v.field_access(
-                    v.tuple()
-                        .push(v.int(42, 7)).name(x)
-                        .push(v.int(43, 17)).name(y)
-                        .range(0, 20)
-                        .build()
-                )
-                    .unresolved(env.field_id(20, 2))
+        let hir = {
+            let v = env.hir().value();
+            let (x, y) = (env.field_id(1, 2), env.field_id(11, 2));
+            v.field_access(
+                v.tuple()
+                    .push(v.int(42, 7)).name(x)
+                    .push(v.int(43, 17)).name(y)
+                    .range(0, 20)
                     .build()
             )
-        )
+                .unresolved(env.field_id(20, 2))
+                .build()
+        };
+
+        assert_eq!(env.value_of(ast), env.expression(hir))
     }
 
     #[test]

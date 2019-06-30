@@ -102,6 +102,9 @@ impl ExpressionId {
             None
         }
     }
+
+    /// Returns the raw ID.
+    pub fn raw(&self) -> u32 { self.0.raw() }
 }
 
 impl PatternId {

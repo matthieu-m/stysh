@@ -608,10 +608,10 @@ impl PatTupleBuilder {
     pub fn build(&self) -> PatternId {
         let range = self.range;
 
-        let typ = Type::Tuple(self.typ.build(&self.tree));
-        let pattern = Pattern::Tuple(self.arguments.build(&self.tree));
+        let typ = self.typ.build(&self.tree);
+        let pattern = Pattern::Tuple(self.arguments.build_named(&self.tree, typ.names));
 
-        self.tree.borrow_mut().push_pattern(typ, pattern, range)
+        self.tree.borrow_mut().push_pattern(Type::Tuple(typ), pattern, range)
     }
 }
 
@@ -1753,10 +1753,10 @@ impl ExprTupleBuilder {
     pub fn build(&self) -> ExpressionId {
         let range = self.range;
 
-        let typ = Type::Tuple(self.typ.build(&self.tree));
-        let expr = Expr::Tuple(self.arguments.build(&self.tree));
+        let typ = self.typ.build(&self.tree);
+        let expr = Expr::Tuple(self.arguments.build_named(&self.tree, typ.names));
 
-        self.tree.borrow_mut().push_expression(typ, expr, range)
+        self.tree.borrow_mut().push_expression(Type::Tuple(typ), expr, range)
     }
 }
 
@@ -2214,9 +2214,13 @@ impl<T> TupleBuilder<T> {
 impl TupleBuilder<ExpressionId> {
     /// Builds a Tuple Value.
     fn build(&self, tree: &RcTree) -> Tuple<ExpressionId> {
-        let fields = tree.borrow_mut().push_expressions(&self.fields);
         let names = tree.borrow_mut().push_names(&self.names);
+        self.build_named(tree, names)
+    }
 
+    /// Builds a Tuple Value with existing names.
+    fn build_named(&self, tree: &RcTree, names: Id<[ValueIdentifier]>) -> Tuple<ExpressionId> {
+        let fields = tree.borrow_mut().push_expressions(&self.fields);
         Tuple { fields, names }
     }
 }
@@ -2224,9 +2228,13 @@ impl TupleBuilder<ExpressionId> {
 impl TupleBuilder<PatternId> {
     /// Builds a Tuple Value.
     fn build(&self, tree: &RcTree) -> Tuple<PatternId> {
-        let fields = tree.borrow_mut().push_patterns(&self.fields);
         let names = tree.borrow_mut().push_names(&self.names);
+        self.build_named(tree, names)
+    }
 
+    /// Builds a Tuple Value with existing names.
+    fn build_named(&self, tree: &RcTree, names: Id<[ValueIdentifier]>) -> Tuple<PatternId> {
+        let fields = tree.borrow_mut().push_patterns(&self.fields);
         Tuple { fields, names }
     }
 }

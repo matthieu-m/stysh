@@ -26,7 +26,7 @@ impl<'a> PatternUnifier<'a> {
 
         match self.unify_type(ty) {
             Some(Action::Update(target)) =>
-                self.update(p, ty, target),
+                self.update(p, target),
             Some(Action::Unified) =>
                 Status::Unified,
             Some(Action::Cast(_)) | None =>
@@ -46,8 +46,8 @@ impl<'a> PatternUnifier<'a> {
     }
 
     /// Update the type of the pattern to unify it.
-    fn update(&self, _p: PatternId, ty: TypeId, target: Type) -> Status {
-        self.core.tree.borrow_mut().set_type(ty, target);
+    fn update(&self, p: PatternId, target: Type) -> Status {
+        self.core.tree.borrow_mut().set_pattern_type(p, target);
         Status::Unified
     }
 }

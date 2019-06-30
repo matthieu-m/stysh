@@ -43,7 +43,7 @@ impl<'a> ExprUnifier<'a> {
     fn apply_action(&self, e: ExpressionId, ty: TypeId, a: Action) -> Status {
         match a {
             Action::Update(target) =>
-                self.update(e, ty, target),
+                self.update(e, target),
             Action::Cast(target) =>
                 self.cast(e, ty, target),
             Action::Unified =>
@@ -88,8 +88,8 @@ impl<'a> ExprUnifier<'a> {
     }
 
     /// Update the type of the expression to unify it.
-    fn update(&self, _e: ExpressionId, ty: TypeId, target: Type) -> Status {
-        self.core.tree_mut().set_type(ty, target);
+    fn update(&self, e: ExpressionId, target: Type) -> Status {
+        self.core.tree_mut().set_expression_type(e, target);
         Status::Unified
     }
 
@@ -116,9 +116,9 @@ mod tests {
         let expr = {
             let (_, p, _, s, _, _, v) = env.source_factories();
             let pat = p.var_typed(a, Type::int());
-            let expr = v.name_ref(a, 17).build();
             s.var(pat, v.int(1, 10));
 
+            let expr = v.name_ref(a, 17).build();
             local.link_types_of(expr.into(), Relation::Identical(pat.into()));
 
             expr

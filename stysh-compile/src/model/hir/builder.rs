@@ -1,10 +1,9 @@
 //! Builder for the semantic model (aka AST).
 
-use std::{self, cell, convert, rc};
+use std::{self, cell, rc};
 
-use basic::com;
-use basic::com::Span;
-use basic::mem::{self, DynArray};
+use basic::mem;
+use basic::com::{Range, Span, Store, MultiStore};
 
 use model::hir::*;
 
@@ -12,423 +11,170 @@ use model::hir::*;
 //  High-Level Builders
 //
 
+/// Ref-counted Module.
+pub type RcModule = Rc<Module>;
 /// Ref-counted Tree.
-pub type RcTree = rc::Rc<cell::RefCell<Tree>>;
-
-/// Factory
-#[derive(Clone, Debug)]
-pub struct Factory(RcTree);
-
-/// ItemFactory
-#[derive(Clone, Copy, Debug)]
-pub struct ItemFactory;
-
-/// PatternFactory
-#[derive(Clone, Debug)]
-pub struct PatternFactory(RcTree);
-
-/// PrototypeFactory
-#[derive(Clone, Copy, Debug)]
-pub struct PrototypeFactory;
-
-/// StmtFactory
-#[derive(Clone, Debug)]
-pub struct StmtFactory(RcTree);
-
-/// TypeDefinitionFactory
-#[derive(Clone, Copy, Debug)]
-pub struct TypeDefinitionFactory;
-
-/// TypeFactory
-#[derive(Clone, Debug)]
-pub struct TypeFactory(RcTree);
-
-/// TypeIdFactory
-#[derive(Clone, Debug)]
-pub struct TypeIdFactory(RcTree);
-
-/// ValueFactory
-#[derive(Clone, Debug)]
-pub struct ValueFactory(RcTree);
+pub type RcTree = Rc<Tree>;
 
 //
-//  Item Builders
-//
-
-/// EnumBuilder
-#[derive(Clone, Debug)]
-pub struct EnumBuilder {
-    prototype: EnumProto,
-    variants: DynArray<Record>,
-}
-
-/// RecordBuilder
-#[derive(Clone, Debug)]
-pub struct RecordBuilder {
-    prototype: RecordProto,
-    definition: DynTupleBuilder<TypeDefinition>,
-}
-
-//
-//  Pattern Builders
+//  Factory
 //
 
 #[derive(Clone, Debug)]
-pub struct PatConstructorBuilder {
-    tree: RcTree,
-    arguments: TupleBuilder<PatternId>,
-    typ: Type,
-    range: com::Range,
-}
+pub struct Factory(RcModule, RcTree);
 
-#[derive(Clone, Debug)]
-pub struct PatSimpleBuilder {
-    tree: RcTree,
-    name: ValueIdentifier,
-    typ: Type,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct PatTupleBuilder {
-    tree: RcTree,
-    arguments: TupleBuilder<PatternId>,
-    typ: TupleBuilder<TypeId>,
-    range: com::Range,
-}
-
-//
-//  Prototype Builders
-//
-#[derive(Clone, Debug)]
-pub struct FunctionProtoBuilder {
-    name: ItemIdentifier,
-    range: com::Range,
-    arguments: DynArray<Argument>,
-    result: TypeDefinition,
-}
-
-//
-//  Statement Builders
-//
-
-//
-//  TypeDefinition Builders
-//
-#[derive(Clone, Copy, Debug)]
-pub struct BuiltinTypeBuilder;
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinitionEnumBuilder {
-    enum_: Enum,
-    path: PathBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinitionRecordBuilder {
-    record: Record,
-    path: PathBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinitionUnresolvedBuilder {
-    name: ItemIdentifier,
-    path: PathBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinitionUnresolvedEnumBuilder {
-    proto: EnumProtoBuilder,
-    path: PathBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinitionUnresolvedRecordBuilder {
-    proto: RecordProtoBuilder,
-    path: PathBuilder,
-}
-
-//
-//  Type Builders
-//
-#[derive(Clone, Debug)]
-pub struct TypeEnumBuilder {
-    tree: RcTree,
-    name: ItemIdentifier,
-    path: Vec<ItemIdentifier>,
-    records: Vec<Type>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeRecordBuilder {
-    tree: RcTree,
-    name: ItemIdentifier,
-    path: Vec<ItemIdentifier>,
-    fields: TupleBuilder<TypeId>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeTupleBuilder {
-    tree: RcTree,
-    tuple: TupleBuilder<TypeId>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeUnresolvedBuilder {
-    tree: RcTree,
-    name: ItemIdentifier,
-    path: Vec<ItemIdentifier>,
-}
-
-//
-//  TypeId Builders
-//
-#[derive(Clone, Debug)]
-pub struct TypeIdEnumBuilder {
-    builder: TypeEnumBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdRecordBuilder {
-    builder: TypeRecordBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdTupleBuilder {
-    builder: TypeTupleBuilder,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdUnresolvedBuilder {
-    builder: TypeUnresolvedBuilder,
-}
-
-//
-//  Value Builders
-//
-#[derive(Clone, Debug)]
-pub struct BlockBuilder {
-    tree: RcTree,
-    expr: Option<ExpressionId>,
-    statements: Vec<Stmt>,
-    typ: Type,
-    range: com::Range,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct BuiltinValueBuilder;
-
-#[derive(Clone, Debug)]
-pub struct CallBuilder {
-    tree: RcTree,
-    callable: Callable,
-    unresolved: Vec<Callable>,
-    arguments: TupleBuilder<ExpressionId>,
-    typ: Type,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExprConstructorBuilder {
-    tree: RcTree,
-    arguments: TupleBuilder<ExpressionId>,
-    typ: Type,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExprTupleBuilder {
-    tree: RcTree,
-    arguments: TupleBuilder<ExpressionId>,
-    typ: TupleBuilder<TypeId>,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct FieldAccessBuilder {
-    tree: RcTree,
-    field: Field,
-    expr: ExpressionId,
-    typ: Option<Type>,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct IfBuilder {
-    tree: RcTree,
-    condition: ExpressionId,
-    true_: ExpressionId,
-    false_: ExpressionId,
-    typ: Option<Type>,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct ImplicitBuilder {
-    tree: RcTree,
-    expr: ExpressionId,
-    typ: Type,
-}
-
-#[derive(Clone, Debug)]
-pub struct LoopBuilder {
-    tree: RcTree,
-    statements: Vec<Stmt>,
-    typ: Type,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct RefBuilder {
-    tree: RcTree,
-    typ: Type,
-    name: ValueIdentifier,
-    gvn: Gvn,
-    range: com::Range,
-}
-
-//
-//  Low-Level Builders
-//
-
-#[derive(Clone, Debug)]
-pub struct DynTupleBuilder<T> {
-    fields: DynArray<T>,
-    names: DynArray<ValueIdentifier>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct EnumProtoBuilder {
-    name: ItemIdentifier,
-    range: com::Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct PathBuilder {
-    components: DynArray<TypeDefinition>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RecordProtoBuilder {
-    name: ItemIdentifier,
-    range: com::Range,
-    enum_: ItemIdentifier,
-}
-
-#[derive(Clone, Debug)]
-pub struct TupleBuilder<T> {
-    fields: Vec<T>,
-    names: Vec<ValueIdentifier>,
-}
-
-//
-//  Implementation of Factory
-//
 impl Factory {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> Self { Factory(tree) }
+    pub fn new(module: RcModule, tree: RcTree) -> Self { Factory(module, tree) }
 
     /// Creates a ItemFactory.
-    pub fn item(&self) -> ItemFactory { ItemFactory::new() }
+    pub fn item(&self) -> ItemFactory { ItemFactory::new(self.0.clone()) }
 
     /// Creates a PatternFactory.
-    pub fn pat(&self) -> PatternFactory { PatternFactory::new(self.0.clone()) }
+    pub fn pat(&self) -> PatternFactory { PatternFactory::new(self.1.clone()) }
 
     /// Creates a PrototypeFactory.
-    pub fn proto(&self) -> PrototypeFactory { PrototypeFactory::new() }
+    pub fn proto(&self) -> PrototypeFactory { PrototypeFactory::new(self.0.clone()) }
 
-    /// Creates a StmtFactory.
-    pub fn stmt(&self) -> StmtFactory { StmtFactory::new(self.0.clone()) }
-
-    /// Creates a TypeDefinitionFactory.
-    pub fn type_definition(&self) -> TypeDefinitionFactory {
-        TypeDefinitionFactory::new()
-    }
+    /// Creates a StatementFactory.
+    pub fn stmt(&self) -> StatementFactory { StatementFactory::new(self.1.clone()) }
 
     /// Creates an TypeFactory.
-    pub fn type_(&self) -> TypeFactory { TypeFactory::new(self.0.clone()) }
+    pub fn type_(&self) -> TypeFactory<Tree> { TypeFactory::new(self.1.clone()) }
 
     /// Creates an TypeIdFactory.
-    pub fn type_id(&self) -> TypeIdFactory { TypeIdFactory::new(self.0.clone()) }
+    pub fn type_id(&self) -> TypeIdFactory<Tree> { TypeIdFactory::new(self.1.clone()) }
 
-    /// Creates a ValueFactory.
-    pub fn value(&self) -> ValueFactory { ValueFactory::new(self.0.clone()) }
+    /// Creates an TypeIdFactory, backed by modules.
+    pub fn type_module(&self) -> TypeIdFactory<Module> { TypeIdFactory::new(self.0.clone()) }
+
+    /// Creates a ExpressionFactory.
+    pub fn value(&self) -> ExpressionFactory { ExpressionFactory::new(self.1.clone()) }
 }
 
+
 //
-//  Implementation Details (Item)
+//  Items
 //
+
+#[derive(Clone, Debug)]
+pub struct ItemFactory(RcModule);
+
+#[derive(Clone, Debug)]
+pub struct EnumBuilder {
+    module: RcModule,
+    prototype: EnumPrototype,
+    variants: Vec<RecordId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecordBuilder {
+    prototype: RecordPrototype,
+    definition: TupleBuilder<Module, TypeId>,
+}
+
 impl ItemFactory {
     /// Creates an instance.
-    pub fn new() -> Self { ItemFactory }
-
-    /// Creates an ItemIdentifier.
-    pub fn id(&self, pos: usize, len: usize) -> ItemIdentifier {
-        ItemIdentifier(Default::default(), range(pos, len))
-    }
+    pub fn new(module: RcModule) -> Self { ItemFactory(module) }
 
     /// Creates an EnumBuilder.
-    pub fn enum_(&self, p: EnumProto) -> EnumBuilder { EnumBuilder::new(p) }
+    pub fn enum_(&self, p: EnumPrototype) -> EnumBuilder {
+        EnumBuilder::new(self.0.clone(), p)
+    }
 
     /// Creates a Function.
-    pub fn fun(&self, prototype: FunctionProto, body: Tree) -> Function {
-        Function { prototype, body }
+    pub fn fun(&self, prototype: FunctionPrototype, body: Tree) -> FunctionId {
+        let name = prototype.name;
+
+        let id = if let Some(id) = self.0.borrow().lookup_function(name) {
+            id
+        } else {
+            self.0.borrow_mut().push_function_name(name)
+        };
+
+        let function = Function { prototype, body };
+
+        let mut module = self.0.borrow_mut();
+        module.set_function_prototype(id, prototype);
+        module.set_function(id, function);
+
+        id
     }
 
     /// Creates a RecordBuilder.
-    pub fn rec(&self, r: RecordProto) -> RecordBuilder {
-        RecordBuilder::new(r)
+    pub fn rec(&self, r: RecordPrototype) -> RecordBuilder {
+        RecordBuilder::new(self.0.clone(), r)
     }
 
     /// Shortcut: Creates a Unit Record.
-    pub fn unit(&self, id: ItemIdentifier) -> Record {
-        let proto = RecordProtoBuilder::new(id, id.1.offset()).build();
+    pub fn unit(&self, id: ItemIdentifier) -> RecordId {
+        let proto = RecordPrototypeBuilder::new(self.0.clone(), id, id.1.offset()).build();
+        self.rec(proto).build()
+    }
+
+    /// Shortcut: Creates a Unit Record, with an EnumId.
+    pub fn unit_of_enum(&self, id: ItemIdentifier, enum_: EnumId) -> RecordId {
+        let proto = RecordPrototypeBuilder::new(self.0.clone(), id, id.1.offset())
+            .enum_(enum_)
+            .build();
         self.rec(proto).build()
     }
 }
 
 impl EnumBuilder {
     /// Creates an instance.
-    pub fn new(p: EnumProto) -> Self {
+    pub fn new(module: RcModule, prototype: EnumPrototype) -> Self {
         EnumBuilder {
-            prototype: p,
-            variants: DynArray::default(),
+            module,
+            prototype,
+            variants: vec!(),
         }
     }
 
     /// Pushes a variant.
-    pub fn push(&mut self, r: Record) -> &mut Self {
-        let proto = RecordProto {
-            enum_: self.prototype.name,
-            ..r.prototype
-        };
-        self.variants.push(Record {
-            prototype: proto,
-            definition: r.definition,
-        });
+    pub fn push(&mut self, r: RecordId) -> &mut Self {
+        debug_assert!(
+            self.module.borrow().get_record_prototype(r).enum_ ==
+            self.module.borrow().lookup_enum(self.prototype.name)
+        );
+        self.variants.push(r);
         self
     }
 
     /// Creates an Enum.
-    pub fn build(&self) -> Enum {
-        Enum {
+    pub fn build(&self) -> EnumId {
+        let name = self.prototype.name;
+
+        let id = if let Some(id) = self.module.borrow().lookup_enum(name) {
+            id
+        } else {
+            self.module.borrow_mut().push_enum_name(name)
+        };
+
+        let mut module = self.module.borrow_mut();
+
+        let enum_ = Enum {
             prototype: self.prototype,
-            variants: self.variants.clone(),
-        }
+            variants: module.push_record_ids(self.variants.iter().cloned()),
+        };
+
+        module.set_enum_prototype(id, enum_.prototype);
+        module.set_enum(id, enum_);
+        id
     }
 }
 
 impl RecordBuilder {
     /// Creates an instance.
-    pub fn new(p: RecordProto) -> Self {
+    pub fn new(module: RcModule, prototype: RecordPrototype) -> Self {
         RecordBuilder {
-            prototype: p,
-            definition: DynTupleBuilder::new(),
+            prototype,
+            definition: TupleBuilder::new(module),
         }
     }
 
     /// Pushes a field.
-    pub fn push(&mut self, t: TypeDefinition) -> &mut Self {
+    pub fn push(&mut self, t: TypeId) -> &mut Self {
         self.definition.push(t);
         self
     }
@@ -439,35 +185,62 @@ impl RecordBuilder {
         self
     }
 
-    /// Creates an Record.
-    pub fn build(&self) -> Record {
-        Record {
+    /// Creates a Record.
+    pub fn build(&self) -> RecordId {
+        let module = self.definition.store.clone();
+        let name = self.prototype.name;
+
+        let id = if let Some(id) = module.borrow().lookup_record(name) {
+            id
+        } else {
+            module.borrow_mut().push_record_name(name)
+        };
+
+        let record = Record {
             prototype: self.prototype,
             definition: self.definition.build(),
-        }
+        };
+
+        let mut module = module.borrow_mut();
+        module.set_record_prototype(id, record.prototype);
+        module.set_record(id, record);
+        id
     }
 }
 
+
 //
-//  Implementation Details (Pattern)
+//  Pattern
 //
+
+#[derive(Clone, Debug)]
+pub struct PatternFactory(RcTree);
+
+#[derive(Clone, Debug)]
+pub struct PatternSimpleBuilder {
+    tree: RcTree,
+    name: ValueIdentifier,
+    typ: Type,
+    range: Range,
+}
+
 impl PatternFactory {
     /// Creates an instance.
     pub fn new(tree: RcTree) -> Self { PatternFactory(tree) }
 
-    /// Creates a PatConstructorBuilder.
-    pub fn constructor(&self, typ: Type) -> PatConstructorBuilder {
-        PatConstructorBuilder::new(self.0.clone(), typ)
+    /// Creates a ConstructorBuilder.
+    pub fn constructor(&self, ty: Type) -> ConstructorBuilder<Pattern, PatternId> {
+        ConstructorBuilder::new(self.0.clone(), ty, Box::new(Pattern::Constructor))
     }
 
-    /// Creates a PatSimpleBuilder.
-    pub fn simple(&self) -> PatSimpleBuilder {
-        PatSimpleBuilder::new(self.0.clone())
+    /// Creates a PatternSimpleBuilder.
+    pub fn simple(&self) -> PatternSimpleBuilder {
+        PatternSimpleBuilder::new(self.0.clone())
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> PatTupleBuilder {
-        PatTupleBuilder::new(self.0.clone())
+    pub fn tuple(&self) -> TypedTupleBuilder<PatternId> {
+        TypedTupleBuilder::new(self.0.clone())
     }
 
     /// Shortcut: creates an ignored Pattern.
@@ -486,50 +259,10 @@ impl PatternFactory {
     }
 }
 
-impl PatConstructorBuilder {
+impl PatternSimpleBuilder {
     /// Creates an instance.
-    pub fn new(tree: RcTree, typ: Type) -> PatConstructorBuilder {
-        PatConstructorBuilder {
-            tree,
-            arguments: TupleBuilder::new(),
-            typ,
-            range: Default::default(),
-        }
-    }
-
-    /// Appends an argument.
-    pub fn push(&mut self, argument: PatternId) -> &mut Self {
-        self.arguments.push(argument);
-        self
-    }
-
-    /// Overrides the name of the last field, if any.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.arguments.name(name);
-        self
-    }
-
-    /// Specifies the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Builds a Constructor.
-    pub fn build(&self) -> PatternId {
-        let typ = self.typ;
-        let range = self.range;
-
-        let pattern = Pattern::Constructor(self.arguments.build(&self.tree));
-
-        self.tree.borrow_mut().push_pattern(typ, pattern, range)
-    }
-}
-
-impl PatSimpleBuilder {
-    /// Creates an instance.
-    pub fn new(tree: RcTree) -> PatSimpleBuilder {
-        PatSimpleBuilder {
+    pub fn new(tree: RcTree) -> PatternSimpleBuilder {
+        PatternSimpleBuilder {
             tree,
             name: Default::default(),
             typ: Type::unresolved(),
@@ -573,76 +306,63 @@ impl PatSimpleBuilder {
     }
 }
 
-impl PatTupleBuilder {
-    /// Creates an instance.
-    pub fn new(tree: RcTree) -> PatTupleBuilder {
-        PatTupleBuilder {
-            tree,
-            arguments: TupleBuilder::new(),
-            typ: TupleBuilder::new(),
-            range: Default::default(),
-        }
-    }
 
-    /// Appends an argument.
-    pub fn push(&mut self, argument: PatternId) -> &mut Self {
-        self.arguments.push(argument);
-        self.typ.push(self.tree.borrow().get_pattern_type_id(argument));
-        self
-    }
+//
+//  Prototype
+//
 
-    /// Overrides the name of the last field, if any.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.typ.name(name);
-        self.arguments.name(name);
-        self
-    }
+#[derive(Clone, Debug)]
+pub struct PrototypeFactory(RcModule);
 
-    /// Specifies the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Builds a Constructor.
-    pub fn build(&self) -> PatternId {
-        let range = self.range;
-
-        let typ = self.typ.build(&self.tree);
-        let pattern = Pattern::Tuple(self.arguments.build_named(&self.tree, typ.names));
-
-        self.tree.borrow_mut().push_pattern(Type::Tuple(typ), pattern, range)
-    }
+#[derive(Clone, Debug)]
+pub struct EnumPrototypeBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
 }
 
-//
-//  Implementation Details (Prototype)
-//
+#[derive(Clone, Debug)]
+pub struct FunctionPrototypeBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
+    arguments: TupleBuilder<Module, TypeId>,
+    result: TypeId,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecordPrototypeBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
+    enum_: Option<EnumId>,
+}
+
 impl PrototypeFactory {
     /// Creates an instance.
-    pub fn new() -> Self { PrototypeFactory }
+    pub fn new(module: RcModule) -> Self { PrototypeFactory(module) }
 
-    /// Creates an EnumProtoBuilder.
-    pub fn enum_(&self, name: ItemIdentifier) -> EnumProtoBuilder {
-        let mut e = EnumProtoBuilder::new(name, 0);
+    /// Creates an EnumPrototypeBuilder.
+    pub fn enum_(&self, name: ItemIdentifier) -> EnumPrototypeBuilder {
+        let mut e = EnumPrototypeBuilder::new(self.0.clone(), name, 0);
         e.range(name.span().offset() - 6, name.span().length() + 6);
         e
     }
 
-    /// Creates a FunctionProtoBuilder.
+    /// Creates a FunctionPrototypeBuilder.
     pub fn fun(
         &self,
         name: ItemIdentifier,
-        result: TypeDefinition,
+        result: TypeId,
     )
-        -> FunctionProtoBuilder
+        -> FunctionPrototypeBuilder
     {
-        FunctionProtoBuilder::new(name, result)
+        FunctionPrototypeBuilder::new(self.0.clone(), name, result)
     }
 
-    /// Creates a RecordProtoBuilder.
-    pub fn rec(&self, name: ItemIdentifier, pos: usize) -> RecordProtoBuilder {
-        let mut r = RecordProtoBuilder::new(name, pos);
+    /// Creates a RecordPrototypeBuilder.
+    pub fn rec(&self, name: ItemIdentifier, pos: usize) -> RecordPrototypeBuilder {
+        let mut r = RecordPrototypeBuilder::new(self.0.clone(), name, pos);
         if pos != name.span().offset() {
             r.range(name.span().offset() - 5, name.span().length() + 5);
         }
@@ -650,18 +370,48 @@ impl PrototypeFactory {
     }
 }
 
-impl FunctionProtoBuilder {
+impl EnumPrototypeBuilder {
+    /// Creates an instance.
+    pub fn new(module: RcModule, name: ItemIdentifier, pos: usize) -> Self {
+        EnumPrototypeBuilder {
+            module, 
+            name,
+            range: range(pos, name.span().length()),
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Creates a Record.
+    pub fn build(&self) -> EnumPrototype {
+        let name = self.name;
+        let prototype = EnumPrototype { name: self.name, range: self.range, };
+
+        let id = self.module.borrow_mut().push_enum_name(name);
+        self.module.borrow_mut().set_enum_prototype(id, prototype);
+
+        prototype
+    }
+}
+
+impl FunctionPrototypeBuilder {
     /// Creates an instance.
     pub fn new(
+        module: RcModule,
         name: ItemIdentifier,
-        result: TypeDefinition,
+        result: TypeId,
     )
         -> Self
     {
-        FunctionProtoBuilder {
+        FunctionPrototypeBuilder {
+            module: module.clone(),
             name,
             range: range(0, 0),
-            arguments: DynArray::default(),
+            arguments: TupleBuilder::new(module),
             result,
         }
     }
@@ -673,65 +423,100 @@ impl FunctionProtoBuilder {
     }
 
     /// Pushes an argument.
-    pub fn push(&mut self, name: ValueIdentifier, type_: TypeDefinition) -> &mut Self
+    pub fn push(&mut self, name: ValueIdentifier, type_: TypeId) -> &mut Self
     {
-        let len = name.span().length() + 2 + type_.span().length();
-        let range = range(name.span().offset(), len);
-        self.arguments.push(Argument { name, type_, range });
+        self.arguments.push(type_);
+        self.arguments.name(name);
         self
     }
 
-    /// Sets the range of the last argument.
-    pub fn arg_range(&mut self, pos: usize, len: usize) -> &mut Self {
-        if let Some(mut a) = self.arguments.last() {
-            a.range = range(pos, len);
-            self.arguments.replace(self.arguments.len() - 1, a);
-        }
-        self
-    }
-
-    /// Creates a FunctionProto.
-    pub fn build(&self) -> FunctionProto {
-        FunctionProto {
+    /// Creates a FunctionPrototype.
+    pub fn build(&self) -> FunctionPrototype {
+        let arguments = self.arguments.build();
+        let prototype = FunctionPrototype {
             name: self.name,
             range: self.range,
-            arguments: self.arguments.clone(),
-            result: self.result.clone()
+            arguments,
+            result: self.result,
+        };
+
+        let id = self.module.borrow_mut().push_function_name(self.name);
+        self.module.borrow_mut().set_function_prototype(id, prototype);
+
+        prototype
+    }
+}
+
+impl RecordPrototypeBuilder {
+    /// Creates an instance.
+    pub fn new(module: RcModule, name: ItemIdentifier, pos: usize) -> Self {
+        RecordPrototypeBuilder {
+            module,
+            name,
+            range: range(pos, name.span().length()),
+            enum_: None,
         }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Sets an enum.
+    pub fn enum_(&mut self, e: EnumId) -> &mut Self {
+        self.enum_ = Some(e);
+        self
+    }
+
+    /// Creates a Record.
+    pub fn build(&self) -> RecordPrototype {
+        let name = self.name;
+        let prototype = RecordPrototype { name: self.name, range: self.range, enum_: self.enum_, };
+
+        let id = self.module.borrow_mut().push_record_name(name);
+        self.module.borrow_mut().set_record_prototype(id, prototype);
+
+        prototype
     }
 }
 
 //
-//  Implementation Details (Stmt)
+//  Statement
 //
-impl StmtFactory {
-    /// Creates an instance.
-    pub fn new(tree: RcTree) -> Self { StmtFactory(tree) }
 
-    /// Creates a return Stmt.
-    pub fn ret(&self, expr: ExpressionId) -> Stmt {
+#[derive(Clone, Debug)]
+pub struct StatementFactory(RcTree);
+
+impl StatementFactory {
+    /// Creates an instance.
+    pub fn new(tree: RcTree) -> Self { StatementFactory(tree) }
+
+    /// Creates a return Statement.
+    pub fn ret(&self, expr: ExpressionId) -> Statement {
         let r = self.0.borrow().get_expression_range(expr);
 
         let off = r.offset() - 8;
         let end = r.end_offset() + 1;
         let range = range(off, end - off);
 
-        Stmt::Return(Return { value: expr, range })
+        Statement::Return(Return { value: expr, range })
     }
 
     /// Shortcut: Creates an empty return statement.
-    pub fn ret_unit(&self, pos: usize, len: usize) -> Stmt {
+    pub fn ret_unit(&self, pos: usize, len: usize) -> Statement {
         let typ = Type::unit();
-        let expr = Expr::Tuple(Tuple::unit());
+        let expr = Expression::Tuple(Tuple::unit());
         let rng = range(pos + len - 3, 2);
 
         let expr = self.0.borrow_mut().push_expression(typ, expr, rng);
 
-        Stmt::Return(Return { value: expr, range: range(pos, len) })
+        Statement::Return(Return { value: expr, range: range(pos, len) })
     }
 
-    /// Creates a re-binding Stmt.
-    pub fn set(&self, left: ExpressionId, right: ExpressionId) -> Stmt {
+    /// Creates a re-binding Statement.
+    pub fn set(&self, left: ExpressionId, right: ExpressionId) -> Statement {
         let left_range = self.0.borrow().get_expression_range(left);
         let right_range = self.0.borrow().get_expression_range(right);
 
@@ -739,11 +524,11 @@ impl StmtFactory {
         let end = right_range.end_offset() + 1;
         let range = range(off, end - off);
 
-        Stmt::Set(ReBinding { left, right, range })
+        Statement::Set(ReBinding { left, right, range })
     }
 
-    /// Creates a binding Stmt.
-    pub fn var(&self, left: PatternId, right: ExpressionId) -> Stmt {
+    /// Creates a binding Statement.
+    pub fn var(&self, left: PatternId, right: ExpressionId) -> Statement {
         let left_range = self.0.borrow().get_pattern_range(left);
         let right_range = self.0.borrow().get_expression_range(right);
 
@@ -751,11 +536,11 @@ impl StmtFactory {
         let end = right_range.end_offset() + 1;
         let range = range(off, end - off);
 
-        Stmt::Var(Binding { left, right, range })
+        Statement::Var(Binding { left, right, range })
     }
 
-    /// Shortcut: Creates a simple binding Stmt.
-    pub fn var_id(&self, id: ValueIdentifier, expr: ExpressionId) -> Stmt {
+    /// Shortcut: Creates a simple binding Statement.
+    pub fn var_id(&self, id: ValueIdentifier, expr: ExpressionId) -> Statement {
         let typ = self.0.borrow().get_expression_type(expr);
         let range = id.1;
 
@@ -764,205 +549,43 @@ impl StmtFactory {
     }
 }
 
-//
-//  Implementation Details (TypeDefinition)
-//
-
-impl TypeDefinitionFactory {
-    /// Creates an instance.
-    pub fn new() -> Self { TypeDefinitionFactory }
-
-    /// Creates a BuiltinTypeBuilder.
-    pub fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
-
-    /// Shortcut: creates a Bool TypeDefinition.
-    pub fn bool_(&self) -> TypeDefinition {
-        TypeDefinition::Builtin(self.builtin().bool_())
-    }
-
-    /// Shortcut: creates a Int TypeDefinition.
-    pub fn int(&self) -> TypeDefinition {
-        TypeDefinition::Builtin(self.builtin().int())
-    }
-
-    /// Shortcut: creates a String TypeDefinition.
-    pub fn string(&self) -> TypeDefinition {
-        TypeDefinition::Builtin(self.builtin().string())
-    }
-
-    /// Shortcut: creates a Void TypeDefinition.
-    pub fn void(&self) -> TypeDefinition {
-        TypeDefinition::Builtin(self.builtin().void())
-    }
-
-    /// Creates a TypeDefinitionEnumBuilder.
-    pub fn enum_(&self, e: Enum) -> TypeDefinitionEnumBuilder {
-        TypeDefinitionEnumBuilder::new(e)
-    }
-
-    /// Creates a TypeDefinitionRecordBuilder.
-    pub fn record(&self, r: Record) -> TypeDefinitionRecordBuilder {
-        TypeDefinitionRecordBuilder::new(r)
-    }
-
-    /// Creates a DynTupleBuilder.
-    pub fn tuple(&self) -> DynTupleBuilder<TypeDefinition> {
-        DynTupleBuilder::new()
-    }
-
-    /// Creates a TypeDefinitionUnresolvedBuilder.
-    pub fn unresolved(&self, id: ItemIdentifier) -> TypeDefinitionUnresolvedBuilder {
-        TypeDefinitionUnresolvedBuilder::new(id)
-    }
-
-    /// Creates a TypeDefinitionUnresolvedEnumBuilder.
-    pub fn unresolved_enum(&self, name: ItemIdentifier, pos: usize)
-        -> TypeDefinitionUnresolvedEnumBuilder
-    {
-        TypeDefinitionUnresolvedEnumBuilder::new(name, pos)
-    }
-
-    /// Creates a TypeDefinitionUnresolvedRecordBuilder.
-    pub fn unresolved_record(&self, name: ItemIdentifier, pos: usize)
-        -> TypeDefinitionUnresolvedRecordBuilder
-    {
-        TypeDefinitionUnresolvedRecordBuilder::new(name, pos)
-    }
-}
-
-impl TypeDefinitionEnumBuilder {
-    /// Creates an instance.
-    pub fn new(enum_: Enum) -> Self {
-        TypeDefinitionEnumBuilder {
-            enum_: enum_,
-            path: PathBuilder::new(),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        self.path.push(component);
-        self
-    }
-
-    /// Creates a Enum Type.
-    pub fn build(&self) -> TypeDefinition {
-        TypeDefinition::Enum(self.enum_.clone(), self.path.build())
-    }
-}
-
-impl TypeDefinitionRecordBuilder {
-    /// Creates an instance.
-    pub fn new(record: Record) -> Self {
-        TypeDefinitionRecordBuilder {
-            record: record,
-            path: PathBuilder::new(),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        self.path.push(component);
-        self
-    }
-
-    /// Creates a Record Type.
-    pub fn build(&self) -> TypeDefinition {
-        TypeDefinition::Rec(self.record.clone(), self.path.build())
-    }
-}
-
-impl TypeDefinitionUnresolvedBuilder {
-    /// Creates an instance.
-    pub fn new(name: ItemIdentifier) -> Self {
-        TypeDefinitionUnresolvedBuilder {
-            name: name,
-            path: PathBuilder::new(),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        self.path.push(component);
-        self
-    }
-
-    /// Creates an Unresolved Type.
-    pub fn build(&self) -> TypeDefinition {
-        TypeDefinition::Unresolved(self.name, self.path.build())
-    }
-}
-
-impl TypeDefinitionUnresolvedEnumBuilder {
-    /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
-        TypeDefinitionUnresolvedEnumBuilder {
-            proto: EnumProtoBuilder::new(name, pos),
-            path: PathBuilder::new(),
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.proto.range(pos, len);
-        self
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        self.path.push(component);
-        self
-    }
-
-    /// Creates an UnresolvedEnum Type.
-    pub fn build(&self) -> TypeDefinition {
-        TypeDefinition::UnresolvedEnum(self.proto.build(), self.path.build())
-    }
-}
-
-impl TypeDefinitionUnresolvedRecordBuilder {
-    /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
-        TypeDefinitionUnresolvedRecordBuilder {
-            proto: RecordProtoBuilder::new(name, pos),
-            path: PathBuilder::new(),
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.proto.range(pos, len);
-        self
-    }
-
-    /// Sets an enum.
-    pub fn enum_(&mut self, name: ItemIdentifier) -> &mut Self {
-        self.proto.enum_(name);
-        self
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        if let TypeDefinition::UnresolvedEnum(e, ..) = component {
-            self.proto.enum_(e.name);
-        }
-        self.path.push(component);
-        self
-    }
-
-    /// Creates an UnresolvedRecord Type.
-    pub fn build(&self) -> TypeDefinition {
-        TypeDefinition::UnresolvedRec(self.proto.build(), self.path.build())
-    }
-}
 
 //
-//  Implementation Details (Type)
+//  Type
 //
 
-impl TypeFactory {
+#[derive(Clone, Debug)]
+pub struct TypeFactory<S>(Rc<S>);
+
+#[derive(Clone, Debug)]
+pub struct BuiltinTypeBuilder;
+
+#[derive(Clone, Debug)]
+pub struct TypeEnumBuilder<S> {
+    name: EnumId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeRecordBuilder<S> {
+    name: RecordId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeTupleBuilder<S> {
+    tuple: TupleBuilder<S, TypeId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeUnresolvedBuilder<S> {
+    name: ItemIdentifier,
+    path: PathBuilder<S>,
+}
+
+impl<S> TypeFactory<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> Self { TypeFactory(tree) }
+    pub fn new(store: Rc<S>) -> Self { TypeFactory(store) }
 
     /// Creates a BuiltinTypeBuilder.
     pub fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
@@ -980,22 +603,22 @@ impl TypeFactory {
     pub fn void(&self) -> Type { Type::Builtin(self.builtin().void()) }
 
     /// Creates a TypeEnumBuilder.
-    pub fn enum_(&self, name: ItemIdentifier) -> TypeEnumBuilder {
+    pub fn enum_(&self, name: EnumId) -> TypeEnumBuilder<S> {
         TypeEnumBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a TypeRecordBuilder.
-    pub fn record(&self, name: ItemIdentifier) -> TypeRecordBuilder {
+    pub fn record(&self, name: RecordId) -> TypeRecordBuilder<S> {
         TypeRecordBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a TupleBuilder.
-    pub fn tuple(&self) -> TypeTupleBuilder {
+    pub fn tuple(&self) -> TypeTupleBuilder<S> {
         TypeTupleBuilder::new(self.0.clone())
     }
 
     /// Creates a TypeUnresolvedBuilder.
-    pub fn unresolved(&self, name: ItemIdentifier) -> TypeUnresolvedBuilder {
+    pub fn unresolved(&self, name: ItemIdentifier) -> TypeUnresolvedBuilder<S> {
         TypeUnresolvedBuilder::new(self.0.clone(), name)
     }
 }
@@ -1017,89 +640,62 @@ impl BuiltinTypeBuilder {
     pub fn void(&self) -> BuiltinType { BuiltinType::Void }
 }
 
-impl TypeEnumBuilder {
+impl<S> TypeEnumBuilder<S> {
     /// Creates a new instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeEnumBuilder {
+    pub fn new(store: Rc<S>, name: EnumId) -> Self {
         TypeEnumBuilder {
-            tree,
             name,
-            path: vec!(),
-            records: vec!(),
+            path: PathBuilder::new(store),
         }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.path.push(item);
         self
-    }
-
-    /// Appends a record to the enum.
-    pub fn push(&mut self, record: Type) -> &mut Self {
-        if let Type::Rec(..) = record {
-            self.records.push(record);
-            return self;
-        }
-        panic!("Only expects records, not {:?}", record);
     }
 
     /// Builds a Type::Enum.
-    pub fn build(&self) -> Type {
-        let path = self.tree.borrow_mut().push_path(&self.path);
-        let records = self.tree.borrow_mut().push_types(&self.records);
-
-        Type::Enum(self.name, path, records)
+    pub fn build(&self) -> Type
+        where
+            S: MultiStore<PathComponent>
+    {
+        Type::Enum(self.name, self.path.build())
     }
 }
 
-impl TypeRecordBuilder {
+impl<S> TypeRecordBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeRecordBuilder {
+    pub fn new(store: Rc<S>, name: RecordId) -> Self {
         TypeRecordBuilder {
-            tree,
             name,
-            path: vec!(),
-            fields: TupleBuilder::new(),
+            path: PathBuilder::new(store),
         }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.path.push(item);
-        self
-    }
-
-    /// Appends a field.
-    pub fn push(&mut self, typ: Type) -> &mut Self {
-        let ty = self.tree.borrow_mut().push_type(typ);
-        self.fields.push(ty);
-        self
-    }
-
-    /// Names the last field.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.fields.name(name);
         self
     }
 
     /// Builds a Type::Rec.
-    pub fn build(&self) -> Type {
-        let path = self.tree.borrow_mut().push_path(&self.path);
-        let fields = self.fields.build(&self.tree);
-
-        Type::Rec(self.name, path, fields)
+    pub fn build(&self) -> Type
+        where
+            S: MultiStore<PathComponent>
+    {
+        Type::Rec(self.name, self.path.build())
     }
 }
 
-impl TypeTupleBuilder {
+impl<S> TypeTupleBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> TypeTupleBuilder {
-        TypeTupleBuilder { tree, tuple: TupleBuilder::new() }
+    pub fn new(store: Rc<S>) -> Self {
+        TypeTupleBuilder { tuple: TupleBuilder::new(store) }
     }
 
     /// Appends a field.
-    pub fn push(&mut self, typ: Type) -> &mut Self {
-        let ty = self.tree.borrow_mut().push_type(typ);
+    pub fn push(&mut self, ty: TypeId) -> &mut Self {
         self.tuple.push(ty);
         self
     }
@@ -1111,28 +707,35 @@ impl TypeTupleBuilder {
     }
 
     /// Builds a Type::Tuple.
-    pub fn build(&self) -> Type {
-        Type::Tuple(self.tuple.build(&self.tree))
+    pub fn build(&self) -> Type
+        where
+            S: MultiStore<ValueIdentifier> + MultiStore<TypeId>,
+    {
+        Type::Tuple(self.tuple.build())
     }
 }
 
-impl TypeUnresolvedBuilder {
+impl<S> TypeUnresolvedBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeUnresolvedBuilder {
-        TypeUnresolvedBuilder { tree, name, path: vec!() }
+    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
+        TypeUnresolvedBuilder {
+            name,
+            path: PathBuilder::new(store),
+        }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.path.push(item);
         self
     }
 
     /// Builds a Type::Unresolved.
-    pub fn build(&self) -> Type {
-        let path = self.tree.borrow_mut().push_path(&self.path);
-
-        Type::Unresolved(self.name, path)
+    pub fn build(&self) -> Type
+        where
+            S: MultiStore<PathComponent>
+    {
+        Type::Unresolved(self.name, self.path.build())
     }
 }
 
@@ -1140,57 +743,95 @@ impl TypeUnresolvedBuilder {
 //  Implementation Details (Type)
 //
 
-impl TypeIdFactory {
+#[derive(Clone, Debug)]
+pub struct TypeIdFactory<S>(Rc<S>);
+
+#[derive(Clone, Debug)]
+pub struct TypeIdEnumBuilder<S>{
+    builder: TypeEnumBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeIdRecordBuilder<S> {
+    builder: TypeRecordBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeIdTupleBuilder<S> {
+    builder: TypeTupleBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeIdUnresolvedBuilder<S> {
+    builder: TypeUnresolvedBuilder<S>,
+}
+
+impl<S> TypeIdFactory<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> Self { TypeIdFactory(tree) }
+    pub fn new(store: Rc<S>) -> Self { TypeIdFactory(store) }
 
     /// Shortcut: creates a Bool Type.
-    pub fn bool_(&self) -> TypeId {
+    pub fn bool_(&self) -> TypeId
+        where
+            S: Store<Type, TypeId>,
+    {
         let ty = Type::Builtin(self.builtin().bool_());
-        self.0.borrow_mut().push_type(ty)
+        self.0.borrow_mut().push(ty, Range::default())
     }
 
     /// Shortcut: creates a Int Type.
-    pub fn int(&self) -> TypeId {
+    pub fn int(&self) -> TypeId
+        where
+            S: Store<Type, TypeId>,
+    {
         let ty = Type::Builtin(self.builtin().int());
-        self.0.borrow_mut().push_type(ty)
+        self.0.borrow_mut().push(ty, Range::default())
     }
 
     /// Shortcut: creates a String Type.
-    pub fn string(&self) -> TypeId {
+    pub fn string(&self) -> TypeId
+        where
+            S: Store<Type, TypeId>,
+    {
         let ty = Type::Builtin(self.builtin().string());    
-        self.0.borrow_mut().push_type(ty)
+        self.0.borrow_mut().push(ty, Range::default())
     }
 
     /// Shortcut: creates a Void Type.
-    pub fn void(&self) -> TypeId {
+    pub fn void(&self) -> TypeId
+        where
+            S: Store<Type, TypeId>,
+    {
         let ty = Type::Builtin(self.builtin().void());
-        self.0.borrow_mut().push_type(ty)
+        self.0.borrow_mut().push(ty, Range::default())
     }
 
     /// Creates a TypeIdEnumBuilder.
-    pub fn enum_(&self, name: ItemIdentifier) -> TypeIdEnumBuilder {
+    pub fn enum_(&self, name: EnumId) -> TypeIdEnumBuilder<S> {
         TypeIdEnumBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a TypeIdRecordBuilder.
-    pub fn record(&self, name: ItemIdentifier) -> TypeIdRecordBuilder {
+    pub fn record(&self, name: RecordId) -> TypeIdRecordBuilder<S> {
         TypeIdRecordBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a TypeIdTupleBuilder.
-    pub fn tuple(&self) -> TypeIdTupleBuilder {
+    pub fn tuple(&self) -> TypeIdTupleBuilder<S> {
         TypeIdTupleBuilder::new(self.0.clone())
     }
 
     /// Shortcut: creates an unnamed Unresolved Type.
-    pub fn unresolved(&self) -> TypeId {
+    pub fn unresolved(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<PathComponent>
+    {
         self.unresolved_named(ItemIdentifier::unresolved()).build()
     }
 
     /// Creates a TypeIdUnresolvedBuilder.
     pub fn unresolved_named(&self, name: ItemIdentifier)
-        -> TypeIdUnresolvedBuilder
+        -> TypeIdUnresolvedBuilder<S>
     {
         TypeIdUnresolvedBuilder::new(self.0.clone(), name)
     }
@@ -1198,70 +839,58 @@ impl TypeIdFactory {
     fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
 }
 
-impl TypeIdEnumBuilder {
+impl<S> TypeIdEnumBuilder<S> {
     /// Creates a new instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeIdEnumBuilder {
-        TypeIdEnumBuilder { builder: TypeEnumBuilder::new(tree, name) }
+    pub fn new(store: Rc<S>, name: EnumId) -> Self {
+        TypeIdEnumBuilder { builder: TypeEnumBuilder::new(store, name) }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.builder.push_component(item);
-        self
-    }
-
-    /// Appends a record to the enum.
-    pub fn push(&mut self, record: Type) -> &mut Self {
-        self.builder.push(record);
         self
     }
 
     /// Builds a Type::Enum.
-    pub fn build(&self) -> TypeId {
+    pub fn build(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<PathComponent>,
+    {
         let ty = self.builder.build();
-        self.builder.tree.borrow_mut().push_type(ty)
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
     }
 }
 
-impl TypeIdRecordBuilder {
+impl<S> TypeIdRecordBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeIdRecordBuilder {
-        TypeIdRecordBuilder { builder: TypeRecordBuilder::new(tree, name) }
+    pub fn new(store: Rc<S>, name: RecordId) -> Self {
+        TypeIdRecordBuilder { builder: TypeRecordBuilder::new(store, name) }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.builder.push_component(item);
         self
     }
 
-    /// Appends a field.
-    pub fn push(&mut self, typ: Type) -> &mut Self {
-        self.builder.push(typ);
-        self
-    }
-
-    /// Names the last field.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.builder.name(name);
-        self
-    }
-
     /// Builds a Type::Rec.
-    pub fn build(&self) -> TypeId {
+    pub fn build(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<PathComponent>,
+    {
         let ty = self.builder.build();
-        self.builder.tree.borrow_mut().push_type(ty)
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
     }
 }
 
-impl TypeIdTupleBuilder {
+impl<S> TypeIdTupleBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> TypeIdTupleBuilder {
-        TypeIdTupleBuilder { builder: TypeTupleBuilder::new(tree) }
+    pub fn new(store: Rc<S>) -> Self {
+        TypeIdTupleBuilder { builder: TypeTupleBuilder::new(store) }
     }
 
     /// Appends a field.
-    pub fn push(&mut self, typ: Type) -> &mut Self {
+    pub fn push(&mut self, typ: TypeId) -> &mut Self {
         self.builder.push(typ);
         self
     }
@@ -1273,37 +902,112 @@ impl TypeIdTupleBuilder {
     }
 
     /// Builds a Type::Tuple.
-    pub fn build(&self) -> TypeId {
+    pub fn build(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<TypeId> + MultiStore<ValueIdentifier>,
+    {
         let ty = self.builder.build();
-        self.builder.tree.borrow_mut().push_type(ty)
+        self.builder.tuple.store.borrow_mut().push(ty, Range::default())
     }
 }
 
-impl TypeIdUnresolvedBuilder {
+impl<S> TypeIdUnresolvedBuilder<S> {
     /// Creates an instance.
-    pub fn new(tree: RcTree, name: ItemIdentifier) -> TypeIdUnresolvedBuilder {
-        TypeIdUnresolvedBuilder { builder: TypeUnresolvedBuilder::new(tree, name) }
+    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
+        TypeIdUnresolvedBuilder { builder: TypeUnresolvedBuilder::new(store, name) }
     }
 
     /// Appends a component to the path.
-    pub fn push_component(&mut self, item: ItemIdentifier) -> &mut Self {
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
         self.builder.push_component(item);
         self
     }
 
     /// Builds a Type::Unresolved.
-    pub fn build(&self) -> TypeId {
+    pub fn build(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<PathComponent>
+    {
         let ty = self.builder.build();
-        self.builder.tree.borrow_mut().push_type(ty)
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
     }
 }
 
 //
 //  Implementation Details (Value)
 //
-impl ValueFactory {
+
+#[derive(Clone, Debug)]
+pub struct ExpressionFactory(RcTree);
+
+#[derive(Clone, Debug)]
+pub struct BlockBuilder {
+    tree: RcTree,
+    expr: Option<ExpressionId>,
+    statements: Vec<Statement>,
+    typ: Type,
+    range: Range,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BuiltinValueBuilder;
+
+#[derive(Clone, Debug)]
+pub struct CallBuilder {
+    tree: RcTree,
+    callable: Callable,
+    unresolved: Vec<Callable>,
+    arguments: TupleBuilder<Tree, ExpressionId>,
+    typ: Type,
+    range: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct FieldAccessBuilder {
+    tree: RcTree,
+    field: Field,
+    expr: ExpressionId,
+    typ: Option<Type>,
+    range: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct IfBuilder {
+    tree: RcTree,
+    condition: ExpressionId,
+    true_: ExpressionId,
+    false_: ExpressionId,
+    typ: Option<Type>,
+    range: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImplicitBuilder {
+    tree: RcTree,
+    expr: ExpressionId,
+    typ: Type,
+}
+
+#[derive(Clone, Debug)]
+pub struct LoopBuilder {
+    tree: RcTree,
+    statements: Vec<Statement>,
+    typ: Type,
+    range: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct RefBuilder {
+    tree: RcTree,
+    typ: Type,
+    name: ValueIdentifier,
+    gvn: Gvn,
+    range: Range,
+}
+
+impl ExpressionFactory {
     /// Creates an instance.
-    pub fn new(tree: RcTree) -> Self { ValueFactory(tree) }
+    pub fn new(tree: RcTree) -> Self { ExpressionFactory(tree) }
 
     /// Creates an ValueIdentifier.
     pub fn id(&self, pos: usize, len: usize) -> ValueIdentifier {
@@ -1326,7 +1030,7 @@ impl ValueFactory {
     /// Shortcut: creates a boolean Value.
     pub fn bool_(&self, b: bool, pos: usize) -> ExpressionId {
         let typ = Type::Builtin(BuiltinType::Bool);
-        let expr = Expr::BuiltinVal(self.builtin().bool_(b));
+        let expr = Expression::BuiltinVal(self.builtin().bool_(b));
         let range = range(pos, if b { 4 } else { 5 });
 
         self.0.borrow_mut().push_expression(typ, expr, range)
@@ -1335,7 +1039,7 @@ impl ValueFactory {
     /// Shortcut: creates an integral Value.
     pub fn int(&self, i: i64, pos: usize) -> ExpressionId {
         let typ = Type::Builtin(BuiltinType::Int);
-        let expr = Expr::BuiltinVal(self.builtin().int(i));
+        let expr = Expression::BuiltinVal(self.builtin().int(i));
         let range = range(pos, count_characters(i));
 
         self.0.borrow_mut().push_expression(typ, expr, range)
@@ -1344,7 +1048,7 @@ impl ValueFactory {
     /// Shortcut: creates a string Value.
     pub fn string(&self, s: mem::InternId, pos: usize, len: usize) -> ExpressionId {
         let typ = Type::Builtin(BuiltinType::String);
-        let expr = Expr::BuiltinVal(self.builtin().string(s));
+        let expr = Expression::BuiltinVal(self.builtin().string(s));
         let range = range(pos, len);
 
         self.0.borrow_mut().push_expression(typ, expr, range)
@@ -1355,9 +1059,9 @@ impl ValueFactory {
         CallBuilder::new(self.0.clone())
     }
 
-    /// Creates an ExprConstructorBuilder.
-    pub fn constructor(&self, typ: Type) -> ExprConstructorBuilder {
-        ExprConstructorBuilder::new(self.0.clone(), typ)
+    /// Creates an ConstructorBuilder.
+    pub fn constructor(&self, ty: Type) -> ConstructorBuilder<Expression, ExpressionId> {
+        ConstructorBuilder::new(self.0.clone(), ty, Box::new(Expression::Constructor))
     }
 
     /// Creates a FieldAccessBuilder.
@@ -1391,15 +1095,15 @@ impl ValueFactory {
         RefBuilder::new(self.0.clone(), name, range)
     }
 
-    /// Creates an ExprTupleBuilder.
-    pub fn tuple(&self) -> ExprTupleBuilder {
-        ExprTupleBuilder::new(self.0.clone())
+    /// Creates a TypedTupleBuilder.
+    pub fn tuple(&self) -> TypedTupleBuilder<ExpressionId> {
+        TypedTupleBuilder::new(self.0.clone())
     }
 
     /// Creates an unresolved ref Value.
     pub fn unresolved_ref(&self, name: ValueIdentifier) -> ExpressionId {
         let typ = Type::unresolved();
-        let expr = Expr::UnresolvedRef(name);
+        let expr = Expression::UnresolvedRef(name);
         let range = range(name.span().offset(), name.span().length());
 
         self.0.borrow_mut().push_expression(typ, expr, range)
@@ -1407,17 +1111,17 @@ impl ValueFactory {
 
     /// Shortcut: creates a RefBuilder for a boolean.
     pub fn bool_ref(&self, name: ValueIdentifier, pos: usize) -> RefBuilder {
-        self.quick_ref(Type::Builtin(BuiltinType::Bool), name, pos)
+        self.quick_ref(Type::bool_(), name, pos)
     }
 
     /// Shortcut: creates a RefBuilder for an Int.
     pub fn int_ref(&self, name: ValueIdentifier, pos: usize) -> RefBuilder {
-        self.quick_ref(Type::Builtin(BuiltinType::Int), name, pos)
+        self.quick_ref(Type::int(), name, pos)
     }
 
     /// Shortcut: creates a RefBuilder for a String.
     pub fn string_ref(&self, name: ValueIdentifier, pos: usize) -> RefBuilder {
-        self.quick_ref(Type::Builtin(BuiltinType::String), name, pos)
+        self.quick_ref(Type::string(), name, pos)
     }
 
     fn quick_ref(&self, typ: Type, name: ValueIdentifier, pos: usize) -> RefBuilder {
@@ -1451,14 +1155,14 @@ impl BlockBuilder {
     }
 
     /// Push a statement.
-    pub fn push(&mut self, stmt: Stmt) -> &mut Self {
+    pub fn push(&mut self, stmt: Statement) -> &mut Self {
         self.statements.push(stmt);
         self
     }
 
     /// Sets a range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = com::Range::new(pos, len);
+        self.range = Range::new(pos, len);
         self
     }
 
@@ -1467,8 +1171,9 @@ impl BlockBuilder {
         let typ = Type::unresolved();
         let range = self.compute_range();
 
-        let stmts = self.tree.borrow_mut().push_statements(&self.statements);
-        let expr = Expr::Block(stmts, self.expr.clone());
+        let stmts = self.tree.borrow_mut()
+            .push_statements(self.statements.iter().cloned());
+        let expr = Expression::Block(stmts, self.expr.clone());
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1478,8 +1183,9 @@ impl BlockBuilder {
         let typ = self.compute_type();
         let range = self.compute_range();
 
-        let stmts = self.tree.borrow_mut().push_statements(&self.statements);
-        let expr = Expr::Block(stmts, self.expr.clone());
+        let stmts = self.tree.borrow_mut()
+            .push_statements(self.statements.iter().cloned());
+        let expr = Expression::Block(stmts, self.expr.clone());
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1495,7 +1201,7 @@ impl BlockBuilder {
         }
     }
 
-    fn compute_range(&self) -> com::Range {
+    fn compute_range(&self) -> Range {
         if self.range != Default::default() {
             return self.range;
         }
@@ -1516,7 +1222,7 @@ impl BlockBuilder {
             panic!("Cannot compute range for an empty block!");
         };
 
-        com::Range::new(offset, end - offset)
+        Range::new(offset, end - offset)
     }
 }
 
@@ -1544,13 +1250,19 @@ impl CallBuilder {
     /// Creates an instance, defaults to Add.
     pub fn new(tree: RcTree) -> Self {
         CallBuilder {
-            tree,
+            tree: tree.clone(),
             callable: Callable::Builtin(BuiltinFunction::Add),
             unresolved: vec!(),
-            arguments: TupleBuilder::new(),
+            arguments: TupleBuilder::new(tree),
             typ: Type::unresolved(),
             range: Default::default(),
         }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
     }
 
     /// Sets a callable.
@@ -1573,15 +1285,8 @@ impl CallBuilder {
     }
 
     /// Shortcut: sets a user-defined function.
-    pub fn function(
-        &mut self,
-        name: ItemIdentifier,
-        arguments: Tuple<TypeId>,
-        result: TypeId,
-    )
-        -> &mut Self
-    {
-        self.callable = Callable::Function(name, arguments, result);
+    pub fn function(&mut self, function: FunctionId) -> &mut Self {
+        self.callable = Callable::Function(function);
         self
     }
 
@@ -1598,15 +1303,8 @@ impl CallBuilder {
     }
 
     /// Pushes an unresolved user-defined function.
-    pub fn push_function(
-        &mut self,
-        name: ItemIdentifier,
-        arguments: Tuple<TypeId>,
-        result: TypeId,
-    )
-        -> &mut Self
-    {
-        self.unresolved.push(Callable::Function(name, arguments, result));
+    pub fn push_function(&mut self, function: FunctionId) -> &mut Self {
+        self.unresolved.push(Callable::Function(function));
         self
     }
 
@@ -1627,21 +1325,21 @@ impl CallBuilder {
         let callable = if self.unresolved.len() == 0 {
             self.callable.clone()
         } else {
-            let unresolved =
-                self.tree.borrow_mut().push_callables(&self.unresolved);
+            let unresolved = self.tree.borrow_mut()
+                .push_callables(self.unresolved.iter().cloned());
             Callable::Unresolved(unresolved)
         };
 
         let typ = self.typ;
         let range = self.compute_range(&callable);
 
-        let args = self.arguments.build(&self.tree);
-        let expr = Expr::Call(callable, args);
+        let args = self.arguments.build();
+        let expr = Expression::Call(callable, args);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
 
-    fn compute_range(&self, callable: &Callable) -> com::Range {
+    fn compute_range(&self, callable: &Callable) -> Range {
         use self::Callable::*;
 
         if self.range != Default::default() {
@@ -1662,101 +1360,15 @@ impl CallBuilder {
             match callable {
                 Builtin(BuiltinFunction::Not) => (off - 5, len + 5),
                 Builtin(_) => (off, len),
-                Function(n, _, _) => {
-                    let n = n.span().length();
-                    (off - 1 - n, len + 2 + n)
-                },
                 Unknown(n) => {
                     let n = n.span().length();
                     (off - 1 - n, len + 2 + n)
                 },
-                Unresolved(_) => (0, 0),
+                Function(_) | Unresolved(_) => (0, 0),
             }
         }).unwrap_or((0, 0));
 
         range(off, len)
-    }
-}
-
-impl ExprConstructorBuilder {
-    /// Creates an instance.
-    pub fn new(tree: RcTree, typ: Type) -> ExprConstructorBuilder {
-        ExprConstructorBuilder {
-            tree,
-            arguments: TupleBuilder::new(),
-            typ,
-            range: Default::default(),
-        }
-    }
-
-    /// Appends an argument.
-    pub fn push(&mut self, argument: ExpressionId) -> &mut Self {
-        self.arguments.push(argument);
-        self
-    }
-
-    /// Overrides the name of the last field, if any.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.arguments.name(name);
-        self
-    }
-
-    /// Specifies the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Builds a Constructor.
-    pub fn build(&self) -> ExpressionId {
-        let typ = self.typ;
-        let range = self.range;
-
-        let expr = Expr::Constructor(self.arguments.build(&self.tree));
-
-        self.tree.borrow_mut().push_expression(typ, expr, range)
-    }
-}
-
-impl ExprTupleBuilder {
-    /// Creates an instance.
-    pub fn new(tree: RcTree) -> ExprTupleBuilder {
-        ExprTupleBuilder {
-            tree,
-            arguments: TupleBuilder::new(),
-            typ: TupleBuilder::new(),
-            range: Default::default(),
-        }
-    }
-
-    /// Appends an argument.
-    pub fn push(&mut self, argument: ExpressionId) -> &mut Self {
-        self.arguments.push(argument);
-        self.typ.push(self.tree.borrow().get_expression_type_id(argument));
-        self
-    }
-
-    /// Overrides the name of the last field, if any.
-    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        self.arguments.name(name);
-        self.typ.name(name);
-        self
-    }
-
-    /// Specifies the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Builds a Tuple.
-    pub fn build(&self) -> ExpressionId {
-        let range = self.range;
-
-        let typ = self.typ.build(&self.tree);
-        let expr = Expr::Tuple(self.arguments.build_named(&self.tree, typ.names));
-
-        self.tree.borrow_mut().push_expression(Type::Tuple(typ), expr, range)
     }
 }
 
@@ -1801,7 +1413,7 @@ impl FieldAccessBuilder {
         let typ = self.compute_type();
         let field = self.compute_field();
         let range = self.compute_range(&field);
-        let expr = Expr::FieldAccess(self.expr, field);
+        let expr = Expression::FieldAccess(self.expr, field);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1825,7 +1437,7 @@ impl FieldAccessBuilder {
             let accessed = self.tree.borrow().get_expression_type(self.expr);
 
             return match accessed {
-                Type::Rec(_, _, tup) | Type::Tuple(tup) => {
+                Type::Tuple(tup) => {
                     self.tree.borrow()
                         .get_type_ids(tup.fields)
                         .get(i as usize)
@@ -1836,10 +1448,10 @@ impl FieldAccessBuilder {
             };
         }
 
-        return Type::unresolved();
+        Type::unresolved()
     }
 
-    fn compute_range(&self, field: &Field) -> com::Range {
+    fn compute_range(&self, field: &Field) -> Range {
         if self.range != Default::default() {
             return self.range;
         }
@@ -1886,7 +1498,7 @@ impl IfBuilder {
         let typ = self.compute_type();
         let range = self.compute_range();
 
-        let expr = Expr::If(self.condition, self.true_, self.false_);
+        let expr = Expression::If(self.condition, self.true_, self.false_);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1908,7 +1520,7 @@ impl IfBuilder {
         }
     }
 
-    fn compute_range(&self) -> com::Range {
+    fn compute_range(&self) -> Range {
         if self.range != Default::default() {
             return self.range;
         }
@@ -1941,7 +1553,7 @@ impl ImplicitBuilder {
         let typ = self.typ;
         let range = self.tree.borrow().get_expression_range(self.expr);
 
-        let expr = Expr::Implicit(self.compute_implicit());
+        let expr = Expression::Implicit(self.compute_implicit());
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1966,14 +1578,14 @@ impl LoopBuilder {
     }
 
     /// Push a statement.
-    pub fn push(&mut self, stmt: Stmt) -> &mut Self {
+    pub fn push(&mut self, stmt: Statement) -> &mut Self {
         self.statements.push(stmt);
         self
     }
 
     /// Sets the range.
     pub fn range(&mut self, offset: usize, length: usize) -> &mut Self {
-        self.range = com::Range::new(offset, length);
+        self.range = Range::new(offset, length);
         self
     }
 
@@ -1982,13 +1594,14 @@ impl LoopBuilder {
         let typ = self.typ;
         let range = self.compute_range();
 
-        let statements = self.tree.borrow_mut().push_statements(&self.statements);
-        let expr = Expr::Loop(statements);
+        let statements = self.tree.borrow_mut()
+            .push_statements(self.statements.iter().cloned());
+        let expr = Expression::Loop(statements);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
 
-    fn compute_range(&self) -> com::Range {
+    fn compute_range(&self) -> Range {
         if self.range != Default::default() {
             return self.range;
         }
@@ -2008,7 +1621,7 @@ impl LoopBuilder {
 
 impl RefBuilder {
     /// Creates an instance.
-    pub fn new(tree: RcTree, name: ValueIdentifier, range: com::Range) -> RefBuilder {
+    pub fn new(tree: RcTree, name: ValueIdentifier, range: Range) -> RefBuilder {
         RefBuilder {
             tree: tree,
             typ: Type::unresolved(),
@@ -2037,7 +1650,7 @@ impl RefBuilder {
 
     /// Creates a Ref Value.
     pub fn build(&self) -> ExpressionId {
-        let expr = Expr::Ref(self.name, self.gvn);
+        let expr = Expression::Ref(self.name, self.gvn);
 
         self.tree.borrow_mut().push_expression(self.typ, expr, self.range)
     }
@@ -2046,151 +1659,111 @@ impl RefBuilder {
 //
 //  Implementations of Low-Level builders
 //
-impl EnumProtoBuilder {
+
+pub struct ConstructorBuilder<E, Id> {
+    type_: Type,
+    tuple: TupleBuilder<Tree, Id>,
+    transformer: Box<Fn(Tuple<Id>) -> E>,
+    range: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct PathBuilder<S> {
+    store: Rc<S>,
+    components: Vec<PathComponent>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TupleBuilder<S, T> {
+    store: Rc<S>,
+    fields: Vec<T>,
+    names: Vec<ValueIdentifier>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypedTupleBuilder<T> {
+    arguments: TupleBuilder<Tree, T>,
+    typ: TupleBuilder<Tree, TypeId>,
+    range: Range,
+}
+
+impl<E, Id> ConstructorBuilder<E, Id> {
     /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
-        EnumProtoBuilder {
-            name: name,
-            range: range(pos, name.span().length()),
+    pub fn new(
+        tree: RcTree,
+        type_: Type,
+        transformer: Box<Fn(Tuple<Id>) -> E>,
+    )
+        -> Self
+    {
+        ConstructorBuilder {
+            type_,
+            tuple: TupleBuilder::new(tree),
+            transformer,
+            range: Range::default(),
         }
     }
 
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Creates a Record.
-    pub fn build<U: convert::From<EnumProto>>(&self) -> U {
-        EnumProto {
-            name: self.name,
-            range: self.range,
-        }.into()
-    }
-}
-
-impl PathBuilder {
-    /// Creates an instance.
-    pub fn new() -> Self {
-        PathBuilder { components: DynArray::default() }
-    }
-
-    /// Appends a component to the path.
-    pub fn push(&mut self, component: TypeDefinition) -> &mut Self {
-        self.components.push(component);
-        self
-    }
-
-    /// Builds a Path.
-    pub fn build(&self) -> Path {
-        Path { components: self.components.clone() }
-    }
-}
-
-impl RecordProtoBuilder {
-    /// Creates an instance.
-    pub fn new(name: ItemIdentifier, pos: usize) -> Self {
-        RecordProtoBuilder {
-            name: name,
-            range: range(pos, name.span().length()),
-            enum_: ItemIdentifier::unresolved(),
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Sets an enum.
-    pub fn enum_(&mut self, name: ItemIdentifier) -> &mut Self {
-        self.enum_ = name;
-        self
-    }
-
-    /// Creates a Record.
-    pub fn build<U: convert::From<RecordProto>>(&self) -> U {
-        RecordProto {
-            name: self.name,
-            range: self.range,
-            enum_: self.enum_,
-        }.into()
-    }
-}
-
-impl<T> DynTupleBuilder<T> {
-    /// Creates a new instance.
-    pub fn new() -> Self {
-        DynTupleBuilder {
-            fields: DynArray::default(),
-            names: DynArray::default(),
-        }
-    }
-
-    /// Appends a field.
-    pub fn push(&mut self, field: T) -> &mut Self {
-        self.fields.push(field);
-        self.names.push(Default::default());
+    /// Appends an argument.
+    pub fn push(&mut self, argument: Id) -> &mut Self {
+        self.tuple.push(argument);
         self
     }
 
     /// Overrides the name of the last field, if any.
     pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        if !self.names.is_empty() {
-            self.names.replace(self.names.len() - 1, name);
-        }
+        self.tuple.name(name);
         self
     }
 
-    fn names(&self) -> DynArray<ValueIdentifier> {
-        if let Some(first) = self.names.first() {
-            if first != Default::default() {
-                return self.names.clone();
-            }
-        }
+    /// Specifies the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
 
-        DynArray::default()
+    /// Builds a Constructor.
+    pub fn build(&self) -> Id
+        where
+            Tree: TypedStore<Id, Element = E> + MultiStore<Id>,
+    {
+        use std::ops::DerefMut;
+
+        let ty = self.type_;
+        let range = self.range;
+
+        let element: E = (self.transformer)(self.tuple.build());
+
+        TypedStore::push(self.tuple.store.borrow_mut().deref_mut(), ty, element, range)
     }
 }
 
-impl<T: Clone> DynTupleBuilder<T> {
-    /// Creates a new Tuple instance.
-    pub fn build<U: convert::From<DynTuple<T>>>(&self) -> U {
-        DynTuple {
-            fields: self.fields.clone(),
-            names: self.names(),
-        }.into()
+impl<S> PathBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>) -> Self {
+        PathBuilder { store, components: vec!(), }
+    }
+
+    /// Appends a component to the path.
+    pub fn push(&mut self, component: PathComponent) -> &mut Self {
+        self.components.push(component);
+        self
+    }
+
+    /// Builds a Path.
+    pub fn build(&self) -> PathId
+        where
+            S: MultiStore<PathComponent>
+    {
+        self.store.borrow_mut().push_slice(&self.components)
     }
 }
 
-impl<T: Clone + Span> Span for DynTupleBuilder<T> {
-    /// Computes the range spanned by the tuple.
-    fn span(&self) -> com::Range {
-        let off =
-            self.names()
-                .first().map(|v| v.span().offset() - 1)
-                .or_else(|| self.fields.first().map(|f| f.span().offset() - 1))
-                .unwrap_or(0);
-
-        let end =
-            self.fields
-                .last().map(|f| f.span().end_offset() + 1)
-                .unwrap_or(0);
-
-        com::Range::new(off, end - off)
-    }
-}
-
-//
-//  Implementation Details
-//
-
-impl<T> TupleBuilder<T> {
+impl<S, T> TupleBuilder<S, T> {
     /// Creates a new instance.
-    fn new() -> Self {
+    fn new(store: Rc<S>) -> Self {
         TupleBuilder {
+            store,
             fields: vec!(),
             names: vec!(),
         }
@@ -2209,45 +1782,85 @@ impl<T> TupleBuilder<T> {
         }
         self
     }
-}
 
-impl TupleBuilder<ExpressionId> {
-    /// Builds a Tuple Value.
-    fn build(&self, tree: &RcTree) -> Tuple<ExpressionId> {
-        let names = tree.borrow_mut().push_names(&self.names);
-        self.build_named(tree, names)
+    fn build(&self) -> Tuple<T>
+        where
+            S: MultiStore<T> + MultiStore<ValueIdentifier>,
+    {
+        let names = self.store.borrow_mut().push_slice(&self.names);
+        self.build_named(names)
     }
 
-    /// Builds a Tuple Value with existing names.
-    fn build_named(&self, tree: &RcTree, names: Id<[ValueIdentifier]>) -> Tuple<ExpressionId> {
-        let fields = tree.borrow_mut().push_expressions(&self.fields);
-        Tuple { fields, names }
-    }
-}
-
-impl TupleBuilder<PatternId> {
-    /// Builds a Tuple Value.
-    fn build(&self, tree: &RcTree) -> Tuple<PatternId> {
-        let names = tree.borrow_mut().push_names(&self.names);
-        self.build_named(tree, names)
-    }
-
-    /// Builds a Tuple Value with existing names.
-    fn build_named(&self, tree: &RcTree, names: Id<[ValueIdentifier]>) -> Tuple<PatternId> {
-        let fields = tree.borrow_mut().push_patterns(&self.fields);
-        Tuple { fields, names }
+    fn build_named(&self, names: Id<[ValueIdentifier]>) -> Tuple<T>
+        where
+            S: MultiStore<T> + MultiStore<ValueIdentifier>,
+    {
+        let fields = self.store.borrow_mut().push_slice(&self.fields);
+        Tuple { fields, names, }
     }
 }
 
-impl TupleBuilder<TypeId> {
-    /// Builds a Tuple Value.
-    fn build(&self, tree: &RcTree) -> Tuple<TypeId> {
-        let fields = tree.borrow_mut().push_type_ids(&self.fields);
-        let names = tree.borrow_mut().push_names(&self.names);
+impl<Id> TypedTupleBuilder<Id> {
+    /// Creates an instance.
+    pub fn new(tree: RcTree) -> Self {
+        TypedTupleBuilder {
+            arguments: TupleBuilder::new(tree.clone()),
+            typ: TupleBuilder::new(tree),
+            range: Default::default(),
+        }
+    }
 
-        Tuple { fields, names }
+    /// Overrides the name of the last field, if any.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.arguments.name(name);
+        self.typ.name(name);
+        self
+    }
+
+    /// Specifies the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Appends an argument.
+    pub fn push(&mut self, argument: Id) -> &mut Self
+        where
+            Id: Copy,
+            Tree: TypedStore<Id>,
+    {
+        use std::ops::Deref;
+
+        self.arguments.push(argument);
+        let typ = TypedStore::get_type(self.arguments.store.borrow().deref(), argument);
+        self.typ.push(typ);
+        self
+    }
+
+    /// Builds a Tuple.
+    pub fn build(&self) -> Id
+        where
+            Tree: TypedStore<Id> + MultiStore<Id>,
+            Tuple<Id>: Into<<Tree as TypedStore<Id>>::Element>,
+    {
+        use std::ops::DerefMut;
+
+        let range = self.range;
+
+        let typ = self.typ.build();
+        let element: <Tree as TypedStore<Id>>::Element =
+            self.arguments.build_named(typ.names).into();
+
+        TypedStore::push(self.arguments.store.borrow_mut().deref_mut(), Type::Tuple(typ), element, range)
     }
 }
+
+
+//
+//  Implementation Details
+//
+
+type Rc<S> = rc::Rc<cell::RefCell<S>>;
 
 fn count_characters(i: i64) -> usize {
     if i == std::i64::MIN { 20 }
@@ -2256,4 +1869,4 @@ fn count_characters(i: i64) -> usize {
     else { 1 + count_characters(i / 10) }
 }
 
-fn range(pos: usize, len: usize) -> com::Range { com::Range::new(pos, len) }
+fn range(pos: usize, len: usize) -> Range { Range::new(pos, len) }

@@ -436,6 +436,20 @@ impl<K, V, H> Clone for JaggedHashMapSnapshot<K, V, H>
     }
 }
 
+impl<K, V, H> Default for JaggedHashMapSnapshot<K, V, H>
+    where
+        K: Eq + Hash,
+        H: BuildHasher + Default,
+{
+    fn default() -> Self {
+        JaggedHashMapSnapshot {
+            hash_builder: Default::default(),
+            index: Default::default(),
+            data: Default::default(),
+        }
+    }
+}
+
 impl<'a, K, V, H> iter::IntoIterator for &'a JaggedHashMapSnapshot<K, V, H>
     where
         K: Eq + Hash,

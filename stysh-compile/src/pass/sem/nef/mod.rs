@@ -11,5 +11,6 @@ mod nef;
 mod typ;
 
 use super::com::*;
+use super::{RegRef, Scope};
 
 pub use self::nef::NestedEntityFetcher;

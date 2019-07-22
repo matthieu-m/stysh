@@ -16,7 +16,7 @@ pub trait Scope: fmt::Debug {
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate;
 
     /// Find the definition of a type, if known.
-    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition;
+    fn lookup_type(&self, name: ItemIdentifier) -> Type;
 
     /// Returns an unresolved reference.
     fn unresolved_function(&self, name: ValueIdentifier) -> CallableCandidate {
@@ -24,8 +24,8 @@ pub trait Scope: fmt::Debug {
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_type(&self, name: ItemIdentifier) -> TypeDefinition {
-        TypeDefinition::Unresolved(name, Path::default())
+    fn unresolved_type(&self, name: ItemIdentifier) -> Type {
+        Type::Unresolved(name, PathId::empty())
     }
 }
 
@@ -35,7 +35,7 @@ pub enum CallableCandidate {
     /// A built-in function.
     Builtin(BuiltinFunction),
     /// A static user-defined function.
-    Function(FunctionProto),
+    Function(FunctionId),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),
     /// An unresolved callable binding.
@@ -62,11 +62,14 @@ pub struct FunctionScope<'a> {
 
 impl<'a> FunctionScope<'a> {
     /// Creates an instance of FunctionScope.
-    pub fn new(parent: &'a Scope, fun: FunctionProto) -> FunctionScope {
+    pub fn new<I>(parent: &'a Scope, args: I) -> Self
+        where
+            I: Iterator<Item = ValueIdentifier>,
+    {
         let mut arguments = IdMap::new();
 
-        for a in fun.arguments {
-            arguments.insert(a.name.id(), a.name);
+        for a in args {
+            arguments.insert(a.0, a);
         }
 
         FunctionScope { parent, arguments }
@@ -77,7 +80,7 @@ impl<'a> FunctionScope<'a> {
 pub struct BlockScope<'a> {
     parent: &'a Scope,
     functions: IdMap<CallableCandidate>,
-    types: IdMap<TypeDefinition>,
+    types: IdMap<Type>,
     values: IdMap<ValueIdentifier>,
 }
 
@@ -93,16 +96,16 @@ impl<'a> BlockScope<'a> {
     }
 
     /// Adds a new enum to the scope.
-    pub fn add_enum(&mut self, proto: EnumProto) {
+    pub fn add_enum(&mut self, name: ItemIdentifier, id: EnumId) {
         self.types.insert(
-            proto.name.id(),
-            TypeDefinition::UnresolvedEnum(proto, Path::default()),
+            name.id(),
+            Type::Enum(id, PathId::empty()),
         );
     }
 
     /// Adds a new function identifier to the scope.
-    pub fn add_function(&mut self, proto: FunctionProto) {
-        self.functions.insert(proto.name.id(), CallableCandidate::Function(proto));
+    pub fn add_function(&mut self, name: ItemIdentifier, id: FunctionId) {
+        self.functions.insert(name.id(), CallableCandidate::Function(id));
     }
 
     /// Adds a new pattern to the scope.
@@ -138,7 +141,7 @@ impl Scope for BuiltinScope {
         self.unresolved_function(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
         use model::hir::BuiltinType::*;
 
         let builtin = match name.id() {
@@ -148,7 +151,7 @@ impl Scope for BuiltinScope {
             _ => None,
         };
 
-        builtin.map(|b| TypeDefinition::Builtin(b)).unwrap_or(self.unresolved_type(name))
+        builtin.map(|b| Type::Builtin(b)).unwrap_or(self.unresolved_type(name))
     }
 }
 
@@ -164,7 +167,7 @@ impl<'a> Scope for FunctionScope<'a> {
         self.parent.lookup_callable(name)
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
         self.parent.lookup_type(name)
     }
 }
@@ -203,7 +206,7 @@ impl<'a> Scope for BlockScope<'a> {
         }
     }
 
-    fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
         if let Some(type_) = self.types.get(&name.id()).cloned() {
             return type_;
         }
@@ -256,7 +259,7 @@ pub mod mocks {
         /// Map of callables for lookup_callable.
         pub callables: HashMap<ValueIdentifier, CallableCandidate>,
         /// Map of types for lookup_type.
-        pub types: HashMap<ItemIdentifier, TypeDefinition>,
+        pub types: HashMap<ItemIdentifier, Type>,
         /// Map of values for lookup_binding.
         values: IdMap<ValueIdentifier>,
         /// Parent scope, automatically get all builtins.
@@ -293,7 +296,7 @@ pub mod mocks {
             self.parent.lookup_callable(name)
         }
 
-        fn lookup_type(&self, name: ItemIdentifier) -> TypeDefinition {
+        fn lookup_type(&self, name: ItemIdentifier) -> Type {
             if let Some(v) = self.types.get(&name) {
                 return v.clone();
             }
@@ -308,30 +311,21 @@ pub mod mocks {
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
-    use model::hir::builder::Factory;
+    use basic::{com, mem};
 
-    use super::{Scope, BuiltinScope, FunctionScope};
+    use super::{ValueIdentifier, Scope, BuiltinScope, FunctionScope};
 
     #[test]
     fn function_no_arguments() {
         //  b":fun random() -> Int { a }";
 
         let interner = mem::Interner::new();
-        let a = interner.insert(b"a");
-
-        let f = Factory::new(Default::default());
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_definition(), f.value());
-
-        let prot = p.fun(i.id(5, 6), t.int()).range(0, 20).build();
+        let a = var_id(interner.insert(b"a"), 23, 1);
 
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, prot);
+        let scope = FunctionScope::new(&builtin, [].iter().cloned());
 
-        assert_eq!(
-            scope.lookup_binding(v.id(23, 1).with_id(a)),
-            None
-        );
+        assert_eq!(scope.lookup_binding(a), None);
     }
 
     #[test]
@@ -343,31 +337,29 @@ mod tests {
         let b = interner.insert(b"b");
         let c = interner.insert(b"c");
 
-        let f = Factory::new(Default::default());
-        let (i, p, t, v) = (f.item(), f.proto(), f.type_definition(), f.value());
-
-        let prot =
-            p.fun(i.id(5, 3), t.int())
-                .push(v.id(9, 1).with_id(a), t.int())
-                .push(v.id(17, 1).with_id(b), t.int())
-                .build();
-
         let builtin = BuiltinScope::new();
-        let scope = FunctionScope::new(&builtin, prot);
+        let scope = FunctionScope::new(
+            &builtin,
+            [var_id(a, 9, 1), var_id(b, 17, 1)].iter().cloned()
+        );
 
         assert_eq!(
-            scope.lookup_binding(v.id(42, 1).with_id(c)),
+            scope.lookup_binding(var_id(c, 42, 1)),
             None
         );
 
         assert_eq!(
-            scope.lookup_binding(v.id(34, 1).with_id(a)),
-            Some(v.id(9, 1).with_id(a))
+            scope.lookup_binding(var_id(a, 34, 1)),
+            Some(var_id(a, 9, 1))
         );
 
         assert_eq!(
-            scope.lookup_binding(v.id(38, 1).with_id(b)),
-            Some(v.id(17, 1).with_id(b))
+            scope.lookup_binding(var_id(b, 38, 1)),
+            Some(var_id(b, 17, 1))
         );
+    }
+
+    fn var_id(id: mem::InternId, pos: usize, len: usize) -> ValueIdentifier {
+        ValueIdentifier(id, com::Range::new(pos, len))
     }
 }

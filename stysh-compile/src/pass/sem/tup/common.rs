@@ -4,7 +4,7 @@ use std::cell;
 
 use model::hir::*;
 
-use super::Context;
+use super::{Context, RegRef};
 
 /// Core Unifier
 #[derive(Clone, Copy, Debug)]
@@ -42,6 +42,11 @@ impl<'a> CoreUnifier<'a> {
         CoreUnifier { context, registry, tree }
     }
 
+    /// Returns a reference to the unified Registry.
+    pub fn registry(&self) -> RegRef<'a> {
+        RegRef::new(self.registry, self.tree())
+    }
+
     /// Returns a reference to the Tree.
     pub fn tree(&self) -> cell::Ref<'a, Tree> { self.tree.borrow() }
 
@@ -57,25 +62,26 @@ pub mod tests {
 
     use model::hir::*;
     use model::hir::builder::{
-        Factory, ItemFactory, PatternFactory, PrototypeFactory, StmtFactory,
-        TypeFactory, TypeIdFactory, ValueFactory, RcTree,
+        Factory, ItemFactory, PatternFactory, PrototypeFactory, StatementFactory,
+        TypeFactory, TypeIdFactory, ExpressionFactory, RcModule, RcTree,
     };
     use model::hir::interning::Resolver;
 
-    use super::{Context, CoreUnifier};
+    use super::Context;
     use super::super::Relation;
 
     #[derive(Default)]
     pub struct Env {
-        source: RcTree,
-        target: RcTree,
+        module: RcModule,
+        source_tree: RcTree,
+        target_tree: RcTree,
     }
 
     pub struct LocalEnv {
-        registry: mocks::MockRegistry,
         context: Context,
-        source: RcTree,
-        target: RcTree,
+        module: RcModule,
+        source_tree: RcTree,
+        target_tree: RcTree,
         resolver: Resolver,
     }
 
@@ -83,25 +89,29 @@ pub mod tests {
         pub fn local(&self, raw: &[u8]) -> LocalEnv {
             let interner = rc::Rc::new(mem::Interner::new());
             LocalEnv {
-                registry: mocks::MockRegistry::new(),
                 context: Context::default(),
-                source: self.source.clone(),
-                target: self.target.clone(),
+                module: self.module.clone(),
+                source_tree: self.source_tree.clone(),
+                target_tree: self.target_tree.clone(),
                 resolver: Resolver::new(raw, interner),
             }
+        }
+
+        pub fn source_factory(&self) -> Factory {
+            Factory::new(self.module.clone(), self.source_tree.clone())
         }
 
         pub fn source_factories(&self) -> (
             ItemFactory,
             PatternFactory,
             PrototypeFactory,
-            StmtFactory,
-            TypeFactory,
-            TypeIdFactory,
-            ValueFactory
+            StatementFactory,
+            TypeFactory<Tree>,
+            TypeIdFactory<Tree>,
+            ExpressionFactory,
         )
         {
-            let f = Factory::new(self.source.clone());
+            let f = self.source_factory();
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
         }
 
@@ -109,25 +119,25 @@ pub mod tests {
             ItemFactory,
             PatternFactory,
             PrototypeFactory,
-            StmtFactory,
-            TypeFactory,
-            TypeIdFactory,
-            ValueFactory
+            StatementFactory,
+            TypeFactory<Tree>,
+            TypeIdFactory<Tree>,
+            ExpressionFactory,
         )
         {
-            let f = Factory::new(self.target.clone());
+            let f = Factory::new(self.module.clone(), self.target_tree.clone());
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
         }
     }
 
     impl LocalEnv {
-        pub fn core<'a>(&'a self) -> CoreUnifier<'a> {
-            CoreUnifier::new(&self.context, &self.registry, &*self.source)
-        }
+        pub fn context(&self) -> &Context { &self.context }
 
-        pub fn source(&self) -> &cell::RefCell<Tree> { &*self.source }
+        pub fn module(&self) -> &cell::RefCell<Module> { &*self.module }
 
-        pub fn target(&self) -> &cell::RefCell<Tree> { &*self.target }
+        pub fn source(&self) -> &cell::RefCell<Tree> { &*self.source_tree }
+
+        pub fn target(&self) -> &cell::RefCell<Tree> { &*self.target_tree }
 
         pub fn item_id(&self, pos: usize, len: usize) -> ItemIdentifier {
             let id = ItemIdentifier(Default::default(), com::Range::new(pos, len));
@@ -154,9 +164,9 @@ pub mod tests {
 
         fn type_of(&self, gvn: Gvn) -> TypeId {
             if let Some(e) = gvn.as_expression() {
-                self.source.borrow().get_expression_type_id(e)
+                self.source_tree.borrow().get_expression_type_id(e)
             } else if let Some(p) = gvn.as_pattern() {
-                self.source.borrow().get_pattern_type_id(p)
+                self.source_tree.borrow().get_pattern_type_id(p)
             } else {
                 unreachable!()
             }

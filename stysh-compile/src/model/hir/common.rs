@@ -3,10 +3,10 @@
 use std::{convert, fmt};
 
 use basic::{com, mem};
-use basic::mem::DynArray;
 use basic::sea::TableIndex;
 
 use model::ast;
+use model::hir::ItemId;
 
 //
 //  Public Types (IDs)
@@ -16,9 +16,6 @@ pub use self::com::Id;
 /// Index of an Expr in the Tree.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ExpressionId(com::CoreId);
-
-/// Index of a Path in the Tree.
-pub type PathId = Id<[ItemIdentifier]>;
 
 /// Index of a Pattern in the Tree.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -66,15 +63,6 @@ pub enum Field {
     Index(u16, com::Range),
     /// Unresolved name of the field.
     Unresolved(ValueIdentifier),
-}
-
-/// A tuple with dynamic allocations.
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct DynTuple<T> {
-    /// The tuple fields.
-    pub fields: DynArray<T>,
-    /// The name of the fields, empty if unnamed, otherwise of equal length.
-    pub names: DynArray<ValueIdentifier>,
 }
 
 /// A tuple.
@@ -150,6 +138,9 @@ impl TypeId {
             _ => None
         }
     }
+
+    /// Returns the inner ID.
+    pub fn value(&self) -> u32 { self.0.raw() }
 }
 
 impl Gvn {
@@ -197,6 +188,7 @@ impl ValueIdentifier {
     }
 }
 
+
 //
 //  Public interface
 //
@@ -215,29 +207,6 @@ impl Field {
     }
 }
 
-impl<T> DynTuple<T> {
-    /// Returns a unit tuple.
-    pub fn unit() -> Self {
-        DynTuple { fields: Default::default(), names: Default::default() }
-    }
-
-    /// Returns the number of fields.
-    pub fn len(&self) -> usize { self.fields.len() }
-}
-
-impl<T: Clone> DynTuple<T> {
-    /// Returns the field of the tuple by index.
-    ///
-    /// Returns None if the field is Unresolved or the index too large.
-    pub fn field(&self, field: Field) -> Option<T> {
-        if let Field::Index(i, ..) = field {
-            self.fields.get(i as usize)
-        } else {
-            None
-        }
-    }
-}
-
 impl<T> Tuple<T> {
     /// Creates a unit tuple.
     pub fn unit() -> Tuple<T> {
@@ -249,6 +218,7 @@ impl<T> Tuple<T> {
         Tuple { fields, names: Id::empty() }
     }
 }
+
 
 //
 //  Private Interface
@@ -265,6 +235,7 @@ impl TypeId {
     const STRING_ID: u32 = std::u32::MAX - 5;
     const VOID_ID: u32 = std::u32::MAX - 6;
 }
+
 
 //
 //  Traits Implementations
@@ -299,8 +270,12 @@ impl fmt::Debug for TypeId {
             write!(f, "TypeId(default)")
         } else if let Some(t) = self.builtin() {
             write!(f, "TypeId({:?})", t)
+        } else if let Some(i) = self.get_tree() {
+            write!(f, "TypeId(T{})", i)
+        } else if let Some(i) = self.get_module() {
+            write!(f, "TypeId(M{})", i)
         } else {
-            write!(f, "TypeId({})", self.index())
+            write!(f, "TypeId(R{})", self.get_repository().unwrap())
         }
     }
 }
@@ -331,12 +306,6 @@ impl Default for Field {
     fn default() -> Self { Field::Index(0, Default::default()) }
 }
 
-impl<T> Default for DynTuple<T> {
-    fn default() -> Self {
-        DynTuple { fields: Default::default(), names: Default::default() }
-    }
-}
-
 impl<T> Default for Tuple<T> {
     fn default() -> Self {
         Tuple { fields: Default::default(), names: Default::default() }
@@ -363,20 +332,6 @@ impl fmt::Display for Field {
 impl fmt::Display for ItemIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "<{}>", self.1)
-    }
-}
-
-impl<T> fmt::Display for DynTuple<T>
-    where
-        T: Clone + fmt::Display
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "(")?;
-        for (i, e) in self.fields.iter().enumerate() {
-            if i != 0 { write!(f, ", ")? }
-            write!(f, "{}", e)?;
-        }
-        write!(f, ")")
     }
 }
 
@@ -413,6 +368,16 @@ impl convert::From<ast::TypeIdentifier> for ItemIdentifier {
     fn from(value: ast::TypeIdentifier) -> Self {
         ItemIdentifier(value.0, value.1)
     }
+}
+
+impl convert::From<ast::VariableIdentifier> for ItemIdentifier {
+    fn from(value: ast::VariableIdentifier) -> Self {
+        ItemIdentifier(value.0, value.1)
+    }
+}
+
+impl convert::From<ast::Argument> for ValueIdentifier {
+    fn from(value: ast::Argument) -> Self { value.name.into() }
 }
 
 impl convert::From<ast::Identifier> for ValueIdentifier {

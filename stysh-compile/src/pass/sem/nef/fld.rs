@@ -39,7 +39,7 @@ impl<'a> FieldFetcher<'a> {
             let expr = self.core.tree().get_expression(e);
 
             match expr {
-                Expr::FieldAccess(accessed, field)
+                Expression::FieldAccess(accessed, field)
                     => self.fetch_field(e, field, accessed),
                 _ => Status::Fetched,
             }
@@ -73,10 +73,10 @@ impl<'a> FieldFetcher<'a> {
         -> Status
     {
         if let Some((field, typ)) = self.fetch_unresolved_impl(accessed, name) {
+            let typ = self.core.registry().get_type(typ);
             let mut tree = self.core.tree_mut();
-            let typ = tree.get_type(typ);
 
-            tree.set_expression(e, Expr::FieldAccess(accessed, field));
+            tree.set_expression(e, Expression::FieldAccess(accessed, field));
             tree.set_expression_type(e, typ);
 
             return Status::Fetched;
@@ -95,14 +95,16 @@ impl<'a> FieldFetcher<'a> {
         use self::Type::*;
 
         let tree = self.core.tree();
+        let registry = self.core.registry();
 
         let definition = match tree.get_expression_type(accessed) {
-            Rec(_, _, t) | Tuple(t) => t,
+            Rec(id, _) => registry.get_record(id).definition,
+            Tuple(t) => t,
             _ => return None,
         };
 
-        let types = tree.get_type_ids(definition.fields);
-        let names = tree.get_names(definition.names);
+        let types = registry.get_type_ids(definition.fields);
+        let names = registry.get_names(definition.names);
 
         names.iter()
             .position(|n| n.id() == name.id())

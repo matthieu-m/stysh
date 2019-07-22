@@ -2,14 +2,14 @@
 
 extern crate stysh_compile;
 
-use stysh_compile::basic::mem;
+use stysh_compile::pass::int;
 
 mod utils;
 
 #[test]
 fn fibonacci_recursive() {
     assert_eq!(
-        interpret(
+        utils::interpret(
             b"
             :fun fib(current: Int, next: Int, count: Int) -> Int {
                 :if count == 0 {
@@ -21,14 +21,14 @@ fn fibonacci_recursive() {
             fib(0, 1, 8)
             "
         ),
-        "Int(21)"
+        int::Value::Int(21)
     )
 }
 
 #[test]
 fn fibonnacci_iterative() {
     assert_eq!(
-        interpret(
+        utils::interpret(
             b"
             :fun fib(n: Int) -> Int {
                 :var (current, next) := (0, 1);
@@ -44,13 +44,6 @@ fn fibonnacci_iterative() {
             fib(8)
             "
         ),
-        "Int(21)"
+        int::Value::Int(21)
     )
-}
-
-fn interpret(raw: &[u8]) -> String {
-    let interner = mem::Interner::new();
-    let value = utils::interpret(raw, &interner);
-
-    format!("{:?}", value)
 }

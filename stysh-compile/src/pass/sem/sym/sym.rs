@@ -11,6 +11,7 @@ use basic::{com, mem};
 use basic::com::Span;
 
 use model::{ast, hir};
+use self::hir::Registry;
 
 use super::{Context, Relation};
 use super::scp::{BlockScope, CallableCandidate, Scope};
@@ -20,6 +21,7 @@ use super::scp::{BlockScope, CallableCandidate, Scope};
 /// For each top-level reference to a symbol, resolves the symbol.
 pub struct SymbolMapper<'a> {
     scope: &'a Scope,
+    registry: &'a Registry,
     context: &'a Context,
     ast_tree: &'a ast::Tree,
     tree: &'a cell::RefCell<hir::Tree>,
@@ -29,13 +31,14 @@ impl<'a> SymbolMapper<'a> {
     /// Creates a new instance.
     pub fn new(
         scope: &'a Scope,
+        registry: &'a Registry,
         context: &'a Context,
         ast_tree: &'a ast::Tree,
         tree: &'a cell::RefCell<hir::Tree>,
     )
         -> Self
     {
-        SymbolMapper { scope, context, ast_tree, tree }
+        SymbolMapper { scope, registry, context, ast_tree, tree }
     }
 
     /// Translates a pattern into... a pattern!
@@ -66,21 +69,6 @@ impl<'a> SymbolMapper<'a> {
     pub fn value_of(&self, e: ast::ExpressionId) -> hir::ExpressionId {
         self.value_of_expr(e)
     }
-
-    /// Converts TypeDefinition into Type.
-    pub fn convert_type(&self, t: &hir::TypeDefinition) -> hir::Type {
-        use self::hir::TypeDefinition::*;
-
-        match t {
-            Builtin(t) => hir::Type::Builtin(*t),
-            Enum(e, p) => self.convert_type_enum(e, p),
-            Rec(r, p) => self.convert_type_record(r, p),
-            Tuple(t) => hir::Type::Tuple(self.convert_type_tuple(&t)),
-            Unresolved(n, p) => self.convert_type_unresolved(n, p),
-            UnresolvedEnum(e, p) => self.convert_type_unresolved(&e.name, p),
-            UnresolvedRec(r, p) => self.convert_type_unresolved(&r.name, p),
-        }
-    }
 }
 
 //
@@ -99,7 +87,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_patterns(p),
+            |p| self.tree_mut().push_patterns(p.iter().cloned()),
         );
         let pattern = hir::Pattern::Constructor(tuple);
 
@@ -123,7 +111,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_patterns(p),
+            |p| self.tree_mut().push_patterns(p.iter().cloned()),
         );
         let typ = self.tuple_type_of(
             pat.names,
@@ -156,7 +144,7 @@ impl<'a> SymbolMapper<'a> {
         stmts: ast::Id<[ast::StatementId]>,
         scope: &mut BlockScope<'b>,
     )
-        -> hir::Id<[hir::Stmt]>
+        -> hir::Id<[hir::Statement]>
     {
         let stmts = self.ast_tree.get_statement_ids(stmts);
         let stmts = self.array_of(stmts, |&s| {
@@ -167,27 +155,27 @@ impl<'a> SymbolMapper<'a> {
             }
         });
 
-        self.tree_mut().push_statements(&stmts)
+        self.tree_mut().push_statements(stmts)
     }
 
     fn stmt_of_return<'b>(&self,
         ret: ast::Return,
         scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt
+        -> hir::Statement
     {
         let value = if let Some(e) = ret.expr {
             self.rescope(scope).value_of_expr(e)
         } else {
             let typ = hir::Type::unit();
-            let expr = hir::Expr::unit();
+            let expr = hir::Expression::unit();
             let range = com::Range::new(ret.span().end_offset() - 3, 2);
             self.tree_mut().push_expression(typ, expr, range)
         };
 
         //  TODO(matthieum): link type of value to type of function's result.
 
-        hir::Stmt::Return(hir::Return { value, range: ret.span() })
+        hir::Statement::Return(hir::Return { value, range: ret.span() })
     }
 
     fn stmt_of_set<'b>(
@@ -195,7 +183,7 @@ impl<'a> SymbolMapper<'a> {
         set: ast::VariableReBinding,
         scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt
+        -> hir::Statement
     {
         let range = set.span();
         let left = self.rescope(scope).value_of_expr(set.left);
@@ -204,7 +192,7 @@ impl<'a> SymbolMapper<'a> {
         self.context.link_gvns(&[left.into(), right.into()]);
         self.link_gvn_types(left.into(), Relation::SuperTypeOf(right.into()));
 
-        hir::Stmt::Set(hir::ReBinding { left, right, range })
+        hir::Statement::Set(hir::ReBinding { left, right, range })
     }
 
     fn stmt_of_var<'b>(
@@ -212,7 +200,7 @@ impl<'a> SymbolMapper<'a> {
         var: ast::VariableBinding,
         scope: &mut BlockScope<'b>,
     )
-        -> hir::Stmt
+        -> hir::Statement
     {
         let left = self.rescope(self.scope).pattern_of(var.pattern);
         let right = self.rescope(scope).value_of_expr(var.expr);
@@ -222,23 +210,35 @@ impl<'a> SymbolMapper<'a> {
         self.context.link_gvns(&[left.into(), right.into()]);
         self.link_gvn_types(left.into(), Relation::Identical(right.into()));
 
-        hir::Stmt::Var(hir::Binding { left, right, range })
+        hir::Statement::Var(hir::Binding { left, right, range })
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::Type
     {
+        use self::hir::Type::*;
+
         let components = self.ast_tree.get_identifiers(p.components);
-        let path: Vec<hir::ItemIdentifier> = components.iter()
-            .map(|&c| self.scope.lookup_type(c.into()).name())
-            .collect();
-        let path = self.tree_mut().push_path(&path);
+
+        let mut path = Vec::with_capacity(components.len());
+        for &c in components {
+            let range = c.span();
+            let component = match self.scope.lookup_type(c.into()) {
+                Enum(id, _) => hir::PathComponent::Enum(id, range),
+                Rec(id, _) => hir::PathComponent::Rec(id, range),
+                Unresolved(name, _) => hir::PathComponent::Unresolved(name),
+                Builtin(_) | Tuple(_) => hir::PathComponent::default(),
+            };
+            path.push(component);
+        }
+
+        let path = self.tree_mut().push_path(path);
 
         hir::Type::Unresolved(t.into(), path)
     }
 
     fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type {
-        self.convert_type(&self.scope.lookup_type(t.into()))
+        self.scope.lookup_type(t.into())
     }
 
     fn type_of_tuple(&self, tup: ast::Tuple<ast::Type>) -> hir::Type {
@@ -246,7 +246,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_type_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |t| self.tree_mut().push_type(self.type_of(t)),
-            |t| self.tree_mut().push_type_ids(t),
+            |t| self.tree_mut().push_type_ids(t.iter().cloned()),
         ))
     }
 
@@ -287,7 +287,7 @@ impl<'a> SymbolMapper<'a> {
         let right = self.value_of_expr(right);
 
         let arguments = hir::Tuple {
-            fields: self.tree_mut().push_expressions(&[left, right]),
+            fields: self.tree_mut().push_expressions([left, right].iter().cloned()),
             names: hir::Id::empty(),
         };
 
@@ -312,7 +312,7 @@ impl<'a> SymbolMapper<'a> {
 
         let typ = hir::Type::unresolved();
         let range = left_range.extend(right_range);
-        let expr = hir::Expr::Call(hir::Callable::Builtin(op), arguments);
+        let expr = hir::Expression::Call(hir::Callable::Builtin(op), arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
@@ -328,7 +328,7 @@ impl<'a> SymbolMapper<'a> {
         );
 
         let range = block.span();
-        let block = hir::Expr::Block(stmts, expr);
+        let block = hir::Expression::Block(stmts, expr);
 
         if let Some(e) = expr {
             let typ = hir::Type::unresolved();
@@ -353,11 +353,11 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expressions(e),
+            |e| self.tree_mut().push_expressions(e.iter().cloned()),
         );
 
         let typ = self.type_of(c.type_);
-        let expr = hir::Expr::Constructor(arguments);
+        let expr = hir::Expression::Constructor(arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
@@ -380,11 +380,11 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(fun.arguments.fields),
             self.ast_tree.get_identifiers(fun.arguments.names),
             |a| self.value_of(a),
-            |e| self.tree_mut().push_expressions(e),
+            |e| self.tree_mut().push_expressions(e.iter().cloned()),
         );
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expr::Call(callable, arguments);
+        let expr = hir::Expression::Call(callable, arguments);
         let range = function_range.extend(fun.arguments.span());
 
         let result = self.tree_mut().push_expression(typ, expr, range);
@@ -403,7 +403,7 @@ impl<'a> SymbolMapper<'a> {
         };
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expr::FieldAccess(accessed, f);
+        let expr = hir::Expression::FieldAccess(accessed, f);
         let range = self.ast_tree.get_expression_range(field.accessed)
             .extend(field.field.span());
 
@@ -420,7 +420,7 @@ impl<'a> SymbolMapper<'a> {
         let false_branch = self.value_of_expr(if_else.false_expr);
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expr::If(condition, true_branch, false_branch);
+        let expr = hir::Expression::If(condition, true_branch, false_branch);
         let range = com::Range::new(if_else.if_ as usize, 1)
             .extend(self.ast_tree.get_expression_range(if_else.false_expr));
 
@@ -457,7 +457,7 @@ impl<'a> SymbolMapper<'a> {
         -> hir::ExpressionId
     {
         let typ = hir::Type::Builtin(hir::BuiltinType::Bool);
-        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::Bool(value));
+        let expr = hir::Expression::BuiltinVal(hir::BuiltinValue::Bool(value));
 
         self.tree_mut().push_expression(typ, expr, range)
     }
@@ -467,7 +467,7 @@ impl<'a> SymbolMapper<'a> {
     {
         //  TODO(matthieum): Fix type, should be Array[Byte].
         let typ = hir::Type::Builtin(hir::BuiltinType::String);
-        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::String(bytes));
+        let expr = hir::Expression::BuiltinVal(hir::BuiltinValue::String(bytes));
 
         self.tree_mut().push_expression(typ, expr, range)
     }
@@ -476,7 +476,7 @@ impl<'a> SymbolMapper<'a> {
         -> hir::ExpressionId
     {
         let typ = hir::Type::Builtin(hir::BuiltinType::Int);
-        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::Int(i));
+        let expr = hir::Expression::BuiltinVal(hir::BuiltinValue::Int(i));
 
         self.tree_mut().push_expression(typ, expr, range)
     }
@@ -485,7 +485,7 @@ impl<'a> SymbolMapper<'a> {
         -> hir::ExpressionId
     {
         let typ = hir::Type::Builtin(hir::BuiltinType::String);
-        let expr = hir::Expr::BuiltinVal(hir::BuiltinValue::String(string));
+        let expr = hir::Expression::BuiltinVal(hir::BuiltinValue::String(string));
 
         self.tree_mut().push_expression(typ, expr, range)
     }
@@ -495,7 +495,7 @@ impl<'a> SymbolMapper<'a> {
         let stmts = self.statements(loop_.statements, &mut scope);
 
         let typ = hir::Type::Builtin(hir::BuiltinType::Void);
-        let expr = hir::Expr::Loop(stmts);
+        let expr = hir::Expression::Loop(stmts);
 
         self.tree_mut().push_expression(typ, expr, loop_.span())
     }
@@ -512,7 +512,7 @@ impl<'a> SymbolMapper<'a> {
 
         let arg = self.value_of_expr(expr);
         let arguments = hir::Tuple {
-            fields: self.tree_mut().push_expressions(&[arg]),
+            fields: self.tree_mut().push_expressions([arg].iter().cloned()),
             names: hir::Id::empty(),
         };
 
@@ -521,7 +521,7 @@ impl<'a> SymbolMapper<'a> {
         };
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expr::Call(hir::Callable::Builtin(op), arguments);
+        let expr = hir::Expression::Call(hir::Callable::Builtin(op), arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.context.link_gvns(&[result.into(), arg.into()]);
@@ -535,7 +535,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expressions(e),
+            |e| self.tree_mut().push_expressions(e.iter().cloned()),
         );
         let typ = self.tuple_type_of(
             expr.names,
@@ -545,7 +545,7 @@ impl<'a> SymbolMapper<'a> {
 
         let fields = expr.fields;
         let typ = hir::Type::Tuple(typ);
-        let expr = hir::Expr::Tuple(expr);
+        let expr = hir::Expression::Tuple(expr);
 
         let result = self.tree_mut().push_expression(typ, expr, tup.span());
         self.link_expressions(result.into(), fields);
@@ -564,13 +564,13 @@ impl<'a> SymbolMapper<'a> {
                         self.context
                             .lookup_value(name)
                             .unwrap_or_default();
-                    hir::Expr::Ref(name, gvn)
+                    hir::Expression::Ref(name, gvn)
                 })
-                .unwrap_or(hir::Expr::UnresolvedRef(var.into()));
+                .unwrap_or(hir::Expression::UnresolvedRef(var.into()));
 
         let result = self.tree_mut().push_expression(typ, expr, var.span());
 
-        if let hir::Expr::Ref(_, gvn) = expr {
+        if let hir::Expression::Ref(_, gvn) = expr {
             self.context.link_gvns(&[result.into(), gvn]);
             self.link_gvn_types(result.into(), Relation::Identical(gvn));
         }
@@ -582,7 +582,8 @@ impl<'a> SymbolMapper<'a> {
         where 'a: 'b
     {
         SymbolMapper {
-            scope: scope,
+            scope,
+            registry: self.registry,
             context: self.context,
             ast_tree: self.ast_tree,
             tree: self.tree,
@@ -596,72 +597,18 @@ impl<'a> SymbolMapper<'a> {
     fn convert_callable(&self, candidate: &CallableCandidate) -> hir::Callable {
         use self::CallableCandidate as C;
 
-        match &candidate {
+        match candidate {
             C::Builtin(f) => hir::Callable::Builtin(*f),
-            C::Function(f) => {
-                let name = f.name;
-                let result = self.convert_type(&f.result);
-                let result = self.tree_mut().push_type(result);
-                let arguments = self.array_of_dyn(
-                    &f.arguments,
-                    |a: &hir::Argument| self.convert_type(&a.type_)
-                );
-                let arguments = hir::Tuple {
-                    fields: self.tree_mut().push_types(&arguments),
-                    names: hir::Id::empty(),
-                };
-                hir::Callable::Function(name, arguments, result)
-            },
+            C::Function(f) => hir::Callable::Function(*f),
             C::Unknown(name) => hir::Callable::Unknown(*name),
             C::Unresolved(candidates) => {
                 let callables: Vec<_> = candidates.iter()
                     .map(|c| self.convert_callable(c))
                     .collect();
-                let callables = self.tree_mut().push_callables(&callables);
+                let callables = self.tree_mut().push_callables(callables);
                 hir::Callable::Unresolved(callables)
             },
         }
-    }
-
-    fn convert_path(&self, p: &hir::Path) -> hir::PathId {
-        let path: Vec<_> = p.components.iter().map(|t| t.name()).collect();
-        self.tree_mut().push_path(&path)
-    }
-
-    fn convert_type_enum(&self, e: &hir::Enum, p: &hir::Path) -> hir::Type {
-        let name = e.prototype.name;
-        let path = self.convert_path(p);
-        let variants = self.array_of_dyn(
-            &e.variants,
-            |r| self.convert_type_record(&r, &Default::default()),
-        );
-        let variants = self.tree_mut().push_types(&variants);
-
-        hir::Type::Enum(name, path, variants)
-    }
-
-    fn convert_type_record(&self, r: &hir::Record, p: &hir::Path) -> hir::Type {
-        let name = r.prototype.name;
-        let path = self.convert_path(p);
-        let fields = self.convert_type_tuple(&r.definition);
-
-        hir::Type::Rec(name, path, fields)
-    }
-
-    fn convert_type_tuple(&self, t: &hir::DynTuple<hir::TypeDefinition>)
-        -> hir::Tuple<hir::TypeId>
-    {
-        let fields = self.array_of_dyn(&t.fields, |f| self.convert_type(&f));
-        let fields = self.tree_mut().push_types(&fields);
-
-        let names = self.array_of_dyn(&t.names, |n| *n);
-        let names = self.tree_mut().push_names(&names);
-
-        hir::Tuple { fields, names }
-    }
-
-    fn convert_type_unresolved(&self, n: &hir::ItemIdentifier, p: &hir::Path) -> hir::Type {
-        hir::Type::Unresolved(*n, self.convert_path(p))
     }
 
     fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
@@ -721,16 +668,6 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn array_of_dyn<T: Clone, U, F: FnMut(&T) -> U>(
-        &self,
-        input: &mem::DynArray<T>,
-        mut transformer: F,
-    )
-        -> Vec<U>
-    {
-        input.iter().map(|e| transformer(&e)).collect()
-    }
-
     fn tuple_of<T, U, F: FnMut(ast::Id<T>) -> U, I: FnOnce(&[U]) -> hir::Id<[U]>>(
         &self,
         fields: &[ast::Id<T>],
@@ -746,7 +683,7 @@ impl<'a> SymbolMapper<'a> {
         let fields = inserter(&fields);
 
         let names = self.array_of(names, |&id| id.into());
-        let names = self.tree_mut().push_names(&names);
+        let names = self.tree_mut().push_names(names);
 
         hir::Tuple { fields, names }
     }
@@ -767,7 +704,7 @@ impl<'a> SymbolMapper<'a> {
             let tree = self.tree();
             accessor(&tree).iter().map(|e| extractor(*e)).collect()
         };
-        let fields = self.tree_mut().push_type_ids(&types);
+        let fields = self.tree_mut().push_type_ids(types);
         hir::Tuple { fields, names }
     }
 }
@@ -784,7 +721,7 @@ mod tests {
 
     use model::{ast, hir};
     use model::ast::builder::Factory as AstFactory;
-    use model::hir::builder::{Factory as HirFactory, RcTree};
+    use model::hir::builder::{Factory as HirFactory, RcModule, RcTree};
     use super::super::Context;
     use super::super::scp::{self, mocks::MockScope};
 
@@ -854,15 +791,16 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, ti, td, v) = (f.proto(), f.type_id(), f.type_definition(), f.value());
+            let (p, td, v) = (f.proto(), f.type_module(), f.value());
 
             let basic = env.item_id(15, 5);
-            env.insert_function(p.fun(basic, td.int()).build(), &[0]);
+            let basic = env.insert_function(p.fun(basic, td.int()).build(), &[0]);
 
             v.call()
-                .function(basic, hir::Tuple::unit(), ti.int())
+                .function(basic)
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
+                .range(0, 11)
                 .build()
         };
 
@@ -885,9 +823,9 @@ mod tests {
             let (p, t, v) = (f.proto(), f.type_(), f.value());
 
             let name = env.item_id(6, 3);
-            env.insert_record(p.rec(name, 0).build(), &[0]);
+            let rec = env.insert_record(p.rec(name, 0).build(), &[0]);
 
-            let rec = t.unresolved(name).build();
+            let rec = t.record(rec).build();
             v.constructor(rec).range(0, 3).build()
         };
 
@@ -910,9 +848,9 @@ mod tests {
             let (p, t, v) = (f.proto(), f.type_(), f.value());
 
             let name = env.item_id(9, 3);
-            env.insert_record(p.rec(name, 0).build(), &[0]);
+            let rec = env.insert_record(p.rec(name, 0).build(), &[0]);
 
-            let rec = t.unresolved(name).build();
+            let rec = t.record(rec).build();
             v.constructor(rec).push(v.int(1, 4)).range(0, 6).build()
         };
 
@@ -937,11 +875,12 @@ mod tests {
             let (p, t, v) = (f.proto(), f.type_(), f.value());
 
             let (simple, unit) = (env.item_id(6, 6), env.item_id(38, 4));
-            env.insert_enum(p.enum_(simple).build(), &[30]);
+            let enum_ = env.insert_enum(p.enum_(simple).build(), &[30]);
+            let rec = t.unresolved(unit)
+                .push_component(hir::PathComponent::Enum(enum_, range(30, 6)))
+                .build();
 
-            v.constructor(t.unresolved(unit).push_component(simple).build())
-                .range(30, 12)
-                .build()
+            v.constructor(rec).range(30, 12).build()
         };
 
         assert_eq!(env.value_of(ast), env.expression(hir));
@@ -1002,9 +941,8 @@ mod tests {
             let name = env.item_id(5, 3);
 
             let rec = p.rec(name, 0).range(0, 14).build();
-            env.insert_record(rec, &[15]);
-
-            let rec = t.unresolved(name).build();
+            let rec = env.insert_record(rec, &[15]);
+            let rec = t.record(rec).build();
 
             v.field_access(
                 v.constructor(rec)
@@ -1300,9 +1238,8 @@ mod tests {
             let some = env.item_id(5, 4);
 
             let rec = f.proto().rec(some, 0).build();
-            env.insert_record(rec, &[23, 34]);
-
-            let rec = t.unresolved(some).build();
+            let rec = env.insert_record(rec, &[23, 34]);
+            let rec = t.record(rec).build();
 
             let var = s.var(
                 p.constructor(rec)
@@ -1353,9 +1290,9 @@ mod tests {
             let some = env.item_id(5, 4);
 
             let rec = f.proto().rec(some, 0).build();
-            env.insert_record(rec, &[27, 42]);
+            let rec = env.insert_record(rec, &[27, 42]);
+            let rec = t.record(rec).build();
 
-            let rec = t.unresolved(some).build();
             let var = s.var(
                 p.constructor(rec)
                     .push(p.var(a)).name(env.field_id(32, 2))
@@ -1424,6 +1361,7 @@ mod tests {
         hir_resolver: hir::interning::Resolver,
         ast_module: ast::builder::RcModule,
         ast_tree: ast::builder::RcTree,
+        module: RcModule,
         tree: RcTree,
     }
 
@@ -1437,6 +1375,7 @@ mod tests {
                 hir_resolver: hir::interning::Resolver::new(fragment, interner),
                 ast_module: ast::builder::RcModule::default(),
                 ast_tree: ast::builder::RcTree::default(),
+                module: RcModule::default(),
                 tree: RcTree::default(),
             }
         }
@@ -1445,13 +1384,13 @@ mod tests {
             AstFactory::new(self.ast_module.clone(), self.ast_tree.clone(), self.ast_resolver.clone())
         }
 
-        fn hir(&self) -> HirFactory { HirFactory::new(self.tree.clone()) }
+        fn hir(&self) -> HirFactory { HirFactory::new(self.module.clone(), self.tree.clone()) }
 
         fn expression(&self, e: hir::ExpressionId) -> hir::Tree {
             let mut tree = self.tree.borrow().clone();
             tree.set_root_expression(e);
 
-            println!("{:#?}", tree);
+            println!("expression - {:#?}", tree);
             println!();
 
             tree
@@ -1461,49 +1400,65 @@ mod tests {
             self.hir_resolver.interner().insert(bytes)
         }
 
-        fn insert_enum(&mut self, enum_: hir::EnumProto, positions: &[usize]) {
+        fn insert_enum(&mut self, enum_: hir::EnumPrototype, positions: &[usize])
+            -> hir::EnumId
+        {
             let name = enum_.name;
+            let enum_ = self.module.borrow_mut().lookup_enum(enum_.name)
+                .expect("Enum to be registered");
+
+            println!("Registering enum: {:?} -> {:?}", name, enum_);
+
             let len = name.span().length();
 
             for p in positions {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::TypeDefinition::UnresolvedEnum(enum_, Default::default()),
+                    hir::Type::Enum(enum_, hir::Id::empty()),
                 );
-            } 
+            }
+
+            enum_
         }
 
         fn insert_function(
             &mut self,
-            proto: hir::FunctionProto,
+            function: hir::FunctionPrototype,
             positions: &[usize],
         )
+            -> hir::FunctionId
         {
-            let len = proto.name.span().length();
-            println!("Registered function: {:?}", proto.name);
+            let name = function.name;
+            let function = self.module.borrow_mut().lookup_function(name)
+                .expect("Function to be registered");
+            println!("Registering function: {:?} -> {:?}", name, function);
+
+            let len = name.span().length();
 
             for p in positions {
-                let proto_clone = proto.clone();
-                let id = hir::ValueIdentifier(proto_clone.name.id(), range(*p, len));
-                self.scope.callables.insert(id, scp::CallableCandidate::Function(proto_clone));
+                let id = hir::ValueIdentifier(name.id(), range(*p, len));
+                self.scope.callables.insert(id, scp::CallableCandidate::Function(function));
             }
+
+            function
         }
 
-        fn insert_record(&mut self, rec: hir::RecordProto, positions: &[usize])
-            -> hir::RecordProto
+        fn insert_record(&mut self, rec: hir::RecordPrototype, positions: &[usize])
+            -> hir::RecordId
         {
-            let len = rec.name.span().length();
-            println!(
-                "Registered record prototype: {:?} (of {:?})",
-                rec.name, rec.enum_
-            );
+            let name = rec.name;
+            let rec = self.module.borrow_mut().lookup_record(rec.name)
+                .expect("Record to be registered");
+            println!("Registering record: {:?} -> {:?}", name, rec);
+
+            let len = name.span().length();
 
             for p in positions {
-                let id = hir::ItemIdentifier(rec.name.id(), range(*p, len));
+                let id = hir::ItemIdentifier(name.id(), range(*p, len));
                 self.scope.types.insert(
                     id,
-                    hir::TypeDefinition::UnresolvedRec(rec, Default::default()),
+                    hir::Type::Rec(rec, hir::Id::empty()),
                 );
             }
 
@@ -1527,19 +1482,21 @@ mod tests {
         }
 
         fn value_of(&self, expr: ast::ExpressionId) -> hir::Tree {
+            use std::ops::Deref;
             use super::SymbolMapper as SM;
 
             let ast_tree = self.ast_tree.borrow();
+            let module = self.module.borrow();
             let tree = cell::RefCell::new(hir::Tree::new());
 
-            println!("{:#?}", ast_tree);
+            println!("value_of - {:#?}", ast_tree);
             println!();
 
-            let expr = SM::new(&self.scope, &self.context, &ast_tree, &tree)
+            let expr = SM::new(&self.scope, module.deref(), &self.context, &ast_tree, &tree)
                 .value_of(expr);
             tree.borrow_mut().set_root_expression(expr);
 
-            println!("{:#?}", tree);
+            println!("value_of - {:#?}", tree);
             println!();
 
             tree.into_inner()

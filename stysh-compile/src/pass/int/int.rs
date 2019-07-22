@@ -2,9 +2,10 @@
 //!
 //! This module defines the entry point of the interpreter.
 
-use basic::mem::{DynArray, InternerSnapshot};
+use basic::mem::InternerSnapshot;
 use model::{hir, sir};
-use super::reg::Registry;
+use model::hir::ItemId;
+use super::reg;
 
 /// Stysh Interpreter.
 ///
@@ -12,27 +13,31 @@ use super::reg::Registry;
 /// either a value, or an error if the interpretation cannot succeed (missing
 /// definitions, FFI call, ...).
 pub struct Interpreter<'a> {
-    interner: InternerSnapshot,
-    registry: &'a Registry,
+    external: External<'a>
 }
 
 impl<'a> Interpreter<'a> {
     /// Creates a new instance of an interpreter.
-    pub fn new(interner: InternerSnapshot, registry: &'a Registry)
+    pub fn new(
+        interner: InternerSnapshot,
+        hir_registry: &'a hir::Registry,
+        cfg_registry: &'a reg::Registry,
+    )
         -> Interpreter<'a>
     {
-        Interpreter { interner, registry }
+        let external = External { interner, hir_registry, cfg_registry };
+        Interpreter { external }
     }
 
     /// Returns the value evaluated from the SIR.
     pub fn evaluate(
         &self,
-        cfg: &sir::ControlFlowGraph,
+        cfg: &sir::Graph,
         arguments: Vec<Value>,
     )
         -> Value
     {
-        let frame = FrameInterpreter::new(self.interner.clone(), self.registry);
+        let frame = FrameInterpreter::new(self.external.clone());
         frame.evaluate(cfg, arguments)
     }
 }
@@ -51,7 +56,7 @@ pub enum Value {
     /// String.
     String(Vec<u8>),
     /// A constructor call.
-    Constructor(hir::TypeDefinition, Vec<Value>),
+    Constructor(hir::TypeId, Vec<Value>),
     /// A tuple.
     Tuple(Vec<Value>),
 }
@@ -60,54 +65,53 @@ pub enum Value {
 //  Implementation Details
 //
 struct FrameInterpreter<'a> {
-    interner: InternerSnapshot,
-    registry: &'a Registry,
+    external: External<'a>
 }
 
 impl<'a> FrameInterpreter<'a> {
-    fn new(interner: InternerSnapshot, registry: &'a Registry)
-        -> FrameInterpreter<'a>
-    {
-        FrameInterpreter { interner, registry }
+    fn new(external: External<'a>) -> FrameInterpreter<'a> {
+        FrameInterpreter { external }
     }
 
     fn evaluate(
         &self,
-        cfg: &sir::ControlFlowGraph,
+        cfg: &sir::Graph,
         arguments: Vec<Value>,
     )
         -> Value
     {
         use self::BlockResult::*;
 
-        fn interpret_block<'a>(
-            interner: InternerSnapshot,
-            registry: &'a Registry,
-            block: &sir::BasicBlock,
+        fn interpret_block(
+            external: External<'_>,
+            graph: &sir::Graph,
+            block: &sir::Block,
             arguments: Vec<Value>,
         )
             -> BlockResult
         {
-            let mut interpreter = BlockInterpreter::new(interner, registry, arguments);
-            interpreter.evaluate(block)
+            let mut interpreter = BlockInterpreter::new(
+                external, graph, block, arguments
+            );
+            interpreter.evaluate()
         }
 
-        let mut index = 0;
+        let mut index = sir::BlockId::new(0);
         let mut arguments = arguments;
 
         //  TODO(matthieum): add way to parameterize fuel.
         for _ in 0..1000 {
             let (i, args) = match interpret_block(
-                self.interner.clone(),
-                self.registry,
-                &cfg.blocks.at(index),
+                self.external.clone(),
+                cfg,
+                cfg.get_block(index),
                 arguments
             ) 
             {
                 Jump(index, args) => (index, args),
                 Return(v) => return v,
             };
-            index = i.index();
+            index = i;
             arguments = args;
         }
 
@@ -116,64 +120,73 @@ impl<'a> FrameInterpreter<'a> {
 }
 
 struct BlockInterpreter<'a> {
-    interner: InternerSnapshot,
-    registry: &'a Registry,
+    external: External<'a>,
+    graph: &'a sir::Graph,
+    block: &'a sir::Block,
     arguments: Vec<Value>,
     bindings: Vec<Value>,
 }
 
 impl<'a> BlockInterpreter<'a> {
     fn new(
-        interner: InternerSnapshot,
-        registry: &'a Registry,
+        external: External<'a>,
+        graph: &'a sir::Graph,
+        block: &'a sir::Block,
         arguments: Vec<Value>
     )
         -> BlockInterpreter<'a>
     {
         let bindings = Default::default();
-        BlockInterpreter { interner, registry, arguments, bindings }
+        BlockInterpreter { external, graph, block, arguments, bindings }
     }
 
-    fn evaluate(&mut self, block: &sir::BasicBlock)
-        -> BlockResult
-    {
+    fn evaluate(&mut self) -> BlockResult  {
         use model::sir::TerminatorInstruction::*;
 
-        for i in &block.instructions {
-            let value = self.eval_instr(&i);
+        for i in self.block.get_instructions() {
+            let value = self.eval_instruction(i);
             self.bindings.push(value);
         }
 
-        match &block.exit {
-            Branch(index, jumps) => self.jump(&jumps.at(self.get_branch(*index))),
-            Jump(jump) => self.jump(&jump),
-            Return(index) => BlockResult::Return(self.get_value(*index)),
+        match self.block.get_terminator() {
+            Branch(index, jumps) => {
+                let jumps = self.block.get_jump_ids(jumps);
+                let branch = self.get_branch(index);
+                self.jump(jumps[branch])
+            },
+            Jump(jump) => self.jump(jump),
+            Return(index) => BlockResult::Return(self.get_value(index)),
             _ => unimplemented!(),
         }
     }
 
-    fn eval_instr(&self, instr: &sir::Instruction) -> Value
+    fn eval_instruction(
+        &self,
+        instr: sir::ValueId,
+    )
+        -> Value
     {
-        use model::sir::Instruction::*;
+        use self::sir::Instruction::*;
 
-        match instr {
-            Call(fun, args, _) => self.eval_call(fun, args.clone()),
-            Field(_, value, index, _) => self.eval_field(*value, *index),
-            Load(value, _) => self.load(value),
-            New(type_, fields, _) => self.eval_new(type_.clone(), fields.clone()),
+        match self.block.get_instruction(instr) {
+            Call(_, fun, args) => self.eval_call(fun, args),
+            Field(_, value, index) => self.eval_field(value, index),
+            Load(value) => self.load(value),
+            New(type_, fields) => self.eval_new(type_, fields),
         }
     }
 
-    fn eval_call(&self, fun: &sir::Callable, args: DynArray<sir::ValueId>)
+    fn eval_call(&self, fun: sir::Callable, args: sir::Id<[sir::ValueId]>)
         -> Value
     {
+        let args = self.block.get_instruction_ids(args);
         match fun {
             sir::Callable::Builtin(b) => self.eval_builtin(b, args),
             sir::Callable::Function(f) => self.eval_function(f, args),
         }
     }
 
-    fn eval_builtin(&self, fun: &hir::BuiltinFunction, args: DynArray<sir::ValueId>)
+    fn eval_builtin(&self, fun: hir::BuiltinFunction, args: &[sir::ValueId])
         -> Value
     {
         self.eval_builtin_fun(fun, args)
@@ -185,41 +198,41 @@ impl<'a> BlockInterpreter<'a> {
         let index = index as usize;
 
         match self.get_value(value) {
-            Constructor(_, tup) | Tuple(tup) => tup[index].clone(),
+            Constructor(_, tup) | Tuple(tup) => tup[index as usize].clone(),
             _ => unreachable!(),
         }
     }
 
     fn eval_function(
         &self,
-        fun: &hir::FunctionProto,
-        args: DynArray<sir::ValueId>,
+        fun: hir::FunctionId,
+        args: &[sir::ValueId],
     )
         -> Value
     {
-        let cfg = self.registry.lookup_cfg(fun.name).expect("CFG present");
-        let interpreter = FrameInterpreter::new(self.interner.clone(), self.registry);
+        let cfg = self.external.cfg_registry.lookup_cfg(fun).expect("CFG present");
+        let interpreter = FrameInterpreter::new(self.external.clone());
 
         let mut arguments = Vec::with_capacity(args.len());
-        for a in args {
+        for &a in args {
             arguments.push(self.get_value(a));
         }
 
-        interpreter.evaluate(&cfg, arguments)
+        interpreter.evaluate(cfg, arguments)
     }
 
     fn eval_builtin_fun(
         &self,
-        fun: &hir::BuiltinFunction,
-        args: DynArray<sir::ValueId>,
+        fun: hir::BuiltinFunction,
+        args: &[sir::ValueId],
     )
         -> Value
     {
         use model::hir::BuiltinFunction::*;
         use self::Value::{Bool, Int};
 
-        let left = args.get(0).map(|v| self.get_value(v));
-        let right = args.get(1).map(|v| self.get_value(v));
+        let left = args.get(0).map(|&v| self.get_value(v));
+        let right = args.get(1).map(|&v| self.get_value(v));
 
         fn to_bool(value: Option<Value>) -> bool {
             if let Some(Bool(b)) = value {
@@ -255,32 +268,34 @@ impl<'a> BlockInterpreter<'a> {
 
     fn eval_new(
         &self,
-        type_: hir::TypeDefinition,
-        elements: DynArray<sir::ValueId>,
+        ty: hir::TypeId,
+        arguments: sir::Id<[sir::ValueId]>,
     )
         -> Value
     {
-        let mut fields = Vec::with_capacity(elements.len());
+        let arguments = self.block.get_instruction_ids(arguments);
+        let mut fields = Vec::with_capacity(arguments.len());
 
-        for id in elements {
+        for &id in arguments {
             fields.push(self.get_value(id))
         }
 
-        if let hir::TypeDefinition::Tuple(_) = &type_ {
+        if let hir::Type::Tuple(..) = self.get_type(ty) {
             Value::Tuple(fields)
         } else {
-            Value::Constructor(type_, fields)
+            Value::Constructor(ty, fields)
         }
     }
 
-    fn load(&self, v: &hir::BuiltinValue) -> Value {
+    fn load(&self, v: hir::BuiltinValue) -> Value {
         use model::hir::BuiltinValue::*;
 
         match v {
-            Bool(b) => Value::Bool(*b),
-            Int(i) => Value::Int(*i),
+            Bool(b) => Value::Bool(b),
+            Int(i) => Value::Int(i),
             String(id) => {
-                let slice = self.interner.get(*id).expect("Unknown InternId");
+                let slice = self.external.interner.get(id)
+                    .expect("Unknown InternId");
                 Value::String(slice.iter().cloned().collect())
             },
         }
@@ -288,11 +303,13 @@ impl<'a> BlockInterpreter<'a> {
 
     fn get_value(&self, id: sir::ValueId) -> Value {
         if let Some(i) = id.as_instruction() {
+            let i = i as usize;
             debug_assert!(
                 i < self.bindings.len(), "{} not in {:?}", i, self.bindings
             );
             self.bindings[i].clone()
         } else if let Some(a) = id.as_argument() {
+            let a = a as usize;
             debug_assert!(
                 a < self.arguments.len(), "{} not in {:?}", a, self.arguments
             );
@@ -310,14 +327,27 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn jump(&self, jump: &sir::Jump) -> BlockResult {
-        let mut arguments = Vec::with_capacity(jump.arguments.len());
+    fn get_type(&self, ty: hir::TypeId) -> hir::Type {
+        if let Some(b) = ty.builtin() {
+            hir::Type::Builtin(b)
+        } else if ty.is_tree() {
+            self.graph.get_type(ty)
+        } else {
+            self.external.hir_registry.get_type(ty)
+        }
+    }
 
-        for a in &jump.arguments {
+    fn jump(&self, jump: sir::JumpId) -> BlockResult {
+        let jump = self.block.get_jump(jump);
+        let args = self.block.get_instruction_ids(jump.arguments);
+
+        let mut arguments = Vec::with_capacity(args.len());
+
+        for &a in args {
             arguments.push(self.get_value(a));
         }
 
-        BlockResult::Jump(jump.dest, arguments)
+        BlockResult::Jump(jump.destination, arguments)
     }
 }
 
@@ -326,249 +356,305 @@ enum BlockResult {
     Return(Value),
 }
 
+#[derive(Clone)]
+struct External<'a> {
+    interner: InternerSnapshot,
+    hir_registry: &'a hir::Registry,
+    cfg_registry: &'a reg::Registry,
+}
+
 //
 //  Tests
 //
 #[cfg(test)]
 mod tests {
-    use basic::com;
-    use basic::mem::{DynArray, InternId, Interner, InternerSnapshot};
+    use std::mem;
+    use basic::com::Range;
+    use basic::mem::Interner;
     use model::{hir, sir};
+    use self::hir::builder::*;
     use super::Value;
-    use super::super::reg::{Registry, SimpleRegistry};
+    use super::super::reg::SimpleRegistry;
 
     #[test]
     fn add_no_arguments() {
-        let arguments = [ val_instr(0), val_instr(1) ];
-        let instructions = [
-            instr_load_int(1),
-            instr_load_int(2),
-            instr_builtin(hir::BuiltinFunction::Add, &arguments),
-        ];
-        let cfg = cfg( &[ block_return(&[], &instructions) ] );
+        let mut env = Env::new();
 
-        assert_eq!(
-            eval(vec![], &cfg),
-            Value::Int(3)
-        );
+        let a = env.push_load_int(1);
+        let b = env.push_load_int(2);
+        let r = env.push_call_builtin(hir::BuiltinFunction::Add, &[a, b]);
+        env.push_return(r);
+        env.push_block(&[]);
+
+        assert_eq!(env.eval(&[]), Value::Int(3));
     }
 
     #[test]
     fn add_with_arguments() {
-        let int = || hir::TypeDefinition::int();
+        let mut env = Env::new();
 
-        assert_eq!(
-            eval(
-                vec![val_int(1), val_int(2)],
-                &cfg(&[
-                    block_return(
-                        &[int(), int()],
-                        &[
-                            instr_builtin(
-                                hir::BuiltinFunction::Add,
-                                &[ val_arg(0), val_arg(1) ]
-                            ),
-                        ]
-                    )
-                ])
-            ),
-            val_int(3)
+        let r = env.push_call_builtin(
+            hir::BuiltinFunction::Add,
+            &[ val_arg(0), val_arg(1) ],
         );
+        env.push_return(r);
+        env.push_block(&[]);
+
+        assert_eq!(env.eval(&[val_int(1), val_int(2)]), val_int(3));
     }
 
     #[test]
     fn branch_if() {
-        let int = || hir::TypeDefinition::int();
+        let int = hir::TypeId::int();
 
         for &(condition, ref result) in &[(true, val_int(1)), (false, val_int(2))] {
-            assert_eq!(
-                eval(
-                    vec![],
-                    &cfg(&[
-                        block_branch(
-                            &[],
-                            &[instr_load_bool(condition)],
-                            val_instr(0),
-                            &[ exit_jump(1, &[]), exit_jump(2, &[]) ],
-                        ),
-                        block_jump(
-                            &[],
-                            &[instr_load_int(1)],
-                            exit_jump(3, &[val_instr(0)]),
-                        ),
-                        block_jump (
-                            &[],
-                            &[instr_load_int(2)],
-                            exit_jump(3, &[val_instr(0)]),
-                        ),
-                        block_return(&[int()], &[]),
-                    ])
-                ),
-                result.clone()
-            )
+            let mut env = Env::new();
+
+            {
+                let condition = env.push_load_bool(condition);
+                env.push_jump(1, &[]);
+                env.push_jump(2, &[]);
+                env.push_branch(condition);
+                env.push_block(&[]);
+            }
+
+            {
+                let value = env.push_load_int(1);
+                env.push_jump(3, &[value]);
+                env.push_block(&[]);
+            }
+
+            {
+                let value = env.push_load_int(2);
+                env.push_jump(3, &[value]);
+                env.push_block(&[]);
+            }
+
+            {
+                env.push_return(val_arg(0));
+                env.push_block(&[int]);
+            }
+
+            assert_eq!(env.eval(&[]), result.clone());
         }
     }
 
     #[test]
     fn call_user_defined_function() {
-        let interner = Interner::new();
-        let mut registry = SimpleRegistry::new();
+        let mut env = Env::new();
 
         let id = hir::ItemIdentifier(Default::default(), range(42, 5));
-        let int = || hir::TypeDefinition::int();
 
-        registry.insert(
-            id,
-            cfg(&[
-                block_return(
-                    &[],
-                    &[ instr_load_int(1) ],
-                ),
-            ])
-        );
+        let fun = {
+            let hir = env.hir();
+            let (p, t) = (hir.proto(), hir.type_module());
+            p.fun(id, t.int()).build();
+            env.module.borrow().lookup_function(id)
+                .expect("Function to be registered")
+        };
 
-        let cfg = cfg(&[
-            block_return(
-                &[],
-                &[
-                    sir::Instruction::Call(
-                        sir::Callable::Function(hir::FunctionProto {
-                            name: id,
-                            range: range(0, 0),
-                            arguments: DynArray::default(),
-                            result: int(),
-                        }),
-                        DynArray::default(),
-                        range(0, 0),
-                    )
-                ]
-            )
-        ]);
+        {
+            let a = env.push_load_int(1);
+            env.push_return(a);
+            env.push_block(&[]);
+            env.push_graph(fun);
+        }
 
-        assert_eq!(
-            eval_with_registry(
-                interner.snapshot(),
-                &registry,
-                vec![],
-                &cfg
-            ),
-            val_int(1)
-        );
+        {
+            let a = env.push_call_function(fun, hir::TypeId::int(), &[]);
+            env.push_return(a);
+            env.push_block(&[]);
+        }
+
+        assert_eq!(env.eval(&[]), val_int(1));
     }
 
     #[test]
     fn new_tuple() {
-        let int = || hir::TypeDefinition::int();
-        let inner_type = [int(), int()];
-        let type_ = hir::TypeDefinition::Tuple(
-            hir::DynTuple { fields: dyn_array(&inner_type), names: DynArray::default() },
-        );
+        let mut env = Env::new();
 
-        assert_eq!(
-            eval(
-                vec![],
-                &cfg(&[
-                    block_return(
-                        &[],
-                        &[
-                            instr_load_int(1),
-                            instr_load_int(2),
-                            instr_new(
-                                type_.clone(),
-                                &[val_instr(0), val_instr(1)]
-                            ),
-                        ]
-                    )
-                ]),
-            ),
-            Value::Tuple(vec![val_int(1), val_int(2)])
-        );
+        let tup = {
+            let t = env.hir().type_module();
+            t.tuple().push(t.int()).push(t.int()).build()
+        };
+
+        {
+            let a = env.push_load_int(1);
+            let b = env.push_load_int(2);
+            let c = env.push_new(tup, &[a, b]);
+            env.push_return(c);
+            env.push_block(&[]);
+        }
+
+        assert_eq!(env.eval(&[]), Value::Tuple(vec![val_int(1), val_int(2)]));
     }
 
     #[test]
     fn record_field() {
-        let int = || hir::TypeDefinition::int();
-        let rec = hir::TypeDefinition::Rec(
-            hir::Record {
-                prototype: hir::RecordProto {
-                    name: hir::ItemIdentifier(Default::default(), range(5, 4)),
-                    range: range(0, 20),
-                    enum_: hir::ItemIdentifier::unresolved(),
-                },
-                definition: hir::DynTuple {
-                    fields: dyn_array(&[int(), int()]),
-                    names: DynArray::default(),
-                },
-            },
-            Default::default(),
-        );
+        let mut env = Env::new();
 
-        assert_eq!(
-            eval(
-                vec![],
-                &cfg(&[
-                    block_return(
-                        &[],
-                        &[
-                            instr_load_int(4),
-                            instr_load_int(42),
-                            instr_new(rec, &[val_instr(0), val_instr(1)]),
-                            instr_field(int(), val_instr(2), 1)
-                        ]
-                    )
-                ]),
-            ),
-            val_int(42)
-        );
+        let rec = {
+            let hir = env.hir();
+            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+
+            let name = hir::ItemIdentifier(Default::default(), range(5, 4));
+            let prototype = p.rec(name, 0).build();
+            let rec = i.rec(prototype)
+                .push(t.int())
+                .push(t.int())
+                .build();
+            t.record(rec).build()
+        };
+
+        {
+            let a = env.push_load_int(4);
+            let b = env.push_load_int(42);
+            let c = env.push_new(rec, &[a, b]);
+            let d = env.push_field(hir::TypeId::int(), c, 1);
+            env.push_return(d);
+            env.push_block(&[]);
+        }
+
+        assert_eq!(env.eval(&[]), val_int(42));
     }
 
     #[test]
     fn return_helloworld() {
-        let interner = Interner::new();
-        let registry = SimpleRegistry::new();
+        let mut env = Env::new();
 
-        let id = interner.insert(b"Hello, World!");
+        let r = env.push_load_string(b"Hello, World!");
+        env.push_return(r);
+        env.push_block(&[]);
 
-        assert_eq!(
-            eval_with_registry(
-                interner.snapshot(),
-                &registry,
-                vec![],
-                &cfg(&[
-                    block_return(
-                        &[],
-                        &[
-                            instr_load_string(id)
-                        ]
-                    ),
-                ]),
-            ),
-            val_string(b"Hello, World!")
-        );
+        assert_eq!(env.eval(&[]), val_string(b"Hello, World!"));
     }
 
-    fn eval(
-        arguments: Vec<Value>,
-        cfg: &sir::ControlFlowGraph,
-    )
-        -> Value
-    {
-        let interner = Interner::new();
-        let registry = SimpleRegistry::new();
-        eval_with_registry(interner.snapshot(), &registry, arguments, cfg)
+    struct Env {
+        interner: Interner,
+        registry: SimpleRegistry,
+        module: RcModule,
+        tree: RcTree,
+        graph: sir::Graph,
+        block: sir::Block,
     }
 
-    fn eval_with_registry(
-        interner: InternerSnapshot,
-        registry: &Registry,
-        arguments: Vec<Value>,
-        cfg: &sir::ControlFlowGraph,
-    )
-        -> Value
-    {
-        use super::Interpreter;
+    impl Env {
+        fn new() -> Env {
+            Env {
+                interner: Interner::new(),
+                registry: SimpleRegistry::new(),
+                module: RcModule::default(),
+                tree: RcTree::default(),
+                graph: sir::Graph::default(),
+                block: sir::Block::default(),
+            }
+        }
 
-        Interpreter::new(interner, registry).evaluate(cfg, arguments)
+        fn eval(&self, arguments: &[Value]) -> Value {
+            use std::ops::Deref;
+            use super::Interpreter;
+
+            let snapshot = self.interner.snapshot();
+            let module = self.module.borrow();
+            let interpreter = Interpreter::new(snapshot, module.deref(), &self.registry);
+            interpreter.evaluate(&self.graph, arguments.to_vec())
+        }
+
+        fn hir(&self) -> Factory {
+            Factory::new(self.module.clone(), self.tree.clone())
+        }
+
+        fn push_call_builtin(&mut self, fun: hir::BuiltinFunction, args: &[sir::ValueId]) -> sir::ValueId {
+            let ty = fun.result_type_id();
+            self.push_call(ty, sir::Callable::Builtin(fun), args)
+        }
+
+        fn push_call_function(
+            &mut self,
+            fun: hir::FunctionId,
+            ty: hir::TypeId,
+            args: &[sir::ValueId]
+        )
+            -> sir::ValueId
+        {
+            self.push_call(ty, sir::Callable::Function(fun), args)
+        }
+
+        fn push_call(&mut self, ty: hir::TypeId, callable: sir::Callable, args: &[sir::ValueId]) -> sir::ValueId {
+            let args = self.block.push_instruction_ids(args.iter().cloned());
+            self.push_instruction(sir::Instruction::Call(ty, callable, args))
+        }
+
+        fn push_field(&mut self, ty: hir::TypeId, value: sir::ValueId, index: u16) -> sir::ValueId {
+            self.push_instruction(sir::Instruction::Field(ty, value, index))
+        }
+
+        fn push_load_bool(&mut self, value: bool) -> sir::ValueId {
+            self.push_load(hir::BuiltinValue::Bool(value))
+        }
+
+        fn push_load_int(&mut self, i: i64) -> sir::ValueId {
+            self.push_load(hir::BuiltinValue::Int(i))
+        }
+
+        fn push_load_string(&mut self, s: &[u8]) -> sir::ValueId {
+            let id = self.interner.insert(s);
+            self.push_load(hir::BuiltinValue::String(id))
+        }
+
+        fn push_load(&mut self, value: hir::BuiltinValue) -> sir::ValueId {
+            self.push_instruction(sir::Instruction::Load(value))
+        }
+
+        fn push_new(&mut self, ty: hir::TypeId, args: &[sir::ValueId]) -> sir::ValueId {
+            let args = self.block.push_instruction_ids(args.iter().cloned());
+            self.push_instruction(sir::Instruction::New(ty, args))
+        }
+
+        fn push_instruction(&mut self, instr: sir::Instruction) -> sir::ValueId {
+            self.block.push_instruction(instr, range(0, 0))
+        }
+
+        fn push_jump(&mut self, index: u32, args: &[sir::ValueId]) {
+            let arguments = self.block.push_instruction_ids(args.iter().cloned());
+            let jump = self.block.push_jump(sir::Jump {
+                destination: sir::BlockId::new(index),
+                arguments,
+            });
+            if self.block.len_jumps() == 1 {
+                self.push_terminator(sir::TerminatorInstruction::Jump(jump));
+            } else {
+                self.push_terminator(sir::TerminatorInstruction::Unreachable);
+            }
+        }
+
+        fn push_branch(&mut self, condition: sir::ValueId) {
+            debug_assert!(self.block.len_jumps() > 1);
+            let jumps = self.block.push_jump_ids(self.block.get_jumps());
+            self.push_terminator(sir::TerminatorInstruction::Branch(condition, jumps));
+        }
+
+        fn push_return(&mut self, value: sir::ValueId) {
+            debug_assert!(self.block.len_jumps() == 0);
+            self.push_terminator(sir::TerminatorInstruction::Return(value));
+        }
+
+        fn push_terminator(&mut self, terminator: sir::TerminatorInstruction) {
+            self.block.set_terminator(terminator, range(0, 0));
+        }
+
+        fn push_block(&mut self, arguments: &[hir::TypeId]) {
+            let mut block = mem::replace(&mut self.block, sir::Block::default());
+            let arguments = self.graph.push_type_ids(arguments.iter().cloned());
+            block.set_arguments(arguments);
+            self.graph.push_block(block);
+        }
+
+        fn push_graph(&mut self, fun: hir::FunctionId) {
+            let mut graph = mem::replace(&mut self.graph, sir::Graph::default());
+            graph.set_source(fun);
+            self.registry.insert(fun, graph);
+        }
     }
 
     fn val_int(i: i64) -> Value { Value::Int(i) }
@@ -578,110 +664,11 @@ mod tests {
         Value::String(value)
     }
 
-    fn val_arg(index: usize) -> sir::ValueId {
+    fn val_arg(index: u32) -> sir::ValueId {
         sir::ValueId::new_argument(index)
     }
 
-    fn val_instr(index: usize) -> sir::ValueId {
-        sir::ValueId::new_instruction(index)
-    }
-
-    fn instr_builtin(fun: hir::BuiltinFunction, args: &[sir::ValueId])
-        -> sir::Instruction
-    {
-        sir::Instruction::Call(sir::Callable::Builtin(fun), dyn_array(args), range(0, 0))
-    }
-
-    fn instr_field(type_: hir::TypeDefinition, value: sir::ValueId, index: u16)
-        -> sir::Instruction
-    {
-        sir::Instruction::Field(type_, value, index, range(0, 0))
-    }
-
-    fn instr_load_bool(value: bool) -> sir::Instruction {
-        sir::Instruction::Load(hir::BuiltinValue::Bool(value), range(0, 0))
-    }
-
-    fn instr_load_int(i: i64) -> sir::Instruction {
-        sir::Instruction::Load(hir::BuiltinValue::Int(i), range(0, 0))
-    }
-
-    fn instr_load_string(s: InternId) -> sir::Instruction {
-        sir::Instruction::Load(hir::BuiltinValue::String(s), range(0, 0))
-    }
-
-    fn instr_new(type_: hir::TypeDefinition, values: &[sir::ValueId])
-        -> sir::Instruction
-    {
-        sir::Instruction::New(type_, dyn_array(values), range(0, 0))
-    }
-
-    fn exit_jump(index: usize, args: &[sir::ValueId]) -> sir::Jump {
-        sir::Jump {
-            dest: sir::BlockId::new(index),
-            arguments: dyn_array(args),
-        }
-    }
-
-    fn block_branch(
-        args: &[hir::TypeDefinition],
-        code: &[sir::Instruction],
-        condition: sir::ValueId,
-        jumps: &[sir::Jump],
-    )
-        -> sir::BasicBlock
-    {
-        sir::BasicBlock {
-            arguments: dyn_array(args),
-            instructions: dyn_array(code),
-            exit: sir::TerminatorInstruction::Branch(condition, dyn_array(jumps)),
-        }
-    }
-
-    fn block_jump(
-        args: &[hir::TypeDefinition],
-        code: &[sir::Instruction],
-        jump: sir::Jump,
-    )
-        -> sir::BasicBlock
-    {
-        sir::BasicBlock {
-            arguments: dyn_array(args),
-            instructions: dyn_array(code),
-            exit: sir::TerminatorInstruction::Jump(jump),
-        }
-    }
-
-    fn block_return(
-        args: &[hir::TypeDefinition],
-        code: &[sir::Instruction]
-    )
-        -> sir::BasicBlock
-    {
-        let result = if code.len() > 0 {
-            val_instr(code.len() - 1)
-        } else {
-            val_arg(0)
-        };
-
-        sir::BasicBlock {
-            arguments: dyn_array(args),
-            instructions: dyn_array(code),
-            exit: sir::TerminatorInstruction::Return(result),
-        }
-    }
-
-    fn cfg(blocks: &[sir::BasicBlock]) -> sir::ControlFlowGraph {
-        sir::ControlFlowGraph { blocks: dyn_array(blocks) }
-    }
-
-    fn dyn_array<T: Clone>(elements: &[T]) -> DynArray<T> {
-        let array = DynArray::with_capacity(elements.len());
-        for e in elements { array.push(e.clone()); }
-        array
-    }
-
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
+    fn range(offset: usize, length: usize) -> Range {
+        Range::new(offset, length)
     }
 }

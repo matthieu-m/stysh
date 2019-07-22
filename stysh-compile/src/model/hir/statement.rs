@@ -8,7 +8,7 @@ use model::hir::*;
 
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Stmt {
+pub enum Statement {
     //  FIXME(matthieum): expressions of unit type sequenced with a semi-colon?
     /// A return statement.
     Return(Return),
@@ -53,12 +53,12 @@ pub struct Return {
 //  Public interface
 //
 
-impl Stmt {
+impl Statement {
     /// Result type of the statement.
     ///
     /// Not to be mistaken for the type of the value assigned to or returned.
     pub fn result_type(&self) -> Type {
-        use self::Stmt::*;
+        use self::Statement::*;
 
         match *self {
             Return(_) => Type::void(),
@@ -86,10 +86,10 @@ impl com::Span for Return {
     fn span(&self) -> com::Range { self.range }
 }
 
-impl com::Span for Stmt {
+impl com::Span for Statement {
     /// Range spanned by the statement.
     fn span(&self) -> com::Range {
-        use self::Stmt::*;
+        use self::Statement::*;
 
         match self {
             Return(r) => r.span(),
@@ -103,18 +103,22 @@ impl com::Span for Stmt {
 //  Default Implementations
 //
 
-impl Default for Stmt {
-    fn default() -> Self { Stmt::Return(Default::default()) }
+impl Default for Statement {
+    fn default() -> Self { Statement::Return(Default::default()) }
 }
 
 //
 //  From Implementations
 //
 
-impl convert::From<Binding> for Stmt {
-    fn from(b: Binding) -> Self { Stmt::Var(b) }
+impl convert::From<Binding> for Statement {
+    fn from(b: Binding) -> Self { Statement::Var(b) }
 }
 
-impl convert::From<ReBinding> for Stmt {
-    fn from(r: ReBinding) -> Self { Stmt::Set(r) }
+impl convert::From<ReBinding> for Statement {
+    fn from(r: ReBinding) -> Self { Statement::Set(r) }
+}
+
+impl convert::From<Return> for Statement {
+    fn from(r: Return) -> Self { Statement::Return(r) }
 }

@@ -12,5 +12,6 @@ mod sym;
 mod typ;
 
 use super::{Context, Relation};
+pub use self::scp::Scope;
 pub use self::sym::SymbolMapper;
 pub use self::typ::TypeMapper;

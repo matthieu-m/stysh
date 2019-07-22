@@ -12,7 +12,7 @@ mod expr;
 mod pat;
 mod typ;
 
-use super::{Context, Relation};
+use super::{Context, RegRef, Relation};
 pub use self::tup::TypeUnifier;
 
 #[cfg(test)]

@@ -8,7 +8,6 @@
 
 use std::collections::HashMap;
 
-use basic::com::Span;
 use model::{hir, sir};
 
 /// Registry
@@ -17,15 +16,14 @@ use model::{hir, sir};
 /// corresponding to a function.
 pub trait Registry {
     /// Look-up a ControlFlowGraph.
-    fn lookup_cfg(&self, key: hir::ItemIdentifier)
-        -> Option<sir::ControlFlowGraph>;
+    fn lookup_cfg(&self, key: hir::FunctionId) -> Option<&sir::Graph>;
 }
 
 /// SimpleRegistry
 ///
 /// A simple implementation of a `Registry`.
 pub struct SimpleRegistry {
-    cfgs: HashMap<hir::ItemIdentifier, sir::ControlFlowGraph>,
+    cfgs: HashMap<hir::FunctionId, sir::Graph>,
 }
 
 impl SimpleRegistry {
@@ -37,22 +35,20 @@ impl SimpleRegistry {
     /// Adds a cfg to the registry.
     pub fn insert(
         &mut self,
-        id: hir::ItemIdentifier,
-        cfg: sir::ControlFlowGraph,
+        id: hir::FunctionId,
+        cfg: sir::Graph,
     )
     {
         assert!(
             self.cfgs.insert(id, cfg).is_none(),
-            "{} already known", id.span()
+            "{:?} already known", id
         );
     }
 }
 
 impl Registry for SimpleRegistry {
-    fn lookup_cfg(&self, key: hir::ItemIdentifier)
-        -> Option<sir::ControlFlowGraph>
-    {
-        self.cfgs.get(&key).cloned()
+    fn lookup_cfg(&self, key: hir::FunctionId) -> Option<&sir::Graph> {
+        self.cfgs.get(&key)
     }
 }
 

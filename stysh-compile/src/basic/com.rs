@@ -2,7 +2,7 @@
 //!
 //! A standard vocabulary used throughout the code.
 
-use std::{self, cmp, convert, fmt, hash, marker, num, ops, sync};
+use std::{self, cmp, convert, fmt, hash, iter, marker, num, ops, sync};
 
 use basic::sea::TableIndex;
 
@@ -77,7 +77,7 @@ impl convert::From<CoreId> for u32 {
 /// An Id implementation based on CoreId.
 ///
 /// It contains a default empty state, to represent empty streams.
-//  #[manual(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+//  #[manual(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Id<T: ?Sized>(CoreId, marker::PhantomData<*const T>);
 
 impl<T: ?Sized> Id<T> {
@@ -89,6 +89,9 @@ impl<T: ?Sized> Id<T> {
 
     /// Returns whether the corresponding list is empty.
     pub fn is_empty(&self) -> bool { *self == Self::empty() }
+
+    /// Returns the inner ID.
+    pub fn value(&self) -> u32 { self.0.raw() }
 }
 
 impl<T: ?Sized> Clone for Id<T> {
@@ -142,8 +145,133 @@ impl<T: ?Sized> cmp::PartialOrd for Id<T> {
 impl<T: ?Sized> TableIndex for Id<T> {
     fn from_index(index: usize) -> Self { Id::new(index as u32) }
 
-    fn index(&self) -> usize { self.0.raw() as usize }
+    fn index(&self) -> usize { self.value() as usize }
 }
+
+
+/// IdIterator.
+///
+/// An Iterator over consecutive IDs.
+//  #[manual(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct IdIterator<T: ?Sized> {
+    start: u32,
+    end: u32,
+    _marker: marker::PhantomData<*const T>,
+}
+
+impl<T: ?Sized> IdIterator<T> {
+    /// Creates an instance.
+    pub fn new(start: u32, end: u32) -> Self {
+        IdIterator { start, end, _marker: marker::PhantomData }
+    }
+}
+
+impl<T: ?Sized> Clone for IdIterator<T> {
+    fn clone(&self) -> Self { *self }
+}
+
+impl<T: ?Sized> Copy for IdIterator<T> {}
+
+impl<T: ?Sized> fmt::Debug for IdIterator<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        //  FIXME(matthieum): consider adding `std::intrinsics::type_name<T>()`
+        //  once it stabilizes.
+        write!(f, "IdIterator({}, {})", self.start, self.end)
+    }
+}
+
+impl<T: ?Sized> Default for IdIterator<T> {
+    fn default() -> Self { IdIterator::new(0, 0) }
+}
+
+impl<T: ?Sized> cmp::Eq for IdIterator<T> {}
+
+impl<T: ?Sized> hash::Hash for IdIterator<T> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.start.hash(state);
+        self.end.hash(state);
+    }
+}
+
+impl<T: ?Sized> iter::Iterator for IdIterator<T> {
+    type Item = Id<T>;
+
+    fn next(&mut self) -> Option<Id<T>> {
+        if self.start < self.end {
+            let result = Id::new(self.start);
+            self.start += 1;
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let difference = self.len();
+        (difference, Some(difference))
+    }
+
+    fn count(self) -> usize { self.len() }
+
+    fn last(self) -> Option<Id<T>> {
+        if self.start < self.end {
+            Some(Id::new(self.end - 1))
+        } else {
+            None
+        }
+    }
+
+    fn nth(&mut self, n: usize) -> Option<Id<T>> {
+        let result = self.start.saturating_add(n as u32);
+        if result < self.end {
+            self.start = result + 1;
+            Some(Id::new(result))
+        } else {
+            self.start = self.end;
+            None
+        }
+    }
+
+    fn max(self) -> Option<Id<T>> { self.last() }
+
+    fn min(mut self) -> Option<Id<T>> { self.next() }
+}
+
+impl<T: ?Sized> iter::DoubleEndedIterator for IdIterator<T> {
+    fn next_back(&mut self) -> Option<Id<T>> {
+        if self.start < self.end {
+            self.end -= 1;
+            Some(Id::new(self.end))
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: ?Sized> iter::ExactSizeIterator for IdIterator<T> {
+    fn len(&self) -> usize {
+        self.end.saturating_sub(self.start) as usize
+    }
+}
+
+impl<T: ?Sized> cmp::Ord for IdIterator<T> {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        (self.start, self.end).cmp(&(other.start, other.end))
+    }
+}
+
+impl<T: ?Sized> cmp::PartialEq for IdIterator<T> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.start, self.end).eq(&(other.start, other.end))
+    }
+}
+
+impl<T: ?Sized> cmp::PartialOrd for IdIterator<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        (self.start, self.end).partial_cmp(&(other.start, other.end))
+    }
+}
+
 
 /// A Range represents a start and end position in a buffer.
 ///
@@ -323,6 +451,7 @@ pub trait MultiStore<T, I = Id<[T]>> {
     /// Returns the slice of items.
     fn get_slice(&self, id: I) -> &[T];
 
+    //  TODO(matthieum): A more efficient interface would take IntoIterator<Item = T>
     /// Pushes a slice of element.
     fn push_slice(&mut self, items: &[T]) -> I;
 }

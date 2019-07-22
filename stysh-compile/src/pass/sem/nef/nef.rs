@@ -4,7 +4,7 @@ use std::cell;
 
 use model::hir::{Gvn, Registry, Tree};
 
-use super::{fld, typ, Context};
+use super::{fld, typ, Context, Scope};
 use super::com::*;
 
 /// NestedEntityFetcher.
@@ -21,12 +21,13 @@ impl<'a> NestedEntityFetcher<'a> {
     /// Creates a new instance.
     pub fn new(
         context: &'a Context,
+        scope: &'a Scope,
         registry: &'a Registry,
         tree: &'a cell::RefCell<Tree>,
     )
         -> Self
     {
-        NestedEntityFetcher { core: CoreFetcher::new(context, registry, tree) }
+        NestedEntityFetcher { core: CoreFetcher::new(context, scope, registry, tree) }
     }
 
     /// Attempts to fetch all entities for this iteration.

@@ -1,5 +1,7 @@
 //! Patterns
 
+use std::convert;
+
 use basic::com;
 
 use model::hir::*;
@@ -23,4 +25,13 @@ pub enum Pattern {
 
 impl Default for Pattern {
     fn default() -> Self { Pattern::Ignored(Default::default()) }
+}
+
+
+//
+//  From Implementations
+//
+
+impl convert::From<Tuple<PatternId>> for Pattern {
+    fn from(t: Tuple<PatternId>) -> Pattern { Pattern::Tuple(t) }
 }

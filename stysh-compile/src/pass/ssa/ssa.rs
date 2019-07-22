@@ -5,81 +5,97 @@
 
 use std::{cell, collections::HashMap, fmt};
 
-use basic::com;
-use basic::mem::DynArray;
+use basic::com::{CoreId, Range};
 use basic::sea::{Table, TableIndex};
 
 use model::{hir, sir};
+use model::hir::ItemId;
 
 use super::proto::*;
 
 /// Stysh CFG builder.
 ///
 /// Builds the Control-Flow Graph.
-pub struct GraphBuilder;
+pub struct GraphBuilder<'a> {
+    registry: &'a hir::Registry,
+}
 
-impl GraphBuilder {
+impl<'a> GraphBuilder<'a> {
     /// Creates a new instance of a GraphBuilder.
-    pub fn new() -> GraphBuilder { GraphBuilder }
+    pub fn new(registry: &'a hir::Registry) -> GraphBuilder {
+        GraphBuilder { registry }
+    }
 
     /// Translates a semantic expression into its control-flow graph.
     pub fn from_expression(&self, tree: &hir::Tree, expr: hir::ExpressionId)
-        -> sir::ControlFlowGraph
+        -> sir::Graph
     {
-        let mut imp = GraphBuilderImpl::new(tree);
+        let mut imp = GraphBuilderImpl::new(self.registry, tree);
 
         imp.from_expression(
             ProtoBlock::new(hir::Gvn(0).into()),
             expr
         );
 
-        sir::ControlFlowGraph { blocks: imp.into_blocks() }
+        let mut graph = sir::Graph::new(hir::FunctionId::default());
+        graph.initialize_types(tree);
+        imp.into_blocks(&mut graph);
+
+        graph
     }
 
     /// Translates a semantic function into its control-flow graph.
-    pub fn from_function(&self, fun: &hir::Function)
-        -> sir::ControlFlowGraph
+    pub fn from_function(&self, module: &hir::Module, fun: hir::FunctionId)
+        -> sir::Graph
     {
+        let function = module.get_function(fun);
+
         let (args, expr) = if let Some(hir::Root::Function(_, args, _, expr)) =
-            fun.body.get_root()
+            function.body.get_root()
         {
             (args, expr)
         } else {
             panic!("Function body is not an expression!");
         };
 
-        let patterns = fun.body.get_patterns(args.fields);
-        let arguments = DynArray::with_capacity(fun.prototype.arguments.len());
+        let patterns = function.body.get_patterns(args.fields);
+        let mut arguments = Vec::with_capacity(patterns.len());
 
-        for (&p, a) in patterns.iter().zip(fun.prototype.arguments.iter()) {
-            arguments.push((p.into(), a.type_));
+        for &p in patterns {
+            let type_ = function.body.get_pattern_type_id(p);
+            arguments.push((p.into(), type_));
         }
 
         let mut first = ProtoBlock::new(expr.into());
         first.arguments = arguments;
 
-        let mut imp = GraphBuilderImpl::new(&fun.body);
+        let mut imp = GraphBuilderImpl::new(self.registry, &function.body);
 
         imp.from_expression(first, expr);
 
-        sir::ControlFlowGraph { blocks: imp.into_blocks() }
+        let mut graph = sir::Graph::new(fun);
+        graph.initialize_types(&function.body);
+        imp.into_blocks(&mut graph);
+
+        graph
     }
 }
 
 //
 //  Implementation Details
 //
-struct LocalExpressionId(com::CoreId);
+struct LocalExpressionId(CoreId);
 
 struct LocalExpression {
-    expr: hir::Expr,
-    type_: hir::Type,
-    range: com::Range,
+    expr: hir::Expression,
+    type_: hir::TypeId,
+    range: Range,
 }
 
 struct GraphBuilderImpl<'a> {
+    registry: &'a hir::Registry,
     tree: &'a hir::Tree,
-    blocks: DynArray<ProtoBlock>,
+    blocks: Vec<ProtoBlock>,
     expression_offset: u32,
     expression: cell::RefCell<Table<LocalExpressionId, LocalExpression>>,
 }
@@ -88,12 +104,13 @@ impl<'a> GraphBuilderImpl<'a> {
     //
     //  High-level methods
     //
-    fn new(tree: &'a hir::Tree) -> GraphBuilderImpl {
+    fn new(registry: &'a hir::Registry, tree: &'a hir::Tree) -> Self {
         let expression_offset = tree.len_expressions() as u32;
 
         GraphBuilderImpl {
+            registry,
             tree,
-            blocks: DynArray::with_capacity(1),
+            blocks: Vec::with_capacity(1),
             expression_offset,
             expression: Default::default(),
         }
@@ -113,16 +130,12 @@ impl<'a> GraphBuilderImpl<'a> {
         }
     }
 
-    fn into_blocks(&self) -> DynArray<sir::BasicBlock> {
+    fn into_blocks(mut self, graph: &mut sir::Graph) {
         let map = self.resolve_arguments();
 
-        let result = DynArray::with_capacity(self.blocks.len());
-
-        for b in &self.blocks {
-            result.push(b.into_block(&map));
+        for b in self.blocks {
+            b.into_block(graph, &map);
         }
-
-        result
     }
 
     //
@@ -135,28 +148,28 @@ impl<'a> GraphBuilderImpl<'a> {
     )
         -> Option<ProtoBlock>
     {
-        let t = self.convert_type(self.get_expression_type(id));
+        let t = self.get_expression_type_id(id);
         let r = self.get_expression_range(id);
         let gvn = id.into();
 
         match self.get_expression(id) {
-            hir::Expr::Block(stmts, e)
+            hir::Expression::Block(stmts, e)
                 => self.convert_block(current, stmts, e),
-            hir::Expr::BuiltinVal(val)
+            hir::Expression::BuiltinVal(val)
                 => Some(self.convert_literal(current, val, gvn, r)),
-            hir::Expr::Call(callable, args)
-                => Some(self.convert_call(current, callable, args, gvn, r)),
-            hir::Expr::Constructor(c)
-                => Some(self.convert_constructor(current, c, gvn, r)),
-            hir::Expr::FieldAccess(e, f)
+            hir::Expression::Call(callable, args)
+                => Some(self.convert_call(current, t, callable, args, gvn, r)),
+            hir::Expression::Constructor(c)
+                => Some(self.convert_constructor(current, c, id, r)),
+            hir::Expression::FieldAccess(e, f)
                 => Some(self.convert_field_access(current, t, e, f, r)),
-            hir::Expr::If(cond, true_, false_)
+            hir::Expression::If(cond, true_, false_)
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
-            hir::Expr::Loop(stmts)
+            hir::Expression::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
-            hir::Expr::Ref(_, gvn)
+            hir::Expression::Ref(_, gvn)
                 => Some(self.convert_identifier(current, t, gvn)),
-            hir::Expr::Tuple(tuple)
+            hir::Expression::Tuple(tuple)
                 => Some(self.convert_tuple(current, t, tuple, gvn, r)),
             expr
                 => panic!("unimplemented - convert_expression - {:?}", expr),
@@ -184,7 +197,7 @@ impl<'a> GraphBuilderImpl<'a> {
     )
         -> ProtoBlock
     {
-        let ty = self.convert_type_of(b.right.into());
+        let ty = self.get_expression_type_id(b.right);
 
         current = self.convert_expression(current, b.right).expect("!Void");
         let id = current.last_value();
@@ -195,7 +208,7 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_block(
         &mut self,
         current: ProtoBlock,
-        stmts: hir::Id<[hir::Stmt]>,
+        stmts: hir::Id<[hir::Statement]>,
         value: Option<hir::ExpressionId>,
     )
         -> Option<ProtoBlock>
@@ -207,10 +220,11 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_call(
         &mut self,
         current: ProtoBlock,
+        result: hir::TypeId,
         callable: hir::Callable,
         args: hir::Tuple<hir::ExpressionId>,
         gvn: hir::Gvn,
-        range: com::Range,
+        range: Range,
     )
         -> ProtoBlock
     {
@@ -230,21 +244,19 @@ impl<'a> GraphBuilderImpl<'a> {
             };
         }
 
-        let callable = if let hir::Callable::Builtin(b) = callable {
-            sir::Callable::Builtin(b)
-        } else if let hir::Callable::Function(name, args, res) = callable {
-            let prototype = self.convert_function_prototype(name, args, res);
-            sir::Callable::Function(prototype)
-        } else {
-            unreachable!("Incomplete HIR: {:?}", callable);
+        let callable = match callable {
+            hir::Callable::Builtin(b) => sir::Callable::Builtin(b),
+            hir::Callable::Function(f) => sir::Callable::Function(f),
+            _ => unreachable!("Incomplete HIR: {:?}", callable),
         };
 
         let (mut current, arguments) =
             self.convert_array_of_values(current, args.fields);
 
-        current.push_instr(
+        current.push_instruction(
             gvn.into(),
-            sir::Instruction::Call(callable, arguments, range)
+            sir::Instruction::Call(result, callable, arguments),
+            range,
         );
 
         current
@@ -256,7 +268,7 @@ impl<'a> GraphBuilderImpl<'a> {
         fun: hir::BuiltinFunction,
         args: hir::Tuple<hir::ExpressionId>,
         gvn: hir::Gvn,
-        range: com::Range,
+        range: Range,
     )
         -> ProtoBlock
     {
@@ -268,30 +280,30 @@ impl<'a> GraphBuilderImpl<'a> {
         debug_assert!(arguments.len() == 2, "Too many arguments: {:?}", arguments);
 
         let r = self.get_expression_range(arguments[0]);
-        let t = hir::Type::bool_();
+        let t = hir::TypeId::bool_();
 
         match fun {
             And => {
                 let other =
-                    self.push_local_expression(hir::Expr::bool_(false), t, r);
+                    self.push_local_expression(hir::Expression::bool_(false), t, r);
                 self.convert_if_impl(
                     current,
                     arguments[0],
                     arguments[1],
                     other,
-                    hir::TypeDefinition::bool_(),
+                    hir::TypeId::bool_(),
                     gvn
                 )
             },
             Or => {
                 let other =
-                    self.push_local_expression(hir::Expr::bool_(true), t, r);
+                    self.push_local_expression(hir::Expression::bool_(true), t, r);
                 self.convert_if_impl(
                     current,
                     arguments[0],
                     other,
                     arguments[1],
-                    hir::TypeDefinition::bool_(),
+                    hir::TypeId::bool_(),
                     gvn
                 )
             },
@@ -303,19 +315,20 @@ impl<'a> GraphBuilderImpl<'a> {
         &mut self,
         current: ProtoBlock,
         cons: hir::Tuple<hir::ExpressionId>,
-        gvn: hir::Gvn,
-        range: com::Range,
+        id: hir::ExpressionId,
+        range: Range,
     )
         -> ProtoBlock
     {
         let (mut current, arguments) =
             self.convert_array_of_values(current, cons.fields);
 
-        let ty = self.convert_type_of(gvn);
+        let ty = self.get_expression_type_id(id);
 
-        current.push_instr(
-            gvn.into(),
-            sir::Instruction::New(ty, arguments, range)
+        current.push_instruction(
+            id.into(),
+            sir::Instruction::New(ty, arguments),
+            range,
         );
 
         current
@@ -324,19 +337,20 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_field_access(
         &mut self,
         current: ProtoBlock,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
         expr: hir::ExpressionId,
         field: hir::Field,
-        range: com::Range,
+        range: Range,
     )
         -> ProtoBlock
     {
         let mut current = self.convert_expression(current, expr).expect("!Void");
         let value_id = current.last_value();
 
-        current.push_instr(
+        current.push_instruction(
             expr.into(),
-            sir::Instruction::Field(type_, value_id, field.index(), range)
+            sir::Instruction::Field(type_, value_id, field.index()),
+            range
         );
 
         current
@@ -345,7 +359,7 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_identifier(
         &mut self,
         mut current: ProtoBlock,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
         gvn: hir::Gvn,
     )
         -> ProtoBlock
@@ -360,7 +374,7 @@ impl<'a> GraphBuilderImpl<'a> {
         condition: hir::ExpressionId,
         true_: hir::ExpressionId,
         false_: hir::ExpressionId,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
         gvn: hir::Gvn,
     )
         -> ProtoBlock
@@ -381,7 +395,7 @@ impl<'a> GraphBuilderImpl<'a> {
         condition: hir::ExpressionId,
         true_: hir::ExpressionId,
         false_: hir::ExpressionId,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
         gvn: hir::Gvn,
     )
         -> ProtoBlock
@@ -392,7 +406,7 @@ impl<'a> GraphBuilderImpl<'a> {
             if_id: BlockId,
             branch_id: BlockId,
             expr: hir::ExpressionId,
-            type_: hir::TypeDefinition,
+            type_: hir::TypeId,
         )
             -> Option<BlockId>
         {
@@ -423,18 +437,18 @@ impl<'a> GraphBuilderImpl<'a> {
 
         current.exit = ProtoTerminator::Branch(
             current.last_value(),
-            DynArray::new(vec!(
+            vec!(
                 ProtoJump::new(true_id),
                 ProtoJump::new(false_id),
-            )),
+            ),
         );
 
         self.blocks.push(current);
 
-        let result = ProtoBlock::new(if_id);
-        result.arguments.push((BindingId(if_id.0), type_.clone()));
+        let mut result = ProtoBlock::new(if_id);
+        result.arguments.push((BindingId(if_id.0), type_));
 
-        if let Some(id) = create_branch(self, current_id, if_id, true_id, true_, type_.clone()) {
+        if let Some(id) = create_branch(self, current_id, if_id, true_id, true_, type_) {
             result.predecessors.push(id);
         }
         if let Some(id) = create_branch(self, current_id, if_id, false_id, false_, type_) {
@@ -449,18 +463,18 @@ impl<'a> GraphBuilderImpl<'a> {
         mut current: ProtoBlock,
         val: hir::BuiltinValue,
         gvn: hir::Gvn,
-        range: com::Range,
+        range: Range,
     )
         -> ProtoBlock
     {
-        current.push_instr(gvn.into(), sir::Instruction::Load(val, range));
+        current.push_instruction(gvn.into(), sir::Instruction::Load(val), range);
         current
     }
 
     fn convert_loop(
         &mut self,
         mut current: ProtoBlock,
-        stmts: hir::Id<[hir::Stmt]>,
+        stmts: hir::Id<[hir::Statement]>,
         gvn: hir::Gvn,
     )
         -> Option<ProtoBlock>
@@ -471,7 +485,7 @@ impl<'a> GraphBuilderImpl<'a> {
         current.exit = ProtoTerminator::Jump(self.jump(head_id));
         self.blocks.push(current);
 
-        let head = ProtoBlock::new(head_id);
+        let mut head = ProtoBlock::new(head_id);
         head.predecessors.push(current_id);
         let head_index = self.blocks.len();
 
@@ -479,10 +493,7 @@ impl<'a> GraphBuilderImpl<'a> {
             if self.blocks.len() == head_index {
                 tail.predecessors.push(tail.id);
             } else {
-                self.blocks.update(
-                    head_index,
-                    |b| { b.predecessors.push(tail.id); b }
-                );
+                self.blocks[head_index].predecessors.push(tail.id);
             }
 
             tail.exit = ProtoTerminator::Jump(self.jump(head_id));
@@ -497,7 +508,7 @@ impl<'a> GraphBuilderImpl<'a> {
         mut current: ProtoBlock,
         matched: sir::ValueId,
         id: hir::PatternId,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
     )
         -> ProtoBlock
     {
@@ -513,17 +524,18 @@ impl<'a> GraphBuilderImpl<'a> {
             },
             Constructor(tup) | Tuple(tup) => (
                 self.tree.get_patterns(tup.fields),
-                type_.fields().fields,
+                self.fields_of(type_),
             ),
         };
 
         assert_eq!(patterns.len(), types.len());
 
-        for (index, (&p, t)) in patterns.iter().zip(types.iter()).enumerate() {
+        for (index, (&p, &t)) in patterns.iter().zip(types.iter()).enumerate() {
             let i = index as u16;
             let range = self.tree.get_pattern_range(p);
             let id = current.push_immediate(
-                sir::Instruction::Field(t.clone(), matched, i, range),
+                sir::Instruction::Field(t.clone(), matched, i),
+                range,
             );
             current = self.convert_pattern(current, id, p, t);
         }
@@ -579,15 +591,15 @@ impl<'a> GraphBuilderImpl<'a> {
         let expr = self.get_expression(left);
 
         match expr {
-            hir::Expr::FieldAccess(e, f)
+            hir::Expression::FieldAccess(e, f)
                 => self.convert_rebind_recurse_field(current, e, f, left.into()),
-            hir::Expr::Ref(_, gvn) => {
+            hir::Expression::Ref(_, gvn) => {
                 let id = current.last_value();
-                let ty = self.convert_type(self.get_expression_type(left));
+                let ty = self.get_expression_type_id(left);
                 current.push_rebinding(gvn.into(), id, ty);
                 current
             },
-            hir::Expr::Tuple(t)
+            hir::Expression::Tuple(t)
                 => self.convert_rebind_recurse_tuple(current, t),
             _ => unimplemented!("{:?}", left),
         }
@@ -604,7 +616,7 @@ impl<'a> GraphBuilderImpl<'a> {
     {
         let id = current.last_value();
         let index = field.index();
-        let ty = self.convert_type_of(expr.into());
+        let ty = self.get_expression_type_id(expr);
         let range = self.get_expression_range(expr);
 
         //  Load tuple
@@ -612,34 +624,31 @@ impl<'a> GraphBuilderImpl<'a> {
         let tuple_id = current.last_value();
 
         //  Load other fields
-        let fields = &ty.fields().fields;
+        let fields = self.fields_of(ty);
         assert!(fields.len() > index as usize, "{} > {}", fields.len(), index);
 
-        let args = DynArray::with_capacity(fields.len());
+        let mut arguments = Vec::with_capacity(fields.len());
 
         for i in 0..(fields.len() as u16) {
             if i == index {
-                args.push(id);
+                arguments.push(id);
             } else {
-                let id = current.push_immediate(sir::Instruction::Field(
-                    fields.at(i as usize),
-                    tuple_id,
-                    i,
-                    range
-                ));
-                args.push(id);
+                let id = current.push_immediate(
+                    sir::Instruction::Field(fields[i as usize], tuple_id, i),
+                    range,
+                );
+                arguments.push(id);
             }
         }
 
+        let arguments = current.block.push_instruction_ids(arguments);
+
         //  Construct a new tuple, identical to the former except for the
         //  one new field.
-        current.push_instr(
+        current.push_instruction(
             gvn.into(),
-            sir::Instruction::New(
-                ty,
-                args,
-                range,
-            ),
+            sir::Instruction::New(ty, arguments),
+            range,
         );
 
         self.convert_rebind_recurse(current, expr)
@@ -656,17 +665,13 @@ impl<'a> GraphBuilderImpl<'a> {
         let fields = self.tree.get_expressions(tuple.fields);
 
         for (index, &field) in fields.iter().enumerate() {
-            let gvn = field.into();
-            let ty = self.convert_type_of(gvn);
+            let gvn: hir::Gvn = field.into();
+            let ty = self.get_expression_type_id(field);
             let range = self.get_expression_range(field);
-            current.push_instr(
+            current.push_instruction(
                 gvn.into(),
-                sir::Instruction::Field(
-                    ty,
-                    id,
-                    index as u16,
-                    range,
-                ),
+                sir::Instruction::Field(ty, id, index as u16),
+                range,
             );
 
             current = self.convert_rebind_recurse(current, field);
@@ -678,19 +683,20 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_tuple(
         &mut self,
         current: ProtoBlock,
-        type_: hir::TypeDefinition,
+        type_: hir::TypeId,
         tuple: hir::Tuple<hir::ExpressionId>,
         gvn: hir::Gvn,
-        range: com::Range,
+        range: Range,
     )
         -> ProtoBlock
     {
         let (mut current, arguments) =
             self.convert_array_of_values(current, tuple.fields);
 
-        current.push_instr(
+        current.push_instruction(
             gvn.into(),
-            sir::Instruction::New(type_, arguments, range)
+            sir::Instruction::New(type_, arguments),
+            range,
         );
 
         current
@@ -701,18 +707,21 @@ impl<'a> GraphBuilderImpl<'a> {
         mut current: ProtoBlock,
         expressions: hir::Id<[hir::ExpressionId]>,
     )
-        -> (ProtoBlock, DynArray<sir::ValueId>)
+        -> (ProtoBlock, sir::Id<[sir::ValueId]>)
     {
         let expressions = self.tree.get_expressions(expressions);
         for &e in expressions {
             current = self.convert_expression(current, e).expect("!Void");
         }
 
-        let arguments = DynArray::with_capacity(expressions.len());
+        let mut arguments = Vec::with_capacity(expressions.len());
+
         for &e in expressions {
-            let ty = self.convert_type_of(e.into());
+            let ty = self.get_expression_type_id(e);
             arguments.push(current.bind(self.binding_of(e), ty));
         }
+
+        let arguments = current.block.push_instruction_ids(arguments);
 
         (current, arguments)
     }
@@ -720,7 +729,7 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_statements(
         &mut self,
         mut current: ProtoBlock,
-        stmts: hir::Id<[hir::Stmt]>,
+        stmts: hir::Id<[hir::Statement]>,
     )
         -> Option<ProtoBlock>
     {
@@ -728,7 +737,7 @@ impl<'a> GraphBuilderImpl<'a> {
 
         for &s in stmts {
             match s {
-                hir::Stmt::Return(r) => {
+                hir::Statement::Return(r) => {
                     current =
                         self.convert_expression(current, r.value).expect("!Void");
                     current.exit =
@@ -736,10 +745,10 @@ impl<'a> GraphBuilderImpl<'a> {
                     self.blocks.push(current);
                     return None;
                 },
-                hir::Stmt::Set(re) => {
+                hir::Statement::Set(re) => {
                     current = self.convert_rebind(current, re);
                 },
-                hir::Stmt::Var(b) => {
+                hir::Statement::Var(b) => {
                     current = self.convert_binding(current, b);
                 },
             }
@@ -748,123 +757,41 @@ impl<'a> GraphBuilderImpl<'a> {
         Some(current)
     }
 
-    //
-    //  FIXME: Make all those conversions back to Items unnecessary.
-    //
-    fn convert_function_prototype(
-        &self,
-        name: hir::ItemIdentifier,
-        arguments: hir::Tuple<hir::TypeId>,
-        result: hir::TypeId
-    )
-        -> hir::FunctionProto
-    {
-        let arguments = {
-            let fields = self.tree.get_type_ids(arguments.fields);
-            let names = self.tree.get_names(arguments.names);
-
-            let arguments = fields.iter().zip(names.iter())
-                .map(|(&ty, &name)| hir::Argument {
-                    name,
-                    type_: self.convert_type_id(ty),
-                    range: name.1
-                })
-                .collect();
-
-            DynArray::new(arguments)
-        };
-
-        let result = self.convert_type_id(result);
-
-        hir::FunctionProto {
-            name,
-            range: name.1,
-            arguments,
-            result,
-        }
-    }
-
-    fn convert_type_id(&self, ty: hir::TypeId) -> hir::TypeDefinition {
-        let ty = self.tree.get_type(ty);
-        self.convert_type(ty)
-    }
-
-    fn convert_type(&self, ty: hir::Type) -> hir::TypeDefinition {
-        use self::hir::Type as T;
-        use self::hir::TypeDefinition as TD;
-
-        match ty {
-            T::Builtin(b) => TD::Builtin(b),
-            T::Rec(name, _, fields) => self.convert_type_record(name, fields),
-            T::Tuple(tup) => self.convert_type_tuple(tup),
-            _ => unimplemented!("convert_type - {:?}", ty),
-        }
-    }
-
-    fn convert_type_record(
-        &self,
-        name: hir::ItemIdentifier,
-        fields: hir::Tuple<hir::TypeId>
-    )
-        -> hir::TypeDefinition
-    {
-        let prototype = hir::RecordProto {
-            name,
-            range: Default::default(),
-            enum_: Default::default(),
-        };
-
-        let definition = self.convert_type_tuple_impl(fields);
-
-        hir::TypeDefinition::Rec(
-            hir::Record { prototype, definition, },
-            Default::default(),
-        )
-    }
-
-    fn convert_type_tuple(&self, tup: hir::Tuple<hir::TypeId>)
-        -> hir::TypeDefinition
-    {
-        hir::TypeDefinition::Tuple(self.convert_type_tuple_impl(tup))
-    }
-
-    fn convert_type_tuple_impl(&self, tup: hir::Tuple<hir::TypeId>)
-        -> hir::DynTuple<hir::TypeDefinition>
-    {
-        let fields = self.tree.get_type_ids(tup.fields);
-        let names = self.tree.get_names(tup.names);
-
-        let fields = fields.iter()
-            .map(|t| self.convert_type_id(*t))
-            .collect();
-        let fields = DynArray::new(fields);
-
-        let names = names.iter().cloned().collect();
-        let names = DynArray::new(names);
-
-        hir::DynTuple{ fields, names, }
-    }
-
-    fn convert_type_of(&self, gvn: hir::Gvn) -> hir::TypeDefinition {
-        let ty = if let Some(e) = gvn.as_expression() {
-            self.get_expression_type(e)
-        } else if let Some(p) = gvn.as_pattern() {
-            self.tree.get_pattern_type(p)
-        } else {
-            unimplemented!("Unknown GVN {:?}", gvn);
-        };
-        self.convert_type(ty)
-    }
-
     fn binding_of(&self, id: hir::ExpressionId) -> BindingId {
         let expr = self.get_expression(id);
         match expr {
-            hir::Expr::Ref(_, gvn) => gvn.into(),
+            hir::Expression::Ref(_, gvn) => gvn.into(),
             _ => id.into()
         }
     }
 
-    fn get_expression(&self, id: hir::ExpressionId) -> hir::Expr {
+    fn fields_of(&self, ty: hir::TypeId) -> &'a [hir::TypeId] {
+        if ty.is_tree() {
+            self.fields_of_type(self.tree.get_type(ty))
+        } else {
+            self.fields_of_type(self.registry.get_type(ty))
+        }
+    }
+
+    fn fields_of_type(&self, type_: hir::Type) -> &'a [hir::TypeId] {
+        use self::hir::Type::*;
+
+        match type_ {
+            Tuple(tuple) =>
+                if tuple.fields.is_tree() {
+                    self.tree.get_type_ids(tuple.fields)
+                } else {
+                    self.registry.get_type_ids(tuple.fields)
+                },
+            Rec(rec, ..) => {
+                let fields = self.registry.get_record(rec).definition.fields;
+                self.registry.get_type_ids(fields)
+            },
+            _ => unreachable!("No fields in {:?}", type_),
+        }
+    }
+
+    fn get_expression(&self, id: hir::ExpressionId) -> hir::Expression {
         if let Some(local) = LocalExpressionId::new(self.expression_offset, id) {
             self.expression.borrow().at(&local).expr
         } else {
@@ -872,15 +799,15 @@ impl<'a> GraphBuilderImpl<'a> {
         }
     }
 
-    fn get_expression_type(&self, id: hir::ExpressionId) -> hir::Type {
+    fn get_expression_type_id(&self, id: hir::ExpressionId) -> hir::TypeId {
         if let Some(local) = LocalExpressionId::new(self.expression_offset, id) {
             self.expression.borrow().at(&local).type_
         } else {
-            self.tree.get_expression_type(id)
+            self.tree.get_expression_type_id(id)
         }
     }
 
-    fn get_expression_range(&self, id: hir::ExpressionId) -> com::Range {
+    fn get_expression_range(&self, id: hir::ExpressionId) -> Range {
         if let Some(local) = LocalExpressionId::new(self.expression_offset, id) {
             self.expression.borrow().at(&local).range
         } else {
@@ -890,14 +817,14 @@ impl<'a> GraphBuilderImpl<'a> {
 
     fn push_local_expression(
         &self,
-        expr: hir::Expr,
-        type_: hir::Type,
-        range: com::Range,
+        expr: hir::Expression,
+        type_: hir::TypeId,
+        range: Range,
     )
         -> hir::ExpressionId
     {
         let local_id = LocalExpressionId(
-            com::CoreId::new(self.expression.borrow().len() as u32)
+            CoreId::new(self.expression.borrow().len() as u32)
         );
 
         let expr = LocalExpression { expr, type_, range };
@@ -908,12 +835,12 @@ impl<'a> GraphBuilderImpl<'a> {
 
     fn jump(&self, to: BlockId) -> ProtoJump { ProtoJump::new(to) }
 
-    fn resolve_arguments(&self) -> HashMap<BlockId, sir::BlockId> {
+    fn resolve_arguments(&mut self) -> HashMap<BlockId, sir::BlockId> {
         //  Map each proto block ID to its definitive block ID.
         let map = {
             let mut map = HashMap::with_capacity(self.blocks.len());
             for (index, block) in self.blocks.iter().enumerate() {
-                map.insert(block.id, sir::BlockId::new(index));
+                map.insert(block.id, sir::BlockId::new(index as u32));
             }
             map
         };
@@ -925,25 +852,25 @@ impl<'a> GraphBuilderImpl<'a> {
             bound = 0;
 
             for block_index in (0..self.blocks.len()).rev() {
-                let mut block = self.blocks.at(block_index);
+                let (block_id, predecessors, arguments) = {
+                    let block = &self.blocks[block_index];
+
+                    (block.id, block.predecessors.clone(), block.arguments.clone())
+                };
 
                 let mut self_successor = false;
-                for id in &block.predecessors {
-                    if id == block.id {
+                for &id in &predecessors {
+                    if id == block_id {
                         self_successor = true;
                         continue;
                     }
 
                     let id = map.get(&id).expect("Known block!");
-                    self.blocks.update(id.index(), |mut pred| {
-                        bound += pred.bind_successor(block.id, &block.arguments);
-                        pred
-                    });
+                    bound += self.blocks[id.index()].bind_successor(block_id, &arguments);
                 }
 
                 if self_successor {
-                    bound += block.bind_self_successor();
-                    self.blocks.replace(block_index, block);
+                    bound += self.blocks[block_index].bind_self_successor();
                 }
             }
         }
@@ -953,7 +880,7 @@ impl<'a> GraphBuilderImpl<'a> {
         for block in &self.blocks {
             for pred in &block.predecessors {
                 let pred = map.get(&pred).expect("Known block!");
-                let pred = self.blocks.at(pred.index());
+                let pred = &self.blocks[pred.index()];
                 let jump = pred.exit.get_jump(block.id);
 
                 debug_assert!(
@@ -974,7 +901,7 @@ impl<'a> GraphBuilderImpl<'a> {
 impl LocalExpressionId {
     fn new(offset: u32, expr: hir::ExpressionId) -> Option<LocalExpressionId> {
         if expr.index() >= offset as usize {
-            Some(LocalExpressionId(com::CoreId::new(expr.index() as u32 - offset)))
+            Some(LocalExpressionId(CoreId::new(expr.index() as u32 - offset)))
         } else {
             None
         }
@@ -993,7 +920,7 @@ impl fmt::Debug for LocalExpressionId {
 
 impl TableIndex for LocalExpressionId {
     fn from_index(index: usize) -> Self {
-        LocalExpressionId(com::CoreId::new(index as u32))
+        LocalExpressionId(CoreId::new(index as u32))
     }
 
     fn index(&self) -> usize { self.0.raw() as usize }
@@ -1006,7 +933,8 @@ impl TableIndex for LocalExpressionId {
 mod tests {
     use std::rc;
 
-    use basic::{com, mem};
+    use basic::com::Range;
+    use basic::mem;
 
     use model::hir::builder::*;
     use model::hir::*;
@@ -1024,7 +952,7 @@ mod tests {
             .build();
 
         assert_eq!(
-            env.exprit(val).to_string(),
+            env.exprit(val),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@0",
@@ -1049,7 +977,7 @@ mod tests {
                     .push(v.int(2, 5))
                     .range(0, 7)
                     .build()
-            ).to_string(),
+            ),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@1",
@@ -1064,19 +992,23 @@ mod tests {
     #[test]
     fn record_arguments() {
         let env = Env::new(b":rec Args(Int);    Args(42)");
-        let (i, _, p, _, _, v) = env.hir();
+        let hir = env.factory();
 
         let rec = {
-            let rec = i.rec(p.rec(env.item_id(5, 4), 0).build())
-                .push(TypeDefinition::int())
-                .build();
-            env.insert_record(rec)
+            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+            i.rec(p.rec(env.item_id(5, 4), 0).build())
+                .push(t.int())
+                .build()
+        };
+
+        let expr = {
+            let (t, v) = (hir.type_(), hir.value());
+            let rec = t.record(rec).build();
+            v.constructor(rec).push(v.int(42, 24)).range(19, 8).build()
         };
 
         assert_eq!(
-            env.exprit(
-                v.constructor(rec).push(v.int(42, 24)).range(19, 8).build()
-            ).to_string(),
+            env.exprit(expr),
             cat(&[
                 "0 ():",
                 "    $0 := load 2a ; 2@24",
@@ -1090,24 +1022,29 @@ mod tests {
     #[test]
     fn record_field() {
         let env = Env::new(b":rec Args(Int, Int);   Args(4, 42).1");
-        let (i, _, p, _, _, v) = env.hir();
+        let hir = env.factory();
 
         let rec = {
-            let rec = i.rec(p.rec(env.item_id(5, 4), 0).build())
-                .push(TypeDefinition::int())
-                .push(TypeDefinition::int())
-                .build();
-            env.insert_record(rec)
+            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+            i.rec(p.rec(env.item_id(5, 4), 0).build())
+                .push(t.int())
+                .push(t.int())
+                .build()
         };
 
-        let c = v.constructor(rec)
-            .push(v.int(4, 28))
-            .push(v.int(42, 31))
-            .range(23, 11)
-            .build();
+        let expr = {
+            let (t, v) = (hir.type_(), hir.value());
+            let rec = t.record(rec).build();
+            let c = v.constructor(rec)
+                .push(v.int(4, 28))
+                .push(v.int(42, 31))
+                .range(23, 11)
+                .build();
+            v.field_access(c).index(1).build()
+        };
 
         assert_eq!(
-            env.exprit(v.field_access(c).index(1).build()).to_string(),
+            env.exprit(expr),
             cat(&[
                 "0 ():",
                 "    $0 := load 4 ; 1@28",
@@ -1138,7 +1075,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -1163,7 +1100,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@12",
@@ -1200,7 +1137,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 //  :var a := (1, (2, 3));
@@ -1254,7 +1191,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -1274,17 +1211,21 @@ mod tests {
     #[test]
     fn block_constructor_binding() {
         let env = Env::new(b":rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }");
-        let (i, p, po, s, _, v) = env.hir();
+        let hir = env.factory();
 
         let rec = {
-            let rec = i.rec(po.rec(env.item_id(5, 1), 0).build())
-                .push(TypeDefinition::int())
-                .push(TypeDefinition::int())
-                .build();
-            env.insert_record(rec)
+            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+            i.rec(p.rec(env.item_id(5, 1), 0).build())
+                .push(t.int())
+                .push(t.int())
+                .build()
         };
 
+        let (_, p, _, s, t, v) = env.hir();
+
+        let rec = t.record(rec).build();
         let (a, b) = (env.var_id(29, 1), env.var_id(32, 1));
+
         let binding =
             p.constructor(rec)
                 .push(p.var(a))
@@ -1303,7 +1244,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@40",
@@ -1327,7 +1268,7 @@ mod tests {
             .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@10",
@@ -1353,7 +1294,7 @@ mod tests {
                 .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 1 ; 1@18",
@@ -1370,18 +1311,22 @@ mod tests {
     #[test]
     fn fun_simple() {
         let env = Env::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
-        let (_, _, p, _, t, v) = env.hir();
 
         let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
-        let int = || TypeDefinition::int();
 
-        let prototype =
-            p.fun(env.item_id(5, 3), int())
-                .push(a, int())
-                .push(b, int())
+        let prototype = {
+            let hir = env.factory();
+            let (p, t) = (hir.proto(), hir.type_module());
+            let prototype = p.fun(env.item_id(5, 3), t.int())
+                .push(a, t.int())
+                .push(b, t.int())
                 .range(0, 31)
                 .build();
-        env.insert_function(&prototype);
+            env.insert_function(&prototype);
+            prototype
+        };
+
+        let (_, _, _, _, t, v) = env.hir();
 
         let body =
             v.block(
@@ -1393,7 +1338,7 @@ mod tests {
             ).build_with_type();
 
         assert_eq!(
-            env.funit(prototype, body).to_string(),
+            env.funit(prototype, body),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -1411,7 +1356,7 @@ mod tests {
         let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
 
         assert_eq!(
-            env.exprit(if_).to_string(),
+            env.exprit(if_),
             cat(&[
                 "0 ():",
                 "    $0 := load true ; 4@4",
@@ -1436,19 +1381,23 @@ mod tests {
     fn if_shortcircuit() {
         fn short_circuit(fun: BuiltinFunction, fragment: &[u8]) -> String {
             let env = Env::new(fragment);
-            let (_, _, p, _, t, v) = env.hir();
 
             let (a, b, c) = (env.var_id(8, 1), env.var_id(16, 1), env.var_id(24, 1));
-            let int = || TypeDefinition::int();
 
-            let f =
-                p.fun(env.item_id(5, 2), TypeDefinition::bool_())
-                    .push(a, int())
-                    .push(b, int())
-                    .push(c, int())
-                    .range(0, 61)
-                    .build();
-            env.insert_function(&f);
+            let prototype = {
+                let hir = env.factory();
+                let (p, t) = (hir.proto(), hir.type_module());
+                let prototype = p.fun(env.item_id(5, 2), t.bool_())
+                        .push(a, t.int())
+                        .push(b, t.int())
+                        .push(c, t.int())
+                        .range(0, 61)
+                        .build();
+                env.insert_function(&prototype);
+                prototype
+            };
+
+            let (_, _, _, _, t, v) = env.hir();
 
             let left = 
                 v.call()
@@ -1469,7 +1418,7 @@ mod tests {
                     v.call().builtin(fun, t.bool_()).push(left).push(right).build()
                 ).build_with_type();
 
-            env.funit(f, block).to_string()
+            env.funit(prototype, block)
         }
 
         assert_eq!(
@@ -1533,7 +1482,7 @@ mod tests {
         ).build();
 
         assert_eq!(
-            env.exprit(if_).to_string(),
+            env.exprit(if_),
             cat(&[
                 "0 ():",
                 "    $0 := load true ; 4@4",
@@ -1568,24 +1517,29 @@ mod tests {
             "}",                                                        // 159
         ]);
         let env = Env::new(fragment.as_bytes());
-        let (_, _, p, _, t, v) = env.hir();
 
-        let int = || TypeDefinition::int();
+        let fib = env.item_id(5, 3);
         let (current, next, count) =
             (env.var_id(9, 7), env.var_id(23, 4), env.var_id(34, 5));
+
+        let (prototype, callable) = {
+            let hir = env.factory();
+            let (p, t) = (hir.proto(), hir.type_module());
+            let prototype =
+                p.fun(fib, t.int())
+                    .push(current, t.int())
+                    .push(next, t.int())
+                    .push(count, t.int())
+                    .range(0, 52)
+                    .build();
+            (prototype, env.insert_function(&prototype))
+        };
+
+        let (_, _, _, _, t, v) = env.hir();
+
         let current_ref = |pos| v.int_ref(current, pos).pattern(0).build();
         let next_ref = |pos| v.int_ref(next, pos).pattern(1).build();
         let count_ref = |pos| v.int_ref(count, pos).pattern(2).build();
-
-        let fib = env.item_id(5, 3);
-        let proto =
-            p.fun(fib, int())
-                .push(current, int())
-                .push(next, int())
-                .push(count, int())
-                .range(0, 52)
-                .build();
-        let callable = env.insert_function(&proto);
 
         let if_ =
             v.if_(
@@ -1600,6 +1554,7 @@ mod tests {
                 v.block(
                     v.call()
                         .callable(callable)
+                        .range(113, 36)
                         .type_(t.int())
                         .push(next_ref(117))
                         .push(
@@ -1625,7 +1580,7 @@ mod tests {
         let block = v.block(if_).range(53, 105).build_with_type();
 
         assert_eq!(
-            env.funit(proto, block).to_string(),
+            env.funit(prototype, block),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := load 0 ; 1@72",
@@ -1667,7 +1622,7 @@ mod tests {
         let block = v.block(loop_).push(var).build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 0 ; 1@12",
@@ -1741,7 +1696,7 @@ mod tests {
             .build_with_type();
 
         assert_eq!(
-            env.exprit(block).to_string(),
+            env.exprit(block),
             cat(&[
                 "0 ():",
                 "    $0 := load 8 ; 1@16",
@@ -1771,6 +1726,7 @@ mod tests {
     }
 
     struct Env {
+        module: RcModule,
         tree: RcTree,
         resolver: interning::Resolver
     }
@@ -1780,21 +1736,26 @@ mod tests {
             let interner = rc::Rc::new(mem::Interner::new());
             let resolver = interning::Resolver::new(fragment, interner);
             Env {
-                resolver,
+                module: Default::default(),
                 tree: Default::default(),
+                resolver,
             }
+        }
+
+        fn factory(&self) -> Factory {
+            Factory::new(self.module.clone(), self.tree.clone())
         }
 
         fn hir(&self) -> (
             ItemFactory,
             PatternFactory,
             PrototypeFactory,
-            StmtFactory,
-            TypeFactory,
-            ValueFactory,
+            StatementFactory,
+            TypeFactory<Tree>,
+            ExpressionFactory,
         )
         {
-            let f = Factory::new(self.tree.clone());
+            let f = self.factory();
             (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
         }
 
@@ -1808,56 +1769,53 @@ mod tests {
             ValueIdentifier(self.resolver.from_range(range), range)
         }
 
-        fn insert_function(&self, p: &FunctionProto) -> Callable {
-            let (arguments, types) = {
+        fn insert_function(&self, prototype: &FunctionPrototype) -> Callable {
+            let module = self.module.borrow();
+            let mut tree = self.tree.borrow_mut();
+
+            let arguments = {
                 let mut arguments = vec!();
                 let mut names = vec!();
-                let mut types = vec!();
 
-                for a in &p.arguments {
-                    let ty = self.tree.borrow_mut().push_type_definition(&a.type_);
-                    let ty = self.tree.borrow().get_type(ty);
+                let arg_names = module.get_names(prototype.arguments.names);
+                let arg_types = module.get_type_ids(prototype.arguments.fields);
 
-                    let pattern = Pattern::Var(a.name);
-                    let pattern = self.tree.borrow_mut().push_pattern(ty, pattern, a.range);
+                for (&name, &ty) in arg_names.iter().zip(arg_types) {
+                    let ty = if let Some(b) = ty.builtin() {
+                        Type::Builtin(b)
+                    } else {
+                        module.get_type(ty)
+                    };
+
+                    let pattern = Pattern::Var(name);
+                    let pattern = tree.push_pattern(ty, pattern, name.1);
 
                     arguments.push(pattern);
-                    types.push(self.tree.borrow().get_pattern_type_id(pattern));
-                    names.push(a.name);
+                    names.push(name);
                 }
 
-                self.tree.borrow_mut().push_patterns(&arguments);
-                self.tree.borrow_mut().push_names(&names);
+                let fields = tree.push_patterns(arguments.iter().cloned());
+                let names = tree.push_names(names.iter().cloned());
 
-                let patterns = self.tree.borrow_mut().push_patterns(&arguments);
-                let types = self.tree.borrow_mut().push_type_ids(&types);
-                let names = self.tree.borrow_mut().push_names(&names);
-
-                (
-                    Tuple { fields: patterns, names, },
-                    Tuple { fields: types, names, },
-                )
+                Tuple { fields, names, }
             };
 
-            let result = self.tree.borrow_mut().push_type_definition(&p.result);
+            let name = prototype.name;
+            let result = prototype.result;
 
-            self.tree.borrow_mut()
-                .set_root_function(p.name, arguments, result, Default::default());
+            tree.set_root_function(name, arguments, result, Default::default());
 
-            Callable::Function(p.name, types, result)
-        }
-
-        fn insert_record(&self, r: Record) -> Type {
-            self.tree.borrow_mut().insert_record(&r)
+            let fun = module.lookup_function(name).expect("Function to be registered");
+            Callable::Function(fun)
         }
 
         fn type_of(&self, e: ExpressionId) -> Type {
             self.tree.borrow().get_expression_type(e)
         }
 
-        fn funit(&self, prototype: FunctionProto, body: ExpressionId)
-            -> sir::ControlFlowGraph
-        {
+        fn funit(&self, prototype: FunctionPrototype, body: ExpressionId) -> String {
+            use std::ops::Deref;
+
             let mut tree = self.tree.borrow().clone();
             if let Some(Root::Function(name, args, res, _)) = tree.get_root() {
                 tree.set_root_function(name, args, res, body);
@@ -1865,25 +1823,39 @@ mod tests {
                 panic!("funit - Root not a function.");
             }
 
-            let fun = Function { prototype, body: tree, };
+            let fun = self.factory().item().fun(prototype, tree);
 
-            println!("funit - {:#?}", fun);
+            println!("funit - {:#?}", self.module.borrow().get_function(fun));
             println!("");
 
-            self.builder().from_function(&fun)
+            let guard = self.module.borrow();
+            let graph = super::GraphBuilder::new(guard.deref())
+                .from_function(guard.deref(), fun);
+
+            println!("funit - {:#?}", graph);
+            println!();
+
+            sir::display_graph(&graph, guard.deref())
         }
 
-        fn exprit(&self, expr: ExpressionId) -> sir::ControlFlowGraph {
+        fn exprit(&self, expr: ExpressionId) -> String {
+            use std::ops::Deref;
+
             let mut tree = self.tree.borrow().clone();
             tree.set_root_expression(expr);
 
             println!("exprit - {:#?}", tree);
             println!("");
 
-            self.builder().from_expression(&tree, expr)
-        }
+            let guard = self.module.borrow();
+            let graph = super::GraphBuilder::new(guard.deref())
+                .from_expression(&tree, expr);
 
-        fn builder(&self) -> super::GraphBuilder { super::GraphBuilder::new() }
+            println!("exprit - {:#?}", graph);
+            println!();
+
+            sir::display_graph(&graph, guard.deref())
+        }
     }
 
     fn cat(lines: &[&str]) -> String {
@@ -1895,7 +1867,7 @@ mod tests {
         result
     }
 
-    fn range(start: usize, length: usize) -> com::Range {
-        com::Range::new(start, length)
+    fn range(start: usize, length: usize) -> Range {
+        Range::new(start, length)
     }
 }

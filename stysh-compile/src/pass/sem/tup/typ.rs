@@ -1,9 +1,7 @@
 //! Type Unifier & Propagator.
 
-use std::cell;
-
 use model::hir::*;
-use super::{common, Relation};
+use super::{common, RegRef, Relation};
 
 /// Action.
 ///
@@ -66,11 +64,12 @@ impl<'a> TypeUnifier<'a> {
     fn is_determined(&self, ty: TypeId) -> bool {
         use self::Type::*;
 
-        match self.tree().get_type(ty) {
+        let registry = self.registry();
+
+        match registry.get_type(ty) {
             Builtin(_) | Enum(..) | Rec(..) => true,
             Tuple(tup) =>
-                self.tree()
-                    .get_type_ids(tup.fields)
+                registry.get_type_ids(tup.fields)
                     .iter()
                     .all(|id| self.is_determined(*id)),
             Unresolved(..) => false,
@@ -92,7 +91,7 @@ impl<'a> TypeUnifier<'a> {
     fn unify_with_identical(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match self.tree().get_type(other) {
+        match self.registry().get_type(other) {
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::Identical),
             Builtin(_) | Enum(..) | Rec(..) | Unresolved(..) =>
@@ -104,12 +103,12 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_sub_type_of(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match self.tree().get_type(other) {
+        match self.registry().get_type(other) {
             Builtin(_) =>
                 //  FIXME(matthieum): need to cater for Bool::True and Bool::False.
                 self.resolve(ty, other),
-            Enum(name, path, id) =>
-                self.unify_as_sub_type_of_enum(ty, name, path, id),
+            Enum(name, path) =>
+                self.unify_as_sub_type_of_enum(ty, name, path),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SubTypeOf),
             Rec(..) | Unresolved(..) =>
@@ -121,7 +120,7 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_super_type_of(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         use self::Type::*;
 
-        match self.tree().get_type(other) {
+        match self.registry().get_type(other) {
             Builtin(_) =>
                 //  FIXME(matthieum): need to cater for Bool::True and Bool::False.
                 self.resolve(ty, other),
@@ -136,21 +135,18 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_sub_type_of_enum(
         &self,
         ty: TypeId,
-        name: ItemIdentifier,
+        enum_: EnumId,
         path: PathId,
-        variants: Id<[TypeId]>
     )
         -> Option<Action>
     {
-        if let Type::Rec(rec, ..) = self.tree().get_type(ty) {
-            let matches = self.tree()
-                .get_type_ids(variants)
-                .iter()
-                .map(|&id| self.tree().get_type(id))
-                .any(|variant| variant.name() == rec);
+        let registry = self.registry();
 
-            if matches {
-                return Some(Action::Cast(Type::Enum(name, path, variants)));
+        if let Type::Rec(rec, ..) = registry.get_type(ty) {
+            let record = registry.get_record(rec);
+
+            if record.prototype.enum_ == Some(enum_) {
+                return Some(Action::Cast(Type::Enum(enum_, path)));
             }
         }
 
@@ -165,7 +161,7 @@ impl<'a> TypeUnifier<'a> {
     {
         use self::Type::*;
 
-        match self.tree().get_type(ty) {
+        match self.registry().get_type(ty) {
             Tuple(current) =>
                 self.unify_tuples(current, other, relate),
             Unresolved(name, ..) =>
@@ -186,10 +182,10 @@ impl<'a> TypeUnifier<'a> {
         where
             F: Fn(TypeId) -> Relation<TypeId>,
     {
-        let tree = self.tree();
+        let registry = self.registry();
 
-        let current_fields = tree.get_type_ids(current.fields);
-        let other_fields = tree.get_type_ids(other.fields);
+        let current_fields = registry.get_type_ids(current.fields);
+        let other_fields = registry.get_type_ids(other.fields);
 
         //  Cannot unify tuples of different lengths.
         if current_fields.len() != other_fields.len() {
@@ -205,8 +201,8 @@ impl<'a> TypeUnifier<'a> {
         let mut current_reordered = vec!();
 
         let current_fields = if !current.names.is_empty() {
-            let current_names = tree.get_names(current.names);
-            let other_names = tree.get_names(other.names);
+            let current_names = registry.get_names(current.names);
+            let other_names = registry.get_names(other.names);
 
             for other_name in other_names {
                 for (position, current_name) in current_names.iter().enumerate() {
@@ -238,7 +234,7 @@ impl<'a> TypeUnifier<'a> {
 
     /// Resolves a type.
     fn resolve(&self, ty: TypeId, other: TypeId) -> Option<Action> {
-        let other_type = self.tree().get_type(other);
+        let other_type = self.registry().get_type(other);
 
         if let Type::Unresolved(..) = other_type {
             return None;
@@ -247,7 +243,7 @@ impl<'a> TypeUnifier<'a> {
         //  Always returns Unified, even if the unification does not happen, as
         //  the only way for unification to fail is for a conflict to occur,
         //  and such conflicts indicate a source code error.
-        if let Type::Unresolved(name, ..) = self.tree().get_type(ty) {
+        if let Type::Unresolved(name, ..) = self.registry().get_type(ty) {
             self.resolve_unresolved(name, other_type)
         } else {
             None
@@ -265,17 +261,15 @@ impl<'a> TypeUnifier<'a> {
         }
     }
 
-    /// Returns a reference to the Tree.
-    fn tree<'b>(&'b self) -> cell::Ref<'b, Tree> {
-        self.core.tree()
-    }
+    /// Returns a reference to the unified Registry/Tree view.
+    fn registry<'b>(&'b self) -> RegRef<'b> { self.core.registry() }
 }
 
 #[cfg(test)]
 mod tests {
     use model::hir::*;
 
-    use super::{Action, Relation, TypeUnifier};
+    use super::{common, Action, Relation, TypeUnifier};
     use super::super::tests::{Env, LocalEnv};
 
     #[test]
@@ -335,14 +329,16 @@ mod tests {
     #[test]
     fn unresolved_identical_to_record() {
         let env = Env::default();
+        let hir = env.source_factory();
         let local = env.local(b":rec Hello;");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
-        let name = local.item_id(5, 5);
+        let rec = hir.item().unit(local.item_id(5, 5));
+
+        let t = hir.type_id();
 
         let ty = t.unresolved();
-        let rel = Relation::Identical(t.record(name).build());
-        let rec = Type::Rec(name, Id::empty(), Tuple::unit());
+        let rel = Relation::Identical(t.record(rec).build());
+        let rec = Type::Rec(rec, Id::empty());
 
         assert_eq!(
             unify(&local, ty, rel),
@@ -356,10 +352,9 @@ mod tests {
         let local = env.local(b"");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let i = Type::int();
 
         let ty = t.unresolved();
-        let rel = Relation::Identical(t.tuple().push(i).push(i).build());
+        let rel = Relation::Identical(t.tuple().push(t.int()).push(t.int()).build());
         let tup = local.source().borrow().get_type(*rel.get());
 
         assert_eq!(
@@ -374,9 +369,9 @@ mod tests {
         let local = env.local(b"");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (i, u) = (Type::int(), Type::unresolved());
+        let i = t.int();
 
-        let ty = t.tuple().push(u).push(u).build();
+        let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
         let rel = Relation::Identical(t.tuple().push(i).push(i).build());
 
         assert_eq!(unify(&local, ty, rel), Some(Action::Unified));
@@ -399,10 +394,13 @@ mod tests {
         let local = env.local(b"(.first: Int, .second: Int)");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (b, i, u) = (Type::bool_(), Type::int(), Type::unresolved());
+        let (b, i) = (t.bool_(), t.int());
         let (first, second) = (local.value_id(1, 6), local.value_id(14, 7));
 
-        let ty = t.tuple().push(u).name(first).push(u).name(second).build();
+        let ty = t.tuple()
+            .push(t.unresolved()).name(first)
+            .push(t.unresolved()).name(second)
+            .build();
         let rel = Relation::Identical(
             t.tuple().push(i).name(second).push(b).name(first).build()
         );
@@ -422,9 +420,9 @@ mod tests {
         let local = env.local(b"");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (i, u) = (Type::int(), Type::unresolved());
+        let i = t.int();
 
-        let ty = t.tuple().push(u).push(u).build();
+        let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
         let rel = Relation::SuperTypeOf(t.tuple().push(i).push(i).build());
 
         assert_eq!(unify(&local, ty, rel), Some(Action::Unified));
@@ -447,9 +445,9 @@ mod tests {
         let local = env.local(b"");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (i, u) = (Type::int(), Type::unresolved());
+        let i = t.int();
 
-        let ty = t.tuple().push(u).push(u).build();
+        let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
         let rel = Relation::Identical(t.tuple().push(i).push(i).push(i).build());
 
         assert_eq!(unify(&local, ty, rel), None);
@@ -461,10 +459,10 @@ mod tests {
         let local = env.local(b"(.first: Int, .second: Int)");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (i, u) = (Type::int(), Type::unresolved());
+        let i = t.int();
         let (first, second) = (local.value_id(1, 6), local.value_id(14, 7));
 
-        let ty = t.tuple().push(u).push(u).build();
+        let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
         let rel = Relation::Identical(
             t.tuple().push(i).name(first).push(i).name(second).build()
         );
@@ -478,11 +476,14 @@ mod tests {
         let local = env.local(b"(.first: Int, .second: Int, .third: Int)");
 
         let (_, _, _, _, _, t, _) = env.source_factories();
-        let (i, u) = (Type::int(), Type::unresolved());
+        let i = t.int();
         let (first, second, third) =
             (local.value_id(1, 6), local.value_id(14, 7), local.value_id(28, 6));
 
-        let ty = t.tuple().push(u).name(first).push(u).name(third).build();
+        let ty = t.tuple()
+            .push(t.unresolved()).name(first)
+            .push(t.unresolved()).name(third)
+            .build();
         let rel = Relation::Identical(
             t.tuple().push(i).name(first).push(i).name(second).build()
         );
@@ -494,18 +495,24 @@ mod tests {
         let typ = local.source().borrow().get_type(ty);
 
         let tup = match typ {
-            Type::Rec(_, _, tup) | Type::Tuple(tup) => tup,
+            Type::Rec(id, _) => local.module().borrow().get_record(id).definition,
+            Type::Tuple(tup) => tup,
             _ => panic!("No fields in {:?}", typ),
         };
 
-        local.source().borrow().get_type_ids(tup.fields).iter().cloned().collect()
+        if tup.fields.is_module() {
+            let module = local.module().borrow();
+            module.get_type_ids(tup.fields).iter().cloned().collect()
+        } else {
+            local.source().borrow().get_type_ids(tup.fields).iter().cloned().collect()
+        }
     }
 
-    fn relations(local: &LocalEnv, ty: TypeId) -> Vec<Relation<Type>> {
-        local.core().context
+    fn relations(local: &LocalEnv, ty: TypeId) -> Vec<Relation<TypeId>> {
+        local.context()
             .get_type_links(ty)
             .iter()
-            .map(|rel| rel.map(|ty| local.source().borrow().get_type(ty)))
+            .map(|rel| rel.map(|ty| ty))
             .collect()
     }
 
@@ -517,7 +524,13 @@ mod tests {
         println!("source before: {:?}", local.source());
         println!();
 
-        let action = TypeUnifier::new(local.core()).unify(ty);
+        let module = local.module().borrow();
+        let core = common::CoreUnifier::new(
+            local.context(),
+            &*module,
+            &*local.source()
+        );
+        let action = TypeUnifier::new(core).unify(ty);
 
         println!("source after: {:?}", local.source());
         println!();

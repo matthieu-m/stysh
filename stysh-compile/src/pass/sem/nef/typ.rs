@@ -37,7 +37,7 @@ impl<'a> TypeFetcher<'a> {
         use self::Type::*;
 
         //  Force borrow to end early.
-        let type_ = self.core.tree().get_type(ty);
+        let type_ = self.core.registry().get_type(ty);
 
         match type_ {
             Tuple(t) => self.fetch_tuple(t),
@@ -49,7 +49,7 @@ impl<'a> TypeFetcher<'a> {
     fn fetch_tuple(&self, t: Tuple<TypeId>) -> Status {
         //  Local copy of slice to avoid keeping a borrow on the tree.
         let tys: Vec<_> =
-            self.core.tree().get_type_ids(t.fields).iter().cloned().collect();
+            self.core.registry().get_type_ids(t.fields).iter().cloned().collect();
 
         let mut status = Status::Fetched;
 
@@ -70,44 +70,30 @@ impl<'a> TypeFetcher<'a> {
         }
 
         if let Some(e) = parent {
-            return self.fetch_enum_variant(ty, p, name, &e);
+            return self.fetch_enum_variant(ty, p, name, e);
         }
 
-        if let Some(e) = self.core.registry.lookup_enum(name) {
-            let mut tree = self.core.tree_mut();
+        let type_ = self.core.scope.lookup_type(name);
 
-            let e = tree.insert_enum(&e);
-            tree.set_type(ty, e);
-
-            return Status::Fetched;
+        match type_ {
+            Type::Enum(..) | Type::Rec(..) => {
+                self.core.tree_mut().set_type(ty, type_.with_path(p));
+                Status::Fetched
+            },
+            _ => Status::Unfetched,
         }
-
-        if let Some(r) = self.core.registry.lookup_record(name) {
-            let mut tree = self.core.tree_mut();
-
-            let r = tree.insert_record(&r);
-            tree.set_type(ty, r);
-
-            return Status::Fetched;
-        }
-
-        Status::Unfetched
     }
 
-    fn fetch_path(&self, path: PathId) -> (Option<Enum>, Status) {
-        let tree = self.core.tree();
+    fn fetch_path(&self, path: PathId) -> (Option<EnumId>, Status) {
+        let registry = self.core.registry();
 
-        let path = tree.get_path(path);
+        let path = registry.get_path_components(path);
         assert!(path.len() <= 1, "Deeply nested types not implemented.");
 
-        if let Some(first) = path.first() {
-            if let Some(e) = self.core.registry.lookup_enum(*first) {
-                (Some(e), Status::Fetched)
-            } else {
-                (None, Status::Unfetched)
-            }
-        } else {
-            (None, Status::Fetched)
+        match path.first() {
+            Some(PathComponent::Enum(e, _)) => (Some(*e), Status::Fetched),
+            Some(_) => (None, Status::Unfetched),
+            None => (None, Status::Fetched),
         }
     }
 
@@ -116,20 +102,26 @@ impl<'a> TypeFetcher<'a> {
         ty: TypeId,
         path: PathId,
         name: ItemIdentifier,
-        e: &Enum
+        e: EnumId,
     )
         -> Status
     {
-        self.core.tree_mut().insert_enum(e);
-
-        for r in &e.variants {
-            if name.id() == r.prototype.name.id() {
-                let r = self.core.tree_mut().insert_record(&r);
-                self.core.tree_mut().set_type(ty, r.with_path(path));
-                return Status::Fetched;
+        let mut record = None;
+        {
+            let registry = self.core.registry();
+            for r in registry.get_record_ids(registry.get_enum(e).variants) {
+                if name.id() == registry.get_record(*r).prototype.name.id() {
+                    record = Some(Type::Rec(*r, path));
+                    break;
+                }
             }
         }
 
-        Status::Unfetched
+        if let Some(r) = record {
+            self.core.tree_mut().set_type(ty, r);
+            Status::Fetched
+        } else {
+            Status::Unfetched
+        }
     }
 }

@@ -7,25 +7,6 @@ use basic::mem;
 use model::hir::*;
 
 //
-//  Public Types
-//
-
-/// A (simplified) Type.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Type {
-    /// A built-in type.
-    Builtin(BuiltinType),
-    /// An enum type, possibly nested.
-    Enum(ItemIdentifier, PathId, Id<[TypeId]>),
-    /// A record type, possibly nested.
-    Rec(ItemIdentifier, PathId, Tuple<TypeId>),
-    /// A tuple type.
-    Tuple(Tuple<TypeId>),
-    /// An unresolved type, possibly nested.
-    Unresolved(ItemIdentifier, PathId),
-}
-
-//
 //  Public Values
 //
 
@@ -79,7 +60,7 @@ pub enum Callable {
     /// A built-in function.
     Builtin(BuiltinFunction),
     /// A static user-defined function.
-    Function(ItemIdentifier, Tuple<TypeId>, TypeId),
+    Function(FunctionId),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),
     /// An unresolved callable binding.
@@ -91,9 +72,9 @@ pub enum Callable {
 
 /// An Expression.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Expr {
+pub enum Expression {
     /// A block expression.
-    Block(Id<[Stmt]>, Option<ExpressionId>),
+    Block(Id<[Statement]>, Option<ExpressionId>),
     /// A built-in value.
     BuiltinVal(BuiltinValue),
     /// A function call.
@@ -107,7 +88,7 @@ pub enum Expr {
     /// An implicit cast (variant to enum, anonymous to named, ...).
     Implicit(Implicit),
     /// A loop.
-    Loop(Id<[Stmt]>),
+    Loop(Id<[Statement]>),
     /// A reference to an existing binding.
     Ref(ValueIdentifier, Gvn),
     /// A tuple.
@@ -120,7 +101,7 @@ pub enum Expr {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Implicit {
     /// An enumerator to enum cast.
-    ToEnum(ItemIdentifier, ExpressionId),
+    ToEnum(EnumId, ExpressionId),
 }
 
 //
@@ -147,6 +128,17 @@ impl BuiltinFunction {
             LessThan | LessThanOrEqual | Not | Or | Xor => Type::bool_(),
         }
     }
+
+    /// Returns the type of the result of the function.
+    pub fn result_type_id(&self) -> TypeId {
+        use self::BuiltinFunction::*;
+
+        match *self {
+            Add | FloorDivide | Multiply | Substract => TypeId::int(),
+            And | Differ | Equal | GreaterThan | GreaterThanOrEqual |
+            LessThan | LessThanOrEqual | Not | Or | Xor => TypeId::bool_(),
+        }
+    }
 }
 
 impl BuiltinValue {
@@ -160,62 +152,30 @@ impl BuiltinValue {
             String(_) => Type::string(),
         }
     }
-}
 
-impl Expr {
-    /// Returns a builtin Bool expr.
-    pub fn bool_(b: bool) -> Self { Expr::BuiltinVal(BuiltinValue::Bool(b)) }
-
-    /// Returns a builtin Int expr.
-    pub fn int(i: i64) -> Self { Expr::BuiltinVal(BuiltinValue::Int(i)) }
-
-    /// Returns a Unit expr.
-    pub fn unit() -> Self { Expr::Tuple(Tuple::unit()) }
-}
-
-impl Type {
-    /// Returns a Bool type.
-    pub fn bool_() -> Self { Type::Builtin(BuiltinType::Bool) }
-
-    /// Returns an Int type.
-    pub fn int() -> Self { Type::Builtin(BuiltinType::Int) }
-
-    /// Returns a String type.
-    pub fn string() -> Self { Type::Builtin(BuiltinType::String) }
-
-    /// Returns a Void type.
-    pub fn void() -> Self { Type::Builtin(BuiltinType::Void) }
-
-    /// Returns a Unit type.
-    pub fn unit() -> Self { Type::Tuple(Tuple::unit()) }
-
-    /// Returns an unresolved type.
-    pub fn unresolved() -> Self {
-        Type::Unresolved(ItemIdentifier::unresolved(), PathId::empty())
-    }
-
-    /// Replaces the Path.
-    pub fn with_path(self, path: PathId) -> Self {
-        use self::Type::*;
-
-        match self {
-            Enum(name, _, vars) => Enum(name, path, vars),
-            Rec(name, _, definition) => Rec(name, path, definition),
-            Unresolved(name, _) => Unresolved(name, path),
-            _ => panic!("{:?} has no path!", self),
-        }
-    }
-
-    /// Returns the name, if any.
-    pub fn name(&self) -> ItemIdentifier {
-        use self::Type::*;
+    /// Returns the type of the built-in value.
+    pub fn result_type_id(&self) -> TypeId {
+        use self::BuiltinValue::*;
 
         match *self {
-            Enum(name, ..) | Rec(name, ..) | Unresolved(name, ..) => name,
-            _ => panic!("{:?} has no name!", self),
+            Bool(_) => TypeId::bool_(),
+            Int(_) => TypeId::int(),
+            String(_) => TypeId::string(),
         }
     }
 }
+
+impl Expression {
+    /// Returns a builtin Bool expr.
+    pub fn bool_(b: bool) -> Self { Expression::BuiltinVal(BuiltinValue::Bool(b)) }
+
+    /// Returns a builtin Int expr.
+    pub fn int(i: i64) -> Self { Expression::BuiltinVal(BuiltinValue::Int(i)) }
+
+    /// Returns a Unit expr.
+    pub fn unit() -> Self { Expression::Tuple(Tuple::unit()) }
+}
+
 
 //
 //  Default Implementations
@@ -225,9 +185,10 @@ impl Default for Callable {
     fn default() -> Callable { Callable::Unknown(Default::default()) }
 }
 
-impl Default for Expr {
-    fn default() -> Expr { Expr::UnresolvedRef(Default::default()) }
+impl Default for Expression {
+    fn default() -> Expression { Expression::UnresolvedRef(Default::default()) }
 }
+
 
 //
 //  From Implementations
@@ -250,6 +211,11 @@ impl convert::From<BuiltinValue> for i64 {
         }
     }
 }
+
+impl convert::From<Tuple<ExpressionId>> for Expression {
+    fn from(t: Tuple<ExpressionId>) -> Expression { Expression::Tuple(t) }
+}
+
 
 //
 //  Implementation Details

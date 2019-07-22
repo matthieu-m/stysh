@@ -244,6 +244,19 @@ impl<K: TableIndex, V> Table<K, V> {
     pub fn iter_mut<'a>(&'a mut self) -> TableIterMut<'a, K, V> {
         iter::IntoIterator::into_iter(self)
     }
+
+    /// Inserts a new value.
+    ///
+    /// Returns the key created for it.
+    ///
+    /// # Complexity
+    ///
+    /// Amortized O(1)
+    pub fn extend(&mut self, value: V) -> K {
+        let index = self.values.len();
+        self.values.push(value);
+        K::from_index(index)
+    }
 }
 
 impl<K: fmt::Debug + TableIndex, V> Table<K, V> {
@@ -428,6 +441,30 @@ impl<K: TableIndex, V> MultiTable<K, V> {
     /// O(1)
     pub fn iter_mut<'a>(&'a mut self) -> MultiTableIterMut<'a, K, V> {
         iter::IntoIterator::into_iter(self)
+    }
+
+    /// Extends the table with a new key and its values.
+    ///
+    /// Returns the generated key, if any element was inserted.
+    ///
+    /// # Complexity
+    ///
+    /// Amortized O(1)
+    pub fn extend<I>(&mut self, into_iterator: I) -> Option<K>
+        where
+            I: IntoIterator<Item = V>,
+    {
+        let start = self.values.len() as u32;
+        self.values.extend(into_iterator);
+        let end = self.values.len() as u32;
+
+        if start == end { 
+            None
+        } else {
+            let index = self.index.len();
+            self.index.push(Range { start, end, });
+            Some(K::from_index(index))
+        }
     }
 }
 

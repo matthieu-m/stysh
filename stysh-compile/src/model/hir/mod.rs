@@ -18,15 +18,21 @@ pub mod builder;
 pub mod interning;
 
 mod common;
+mod expression;
 mod item;
+mod module;
 mod pattern;
-mod stmt;
-mod value;
+mod registry;
+mod repository;
+mod statement;
 mod tree;
 
 pub use self::common::*;
+pub use self::expression::*;
 pub use self::item::*;
+pub use self::module::*;
 pub use self::pattern::*;
-pub use self::stmt::*;
-pub use self::value::*;
+pub use self::registry::*;
+pub use self::repository::*;
+pub use self::statement::*;
 pub use self::tree::*;

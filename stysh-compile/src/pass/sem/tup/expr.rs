@@ -53,7 +53,7 @@ impl<'a> ExprUnifier<'a> {
 
     /// Determine from expression.
     fn determine_from_expression(&self, e: ExpressionId) -> Option<Action> {
-        use self::Expr::*;
+        use self::Expression::*;
 
         let expr = self.core.tree().get_expression(e);
 
@@ -75,8 +75,11 @@ impl<'a> ExprUnifier<'a> {
         match fun {
             Builtin(fun) =>
                 Some(Action::Update(fun.result_type())),
-            Function(_, _, id) =>
-                Some(Action::Update(self.core.tree().get_type(id))),
+            Function(id) => {
+                let registry = self.core.registry();
+                let function = registry.get_function_prototype(id);
+                Some(Action::Update(registry.get_type(function.result)))
+            },
             Unknown(_) | Unresolved(_) =>
                 None,
         }
@@ -103,7 +106,7 @@ impl<'a> ExprUnifier<'a> {
 mod tests {
     use model::hir::*;
 
-    use super::{ExprUnifier, Status};
+    use super::{common, ExprUnifier, Status};
     use super::super::Relation;
     use super::super::tests::{Env, LocalEnv};
 
@@ -138,7 +141,13 @@ mod tests {
         println!("source before: {:?}", local.source());
         println!();
 
-        let status = ExprUnifier::new(local.core()).unify(e);
+        let module = local.module().borrow();
+        let core = common::CoreUnifier::new(
+            local.context(),
+            &*module,
+            &*local.source()
+        );
+        let status = ExprUnifier::new(core).unify(e);
 
         println!("source after: {:?}", local.source());
         println!();

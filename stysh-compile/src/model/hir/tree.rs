@@ -18,12 +18,10 @@
 //! Note:   this layout is inspired by the realization that ECS are a great fit
 //!         for Rust.
 
-use std::collections::HashMap;
-
-use basic::com::Range;
+use basic::com::{Range, Store, MultiStore};
 use basic::sea::{MultiTable, Table};
 
-use model::hir::{self, *};
+use model::hir::*;
 
 //
 //  Public Types
@@ -44,13 +42,6 @@ pub struct Tree {
 
     root: Option<Root>,
 
-    //  Types.
-
-    /// Enum name to list of records.
-    enums: HashMap<Range, Id<[TypeId]>>,
-    /// Record name to list of fields.
-    records: HashMap<Range, Tuple<TypeId>>,
-
     //  Expressions.
 
     /// Range associated to a given expression.
@@ -58,7 +49,7 @@ pub struct Tree {
     /// TypeId associated to a given expression.
     expr_type: Table<ExpressionId, TypeId>,
     /// Expression.
-    expression: Table<ExpressionId, Expr>,
+    expression: Table<ExpressionId, Expression>,
 
     //  Patterns.
 
@@ -82,11 +73,11 @@ pub struct Tree {
     /// Names of constructors, records and tuples.
     names: KeyedMulti<ValueIdentifier>,
     /// Path components.
-    paths: KeyedMulti<ItemIdentifier>,
+    paths: KeyedMulti<PathComponent>,
     /// Patterns of constructors and tuples.
     patterns: KeyedMulti<PatternId>,
     /// Statements of blocks and loops.
-    stmts: KeyedMulti<Stmt>,
+    stmts: KeyedMulti<Statement>,
     /// Types of enums and tuples.
     types: KeyedMulti<TypeId>,
 }
@@ -157,68 +148,6 @@ impl Tree {
     }
 
 
-    //  Types.
-
-    /// Returns the enum's lightweight definition, or None.
-    ///
-    /// The result is None if and only if the enum is unknown.
-    ///
-    /// The slice of variants referred to may be empty even if the enum is
-    /// known, such as for `:enum Never {}`.
-    pub fn get_enum(&self, name: ItemIdentifier) -> Option<Type> {
-        self.enums.get(&name.1)
-            .map(|records| Type::Enum(name, PathId::empty(), *records))
-    }
-
-    /// Inserts the definition of an enum.
-    ///
-    /// If the enum already exists, the definition is NOT updated.
-    pub fn insert_enum(&mut self, def: &Enum) -> Type {
-        let name = def.prototype.name;
-        let path = PathId::empty();
-
-        if let Some(records) = self.enums.get(&name.1) {
-            return Type::Enum(name, path, *records);
-        }
-
-        let mut records = vec!();
-        for v in &def.variants {
-            let ty = self.insert_record(&v);
-            let ty = self.push_type(ty);
-            records.push(ty);
-        }
-        let records = self.push_type_ids(&records);
-        self.enums.insert(name.1, records);
-
-        Type::Enum(name, path, records)
-    }
-
-    /// Returns the record's lightweight definition, or None.
-    ///
-    /// The result is None if and only if the record is unknown.
-    pub fn get_record(&self, name: ItemIdentifier) -> Option<Type> {
-        self.records.get(&name.1)
-            .map(|tuple| Type::Rec(name, PathId::empty(), *tuple))
-    }
-
-    /// Inserts the definition of a record.
-    ///
-    /// If the record already exists, the definition is NOT updated.
-    pub fn insert_record(&mut self, def: &Record) -> Type {
-        let name = def.prototype.name;
-        let path = PathId::empty();
-
-        if let Some(fields) = self.records.get(&name.1) {
-            return Type::Rec(name, path, *fields);
-        }
-
-        let fields = self.insert_types_tuple(&def.definition);
-        self.records.insert(name.1, fields);
-
-        Type::Rec(name, path, fields)
-    }
-
-
     //  Gvns.
 
     /// Returns the type associated to a GVN.
@@ -272,21 +201,22 @@ impl Tree {
     }
 
     /// Returns the expression.
-    pub fn get_expression(&self, id: ExpressionId) -> Expr {
+    pub fn get_expression(&self, id: ExpressionId) -> Expression {
         *self.expression.at(&id)
     }
 
     /// Inserts a new expression.
     ///
     /// Returns the ExpressionId created for it.
-    pub fn push_expression(&mut self, typ: Type, expr: Expr, range: Range)
+    pub fn push_expression(&mut self, typ: Type, expr: Expression, range: Range)
         -> ExpressionId
     {
-        let id = ExpressionId::new(self.expression.len() as u32);
+        debug_assert!(self.expression.len() == self.expr_range.len());
+        debug_assert!(self.expression.len() == self.expr_type.len());
 
         let ty = self.push_type(typ);
 
-        self.expr_range.push(&id, range);
+        let id = self.expr_range.extend(range);
         self.expr_type.push(&id, ty);
         self.expression.push(&id, expr);
 
@@ -294,7 +224,7 @@ impl Tree {
     }
 
     /// Sets the expression.
-    pub fn set_expression(&mut self, id: ExpressionId, e: Expr) {
+    pub fn set_expression(&mut self, id: ExpressionId, e: Expression) {
         *self.expression.at_mut(&id) = e;
     }
 
@@ -338,11 +268,12 @@ impl Tree {
     pub fn push_pattern(&mut self, typ: Type, pattern: Pattern, range: Range)
         -> PatternId
     {
-        let id = PatternId::new(self.pattern.len() as u32);
+        debug_assert!(self.pattern.len() == self.pat_range.len());
+        debug_assert!(self.pattern.len() == self.pat_type.len());
 
         let ty = self.push_type(typ);
 
-        self.pat_range.push(&id, range);
+        let id = self.pat_range.extend(range);
         self.pat_type.push(&id, ty);
         self.pattern.push(&id, pattern);
 
@@ -364,6 +295,9 @@ impl Tree {
 
     //  Satellites.
 
+    /// Returns the number of types.
+    pub fn len_types(&self) -> usize { self.tys.len() }
+
     /// Returns the type associated to the id.
     pub fn get_type(&self, id: TypeId) -> Type {
         if let Some(b) = id.builtin() {
@@ -374,6 +308,11 @@ impl Tree {
     }
 
     /// Sets the type associated to the id.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if attempting to associate a non built-in Type to a
+    /// built-in TypeId.
     pub fn set_type(&mut self, id: TypeId, ty: Type) -> TypeId {
         if let Some(_) = id.builtin() {
             if let Type::Builtin(b) = ty {
@@ -396,51 +335,7 @@ impl Tree {
     ///
     /// Returns the id created for it.
     pub fn push_type(&mut self, typ: Type) -> TypeId {
-        let ty = TypeId::new(self.tys.len() as u32);
-        self.tys.push(&ty, typ);
-
-        if let Type::Builtin(b) = typ {
-            TypeId::from(b)
-        } else {
-            ty
-        }
-    }
-
-    /// Inserts a new type.
-    ///
-    /// Returns the id created for it.
-    pub fn push_type_definition(&mut self, typ: &TypeDefinition) -> TypeId {
-        use self::TypeDefinition::*;
-
-        //  FIXME(matthieum): handle paths.
-        match typ {
-            Builtin(builtin) => self.push_type(Type::Builtin(*builtin)),
-            Enum(e, _) => {
-                let e = self.insert_enum(e);
-                self.push_type(e)
-            },
-            Rec(rec, _) => {
-                let rec = self.insert_record(rec);
-                self.push_type(rec)
-            },
-            Tuple(tup) => {
-                let fields = tup.fields.apply(|fs| {
-                    let mut fields = vec!();
-                    for f in fs {
-                        fields.push(self.push_type_definition(f));
-                    }
-                    self.push_type_ids(&fields)
-                });
-                let names = tup.names.apply(|names| self.push_names(names));
-                self.push_type(Type::Tuple(hir::Tuple { fields, names, }))
-            },
-            Unresolved(name, _) =>
-                self.push_type(Type::Unresolved(*name, Default::default())),
-            UnresolvedEnum(proto, _) =>
-                self.push_type(Type::Unresolved(proto.name, Default::default())),
-            UnresolvedRec(proto, _) =>
-                self.push_type(Type::Unresolved(proto.name, Default::default())),
-        }
+        Self::push_type_impl(&mut self.tys, typ)
     }
 
 
@@ -452,8 +347,11 @@ impl Tree {
     /// Inserts a new array of callables.
     ///
     /// Returns the id created for it.
-    pub fn push_callables(&mut self, callables: &[Callable]) -> Id<[Callable]> {
-        Self::push_slice(&mut self.callables, callables)
+    pub fn push_callables<I>(&mut self, callables: I) -> Id<[Callable]>
+        where
+            I: IntoIterator<Item = Callable>,
+    {
+        self.callables.extend(callables).unwrap_or(Id::empty())
     }
 
 
@@ -465,10 +363,16 @@ impl Tree {
     /// Inserts a new array of expressions.
     ///
     /// Returns the id created for it.
-    pub fn push_expressions(&mut self, expressions: &[ExpressionId]) -> Id<[ExpressionId]> {
-        Self::push_slice(&mut self.expressions, expressions)
+    pub fn push_expressions<I>(&mut self, expressions: I) -> Id<[ExpressionId]>
+        where
+            I: IntoIterator<Item = ExpressionId>,
+    {
+        self.expressions.extend(expressions).unwrap_or(Id::empty())
     }
 
+
+    /// Returns the number of names.
+    pub fn len_names(&self) -> usize { self.names.len() }
 
     /// Returns the names associated to the id.
     pub fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
@@ -478,23 +382,30 @@ impl Tree {
     /// Inserts a new array of names.
     ///
     /// Returns the id created for it.
-    pub fn push_names(&mut self, names: &[ValueIdentifier])
-        -> Id<[ValueIdentifier]>
+    pub fn push_names<I>(&mut self, names: I) -> Id<[ValueIdentifier]>
+        where
+            I: IntoIterator<Item = ValueIdentifier>,
     {
-        Self::push_slice(&mut self.names, names)
+        self.names.extend(names).unwrap_or(Id::empty())
     }
 
 
+    /// Returns the number of paths.
+    pub fn len_paths(&self) -> usize { self.paths.len() }
+
     /// Returns the path associated to the id.
-    pub fn get_path(&self, id: Id<[ItemIdentifier]>) -> &[ItemIdentifier] {
+    pub fn get_path(&self, id: Id<[PathComponent]>) -> &[PathComponent] {
         self.paths.get(&id)
     }
 
     /// Inserts a new array of path components.
     ///
     /// Returns the id created for it.
-    pub fn push_path(&mut self, path: &[ItemIdentifier]) -> Id<[ItemIdentifier]> {
-        Self::push_slice(&mut self.paths, path)
+    pub fn push_path<I>(&mut self, path: I) -> Id<[PathComponent]>
+        where
+            I: IntoIterator<Item = PathComponent>,
+    {
+        self.paths.extend(path).unwrap_or(Id::empty())
     }
 
 
@@ -506,23 +417,32 @@ impl Tree {
     /// Inserts a new array of patterns.
     ///
     /// Returns the id created for it.
-    pub fn push_patterns(&mut self, patterns: &[PatternId]) -> Id<[PatternId]> {
-        Self::push_slice(&mut self.patterns, patterns)
+    pub fn push_patterns<I>(&mut self, patterns: I) -> Id<[PatternId]>
+        where
+            I: IntoIterator<Item = PatternId>,
+    {
+        self.patterns.extend(patterns).unwrap_or(Id::empty())
     }
 
 
     /// Returns the statements associated to the id.
-    pub fn get_statements(&self, id: Id<[Stmt]>) -> &[Stmt] {
+    pub fn get_statements(&self, id: Id<[Statement]>) -> &[Statement] {
         self.stmts.get(&id)
     }
 
     /// Inserts a new array of statements.
     ///
     /// Returns the id created for it.
-    pub fn push_statements(&mut self, stmts: &[Stmt]) -> Id<[Stmt]> {
-        Self::push_slice(&mut self.stmts, stmts)
+    pub fn push_statements<I>(&mut self, stmts: I) -> Id<[Statement]>
+        where
+            I: IntoIterator<Item = Statement>,
+    {
+        self.stmts.extend(stmts).unwrap_or(Id::empty())
     }
 
+
+    /// Returns the number of type ids.
+    pub fn len_type_ids(&self) -> usize { self.types.len() }
 
     /// Returns the type ids associated to the id.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
@@ -532,18 +452,194 @@ impl Tree {
     /// Inserts a new array of type ids.
     ///
     /// Returns the id created for it.
-    pub fn push_type_ids(&mut self, types: &[TypeId]) -> Id<[TypeId]> {
-        Self::push_slice(&mut self.types, types)
+    pub fn push_type_ids<I>(&mut self, types: I) -> Id<[TypeId]>
+        where
+            I: IntoIterator<Item = TypeId>,
+    {
+        self.types.extend(types).unwrap_or(Id::empty())
     }
 
     /// Inserts a new array of types.
     ///
     /// Returns the id created for it.
-    pub fn push_types(&mut self, types: &[Type]) -> Id<[TypeId]> {
-        let types: Vec<_> = types.iter().map(|t| self.push_type(*t)).collect();
-        Self::push_slice(&mut self.types, &types)
+    pub fn push_types<I>(&mut self, types: I) -> Id<[TypeId]>
+        where
+            I: IntoIterator<Item = Type>,
+    {
+        let tys = &mut self.tys;
+        self.types
+            .extend(
+                types.into_iter()
+                    .map(|t| Self::push_type_impl(tys, t))
+            )
+            .unwrap_or(Id::empty())
     }
 }
+
+impl Tree {
+    fn push_type_impl(table: &mut Table<TypeId, Type>, typ: Type) -> TypeId {
+        let id = table.extend(typ);
+
+        if let Type::Builtin(b) = typ {
+            TypeId::from(b)
+        } else {
+            id
+        }
+    }
+}
+
+
+//
+//  Implementations of TypedStore for Tree
+//
+
+/// Abstraction over Expression and Pattern
+pub trait TypedStore<I> {
+    /// Type corresponding to the Id.
+    type Element;
+
+    /// Number of items.
+    fn len(&self) -> usize;
+
+    /// Returns the range associated to the element.
+    fn get_range(&self, id: I) -> Range;
+
+    /// Returns the Type Id associated to the element.
+    fn get_type(&self, id: I) -> TypeId;
+
+    /// Returns the element.
+    fn get(&self, id: I) -> Self::Element;
+
+    /// Pushes a new element.
+    fn push(&mut self, typ: Type, element: Self::Element, range: Range) -> I;
+}
+
+impl TypedStore<ExpressionId> for Tree {
+    type Element = Expression;
+
+    fn len(&self) -> usize { self.len_expressions() }
+
+    fn get_range(&self, id: ExpressionId) -> Range { self.get_expression_range(id) }
+
+    fn get_type(&self, id: ExpressionId) -> TypeId { self.get_expression_type_id(id) }
+
+    fn get(&self, id: ExpressionId) -> Expression { self.get_expression(id) }
+
+    fn push(&mut self, typ: Type, element: Expression, range: Range) -> ExpressionId {
+        self.push_expression(typ, element, range)
+    }
+}
+
+impl TypedStore<PatternId> for Tree {
+    type Element = Pattern;
+
+    fn len(&self) -> usize { self.len_patterns() }
+
+    fn get_range(&self, id: PatternId) -> Range { self.get_pattern_range(id) }
+
+    fn get_type(&self, id: PatternId) -> TypeId { self.get_pattern_type_id(id) }
+
+    fn get(&self, id: PatternId) -> Pattern { self.get_pattern(id) }
+
+    fn push(&mut self, typ: Type, element: Pattern, range: Range) -> PatternId {
+        self.push_pattern(typ, element, range)
+    }
+}
+
+
+//
+//  Implementations of Store for Tree
+//
+
+impl Store<Type, TypeId> for Tree {
+    fn len(&self) -> usize { self.len_types() }
+
+    fn get(&self, id: TypeId) -> Type { self.get_type(id) }
+
+    fn get_range(&self, _: TypeId) -> Range {
+        unimplemented!("<Tree as Store<Type>>::get_range")
+    }
+
+    fn push(&mut self, item: Type, _: Range) -> TypeId {
+        self.push_type(item)
+    }
+}
+
+
+//
+//  Implementations of MultiStore for Tree
+//
+
+impl MultiStore<Callable> for Tree {
+    fn get_slice(&self, id: Id<[Callable]>) -> &[Callable] {
+        self.get_callables(id)
+    }
+
+    fn push_slice(&mut self, items: &[Callable]) -> Id<[Callable]> {
+        self.push_callables(items.iter().cloned())
+    }
+}
+
+impl MultiStore<ExpressionId> for Tree {
+    fn get_slice(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
+        self.get_expressions(id)
+    }
+
+    fn push_slice(&mut self, items: &[ExpressionId]) -> Id<[ExpressionId]> {
+        self.push_expressions(items.iter().cloned())
+    }
+}
+
+impl MultiStore<ValueIdentifier> for Tree {
+    fn get_slice(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+        self.get_names(id)
+    }
+
+    fn push_slice(&mut self, items: &[ValueIdentifier]) -> Id<[ValueIdentifier]> {
+        self.push_names(items.iter().cloned())
+    }
+}
+
+impl MultiStore<PathComponent> for Tree {
+    fn get_slice(&self, id: Id<[PathComponent]>) -> &[PathComponent] {
+        self.get_path(id)
+    }
+
+    fn push_slice(&mut self, items: &[PathComponent]) -> Id<[PathComponent]> {
+        self.push_path(items.iter().cloned())
+    }
+}
+
+impl MultiStore<PatternId> for Tree {
+    fn get_slice(&self, id: Id<[PatternId]>) -> &[PatternId] {
+        self.get_patterns(id)
+    }
+
+    fn push_slice(&mut self, items: &[PatternId]) -> Id<[PatternId]> {
+        self.push_patterns(items.iter().cloned())
+    }
+}
+
+impl MultiStore<Statement> for Tree {
+    fn get_slice(&self, id: Id<[Statement]>) -> &[Statement] {
+        self.get_statements(id)
+    }
+
+    fn push_slice(&mut self, items: &[Statement]) -> Id<[Statement]> {
+        self.push_statements(items.iter().cloned())
+    }
+}
+
+impl MultiStore<TypeId> for Tree {
+    fn get_slice(&self, id: Id<[TypeId]>) -> &[TypeId] {
+        self.get_type_ids(id)
+    }
+
+    fn push_slice(&mut self, items: &[TypeId]) -> Id<[TypeId]> {
+        self.push_type_ids(items.iter().cloned())
+    }
+}
+
 
 //
 //  Private Types
@@ -551,59 +647,6 @@ impl Tree {
 
 type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
 
-
-//
-//  Private methods
-//
-
-impl Tree {
-    /// Inserts a TypeDefinition.
-    fn insert_type(&mut self, typ: &TypeDefinition) -> Type {
-        use self::TypeDefinition::*;
-
-        match typ {
-            Builtin(t) => Type::Builtin(*t),
-            Enum(e, _) => self.insert_enum(e),
-            Rec(r, _) => self.insert_record(r),
-            Tuple(t) => Type::Tuple(self.insert_types_tuple(t)),
-            Unresolved(..) | UnresolvedEnum(..) | UnresolvedRec(..)
-                => panic!("Cannot insert Unresolved types!"),
-        }
-    }
-
-    /// Inserts a DynTyple<TypeDefinition>.
-    fn insert_types_tuple(&mut self, tuple: &DynTuple<TypeDefinition>)
-        -> Tuple<TypeId>
-    {
-        let mut fields = vec!();
-        for f in &tuple.fields {
-            let ty = self.insert_type(&f);
-            let ty = self.push_type(ty);
-            fields.push(ty);
-        }
-        let fields = self.push_type_ids(&fields);
-
-        let names = tuple.names.apply(|names| self.push_names(names));
-
-        Tuple { fields, names }
-    }
-
-    /// Generic Push.
-    fn push_slice<T: Clone + ?Sized>(
-        table: &mut KeyedMulti<T>,
-        value: &[T]
-    )
-        -> Id<[T]>
-    {
-        if value.is_empty() {
-            return Id::empty();
-        }
-
-        let id = Id::new(table.len() as u32);
-        table.push(&id, value);
-        id
-    }
-}
 
 //
 //  Private Trait Implementations
@@ -620,7 +663,7 @@ pub mod samples {
         let mut tree = Tree::default();
 
         let range = range(0, if b { 4 } else { 5 });
-        let bool_ = tree.push_expression(Type::bool_(), Expr::bool_(b), range);
+        let bool_ = tree.push_expression(Type::bool_(), Expression::bool_(b), range);
 
         tree.set_root(Root::Expression(bool_));
 
@@ -633,14 +676,14 @@ pub mod samples {
     pub fn add_expression() -> Tree {
         let mut tree = Tree::default();
 
-        let one = tree.push_expression(Type::int(), Expr::int(1), range(0, 1));
-        let two = tree.push_expression(Type::int(), Expr::int(2), range(4, 1));
+        let one = tree.push_expression(Type::int(), Expression::int(1), range(0, 1));
+        let two = tree.push_expression(Type::int(), Expression::int(2), range(4, 1));
 
-        let args = tree.push_expressions(&[one, two]);
+        let args = tree.push_expressions([one, two].iter().cloned());
         let args = Tuple::unnamed(args);
 
         let op = Callable::Builtin(BuiltinFunction::Add);
-        let add = tree.push_expression(Type::int(), Expr::Call(op, args), range(0, 5));
+        let add = tree.push_expression(Type::int(), Expression::Call(op, args), range(0, 5));
 
         tree.set_root(Root::Expression(add));
 
@@ -664,15 +707,15 @@ pub mod tests {
 
         assert_eq!(
             tree.get_expression(one),
-            Expr::int(1)
+            Expression::int(1)
         );
         assert_eq!(
             tree.get_expression(two),
-            Expr::int(2)
+            Expression::int(2)
         );
         assert_eq!(
             tree.get_expression(ExpressionId::new(2)),
-            Expr::Call(
+            Expression::Call(
                 Callable::Builtin(BuiltinFunction::Add),
                 Tuple::unnamed(Id::new(0)),
             )

@@ -239,6 +239,15 @@ impl<T> JaggedArraySnapshot<T> {
     /// Returns the length of the array.
     pub fn len(&self) -> usize { self.length }
 
+    /// Returns the element at index `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the element doesn't exist.
+    pub fn at(&self, i: usize) -> &T {
+        self.get(i).expect("JaggedArraySnapshot::at - known index")
+    }
+
     /// Returns the element at index `i` if `i < self.len()` or None.
     pub fn get(&self, i: usize) -> Option<&T> {
         self.inner().get(i, self.length)
@@ -784,6 +793,15 @@ impl<T> Clone for JaggedArraySnapshot<T> {
     }
 }
 
+impl<T> Default for JaggedArraySnapshot<T> {
+    fn default() -> Self {
+        JaggedArraySnapshot {
+            length: 0,
+            core: Default::default(),
+        }
+    }
+}
+
 impl<T: fmt::Debug> fmt::Debug for JaggedArraySnapshot<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.is_empty() {
@@ -866,6 +884,16 @@ impl<'a, T: 'a> Default for SlabMut<'a, T> {
         //  Safety:
         //  -   The pointer is not derefenced if a length and a capacity of 0 are used.
         unsafe { SlabMut::new(ptr::null_mut(), 0, 0) }
+    }
+}
+
+impl<T> Default for Core<T> {
+    fn default() -> Self {
+        Core { 
+            slabs: [std::ptr::null_mut(); NB_SLABS],
+            log2_initial: 0,
+            _marker: marker::PhantomData,
+        }
     }
 }
 

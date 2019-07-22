@@ -56,7 +56,7 @@ impl<'a> PatternUnifier<'a> {
 mod tests {
     use model::hir::*;
 
-    use super::{PatternUnifier, Status};
+    use super::{common, PatternUnifier, Status};
     use super::super::Relation;
     use super::super::tests::{Env, LocalEnv};
 
@@ -90,7 +90,13 @@ mod tests {
         println!("source before: {:?}", local.source());
         println!();
 
-        let status = PatternUnifier::new(local.core()).unify(p);
+        let module = local.module().borrow();
+        let core = common::CoreUnifier::new(
+            local.context(),
+            &*module,
+            &*local.source()
+        );
+        let status = PatternUnifier::new(core).unify(p);
 
         println!("source after: {:?}", local.source());
         println!();

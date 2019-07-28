@@ -33,9 +33,6 @@ impl Factory {
     /// Creates a PatternFactory.
     pub fn pat(&self) -> PatternFactory { PatternFactory::new(self.1.clone()) }
 
-    /// Creates a PrototypeFactory.
-    pub fn proto(&self) -> PrototypeFactory { PrototypeFactory::new(self.0.clone()) }
-
     /// Creates a StatementFactory.
     pub fn stmt(&self) -> StatementFactory { StatementFactory::new(self.1.clone()) }
 
@@ -63,13 +60,25 @@ pub struct ItemFactory(RcModule);
 #[derive(Clone, Debug)]
 pub struct EnumBuilder {
     module: RcModule,
-    prototype: EnumPrototype,
+    name: ItemIdentifier,
+    range: Range,
     variants: Vec<RecordId>,
 }
 
 #[derive(Clone, Debug)]
+pub struct FunctionSignatureBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
+    arguments: TupleBuilder<Module, TypeId>,
+    result: TypeId,
+}
+
+#[derive(Clone, Debug)]
 pub struct RecordBuilder {
-    prototype: RecordPrototype,
+    name: ItemIdentifier,
+    range: Range,
+    enum_: Option<EnumId>,
     definition: TupleBuilder<Module, TypeId>,
 }
 
@@ -78,99 +87,168 @@ impl ItemFactory {
     pub fn new(module: RcModule) -> Self { ItemFactory(module) }
 
     /// Creates an EnumBuilder.
-    pub fn enum_(&self, p: EnumPrototype) -> EnumBuilder {
-        EnumBuilder::new(self.0.clone(), p)
+    pub fn enum_(&self, name: ItemIdentifier) -> EnumBuilder {
+        let mut e = EnumBuilder::new(self.0.clone(), name);
+        if name.span().offset() >= 6 {
+            e.range(name.span().offset() - 6, name.span().length() + 6);
+        }
+        e
     }
 
-    /// Creates a Function.
-    pub fn fun(&self, prototype: FunctionPrototype, body: Tree) -> FunctionId {
-        let name = prototype.name;
-
-        let id = if let Some(id) = self.0.borrow().lookup_function(name) {
-            id
-        } else {
-            self.0.borrow_mut().push_function_name(name)
-        };
-
-        let function = Function { prototype, body };
-
-        let mut module = self.0.borrow_mut();
-        module.set_function_prototype(id, prototype);
-        module.set_function(id, function);
-
-        id
+    /// Creates a FunctionSignatureBuilder.
+    pub fn fun(
+        &self,
+        name: ItemIdentifier,
+        result: TypeId,
+    )
+        -> FunctionSignatureBuilder
+    {
+        FunctionSignatureBuilder::new(self.0.clone(), name, result)
     }
 
     /// Creates a RecordBuilder.
-    pub fn rec(&self, r: RecordPrototype) -> RecordBuilder {
-        RecordBuilder::new(self.0.clone(), r)
+    pub fn rec(&self, name: ItemIdentifier) -> RecordBuilder {
+        let mut r = RecordBuilder::new(self.0.clone(), name);
+        if name.span().offset() >= 5 {
+            r.range(name.span().offset() - 5, name.span().length() + 5);
+        }
+        r
     }
 
     /// Shortcut: Creates a Unit Record.
     pub fn unit(&self, id: ItemIdentifier) -> RecordId {
-        let proto = RecordPrototypeBuilder::new(self.0.clone(), id, id.1.offset()).build();
-        self.rec(proto).build()
+        RecordBuilder::new(self.0.clone(), id).build()
     }
 
     /// Shortcut: Creates a Unit Record, with an EnumId.
     pub fn unit_of_enum(&self, id: ItemIdentifier, enum_: EnumId) -> RecordId {
-        let proto = RecordPrototypeBuilder::new(self.0.clone(), id, id.1.offset())
+        RecordBuilder::new(self.0.clone(), id)
             .enum_(enum_)
-            .build();
-        self.rec(proto).build()
+            .build()
     }
 }
 
 impl EnumBuilder {
     /// Creates an instance.
-    pub fn new(module: RcModule, prototype: EnumPrototype) -> Self {
+    pub fn new(module: RcModule, name: ItemIdentifier) -> Self {
         EnumBuilder {
             module,
-            prototype,
+            name,
+            range: Default::default(),
             variants: vec!(),
         }
     }
 
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
     /// Pushes a variant.
     pub fn push(&mut self, r: RecordId) -> &mut Self {
-        debug_assert!(
-            self.module.borrow().get_record_prototype(r).enum_ ==
-            self.module.borrow().lookup_enum(self.prototype.name)
-        );
         self.variants.push(r);
         self
     }
 
     /// Creates an Enum.
     pub fn build(&self) -> EnumId {
-        let name = self.prototype.name;
+        let name = self.name;
+        let range = self.range;
 
-        let id = if let Some(id) = self.module.borrow().lookup_enum(name) {
+        let id = self.module.borrow().lookup_enum(name);
+        let id = if let Some(id) = id {
             id
         } else {
             self.module.borrow_mut().push_enum_name(name)
         };
 
         let mut module = self.module.borrow_mut();
+        let variants = module.push_record_ids(self.variants.iter().cloned());
 
-        let enum_ = Enum {
-            prototype: self.prototype,
-            variants: module.push_record_ids(self.variants.iter().cloned()),
-        };
+        let enum_ = Enum { name, range, variants, };
 
-        module.set_enum_prototype(id, enum_.prototype);
         module.set_enum(id, enum_);
         id
     }
 }
 
+impl FunctionSignatureBuilder {
+    /// Creates an instance.
+    pub fn new(
+        module: RcModule,
+        name: ItemIdentifier,
+        result: TypeId,
+    )
+        -> Self
+    {
+        FunctionSignatureBuilder {
+            module: module.clone(),
+            name,
+            range: range(0, 0),
+            arguments: TupleBuilder::new(module),
+            result,
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Pushes an argument.
+    pub fn push(&mut self, name: ValueIdentifier, type_: TypeId) -> &mut Self
+    {
+        self.arguments.push(type_);
+        self.arguments.name(name);
+        self
+    }
+
+    /// Creates a FunctionSignature.
+    pub fn build(&self) -> FunctionSignature {
+        let arguments = self.arguments.build();
+        let signature = FunctionSignature {
+            name: self.name,
+            range: self.range,
+            arguments,
+            result: self.result,
+        };
+
+        let id = self.module.borrow().lookup_function(self.name);
+        let id = if let Some(id) = id {
+            id
+        } else {
+            self.module.borrow_mut().push_function_name(self.name)
+        };
+
+        self.module.borrow_mut().set_function(id, signature);
+
+        signature
+    }
+}
+
 impl RecordBuilder {
     /// Creates an instance.
-    pub fn new(module: RcModule, prototype: RecordPrototype) -> Self {
+    pub fn new(module: RcModule, name: ItemIdentifier) -> Self {
         RecordBuilder {
-            prototype,
+            name,
+            range: Default::default(),
+            enum_: None,
             definition: TupleBuilder::new(module),
         }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Sets an enum.
+    pub fn enum_(&mut self, e: EnumId) -> &mut Self {
+        self.enum_ = Some(e);
+        self
     }
 
     /// Pushes a field.
@@ -188,21 +266,25 @@ impl RecordBuilder {
     /// Creates a Record.
     pub fn build(&self) -> RecordId {
         let module = self.definition.store.clone();
-        let name = self.prototype.name;
+        let name = self.name;
+        let mut range = self.range;
+        let enum_ = self.enum_;
+        let definition = self.definition.build();
 
-        let id = if let Some(id) = module.borrow().lookup_record(name) {
+        let id = module.borrow().lookup_record(name);
+        let id = if let Some(id) = id {
             id
         } else {
             module.borrow_mut().push_record_name(name)
         };
 
-        let record = Record {
-            prototype: self.prototype,
-            definition: self.definition.build(),
-        };
+        if range == Default::default() {
+            range = name.1;
+        }
+
+        let record = Record { name, range, enum_, definition };
 
         let mut module = module.borrow_mut();
-        module.set_record_prototype(id, record.prototype);
         module.set_record(id, record);
         id
     }
@@ -306,181 +388,6 @@ impl PatternSimpleBuilder {
     }
 }
 
-
-//
-//  Prototype
-//
-
-#[derive(Clone, Debug)]
-pub struct PrototypeFactory(RcModule);
-
-#[derive(Clone, Debug)]
-pub struct EnumPrototypeBuilder {
-    module: RcModule,
-    name: ItemIdentifier,
-    range: Range,
-}
-
-#[derive(Clone, Debug)]
-pub struct FunctionPrototypeBuilder {
-    module: RcModule,
-    name: ItemIdentifier,
-    range: Range,
-    arguments: TupleBuilder<Module, TypeId>,
-    result: TypeId,
-}
-
-#[derive(Clone, Debug)]
-pub struct RecordPrototypeBuilder {
-    module: RcModule,
-    name: ItemIdentifier,
-    range: Range,
-    enum_: Option<EnumId>,
-}
-
-impl PrototypeFactory {
-    /// Creates an instance.
-    pub fn new(module: RcModule) -> Self { PrototypeFactory(module) }
-
-    /// Creates an EnumPrototypeBuilder.
-    pub fn enum_(&self, name: ItemIdentifier) -> EnumPrototypeBuilder {
-        let mut e = EnumPrototypeBuilder::new(self.0.clone(), name, 0);
-        e.range(name.span().offset() - 6, name.span().length() + 6);
-        e
-    }
-
-    /// Creates a FunctionPrototypeBuilder.
-    pub fn fun(
-        &self,
-        name: ItemIdentifier,
-        result: TypeId,
-    )
-        -> FunctionPrototypeBuilder
-    {
-        FunctionPrototypeBuilder::new(self.0.clone(), name, result)
-    }
-
-    /// Creates a RecordPrototypeBuilder.
-    pub fn rec(&self, name: ItemIdentifier, pos: usize) -> RecordPrototypeBuilder {
-        let mut r = RecordPrototypeBuilder::new(self.0.clone(), name, pos);
-        if pos != name.span().offset() {
-            r.range(name.span().offset() - 5, name.span().length() + 5);
-        }
-        r
-    }
-}
-
-impl EnumPrototypeBuilder {
-    /// Creates an instance.
-    pub fn new(module: RcModule, name: ItemIdentifier, pos: usize) -> Self {
-        EnumPrototypeBuilder {
-            module, 
-            name,
-            range: range(pos, name.span().length()),
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Creates a Record.
-    pub fn build(&self) -> EnumPrototype {
-        let name = self.name;
-        let prototype = EnumPrototype { name: self.name, range: self.range, };
-
-        let id = self.module.borrow_mut().push_enum_name(name);
-        self.module.borrow_mut().set_enum_prototype(id, prototype);
-
-        prototype
-    }
-}
-
-impl FunctionPrototypeBuilder {
-    /// Creates an instance.
-    pub fn new(
-        module: RcModule,
-        name: ItemIdentifier,
-        result: TypeId,
-    )
-        -> Self
-    {
-        FunctionPrototypeBuilder {
-            module: module.clone(),
-            name,
-            range: range(0, 0),
-            arguments: TupleBuilder::new(module),
-            result,
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Pushes an argument.
-    pub fn push(&mut self, name: ValueIdentifier, type_: TypeId) -> &mut Self
-    {
-        self.arguments.push(type_);
-        self.arguments.name(name);
-        self
-    }
-
-    /// Creates a FunctionPrototype.
-    pub fn build(&self) -> FunctionPrototype {
-        let arguments = self.arguments.build();
-        let prototype = FunctionPrototype {
-            name: self.name,
-            range: self.range,
-            arguments,
-            result: self.result,
-        };
-
-        let id = self.module.borrow_mut().push_function_name(self.name);
-        self.module.borrow_mut().set_function_prototype(id, prototype);
-
-        prototype
-    }
-}
-
-impl RecordPrototypeBuilder {
-    /// Creates an instance.
-    pub fn new(module: RcModule, name: ItemIdentifier, pos: usize) -> Self {
-        RecordPrototypeBuilder {
-            module,
-            name,
-            range: range(pos, name.span().length()),
-            enum_: None,
-        }
-    }
-
-    /// Sets the range.
-    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
-        self.range = range(pos, len);
-        self
-    }
-
-    /// Sets an enum.
-    pub fn enum_(&mut self, e: EnumId) -> &mut Self {
-        self.enum_ = Some(e);
-        self
-    }
-
-    /// Creates a Record.
-    pub fn build(&self) -> RecordPrototype {
-        let name = self.name;
-        let prototype = RecordPrototype { name: self.name, range: self.range, enum_: self.enum_, };
-
-        let id = self.module.borrow_mut().push_record_name(name);
-        self.module.borrow_mut().set_record_prototype(id, prototype);
-
-        prototype
-    }
-}
 
 //
 //  Statement

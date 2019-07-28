@@ -13,7 +13,7 @@ use model::hir::*;
 ///
 /// The Repository is a process-wide repository of all items:
 /// -   It links an item *name* to its ID, for search purposes.
-/// -   It links the ID to the item *prototype* and *definition*.
+/// -   It links the ID to the item *definition* or *signature*.
 ///
 /// The Repository is supposed to be accessed across threads, and specifically
 /// designed to minimize synchronization costs:
@@ -50,8 +50,8 @@ pub struct Repository {
 
     /// Function canonical name to FunctionId.
     function_lookup: JaggedHashMap<ItemIdentifier, FunctionId>,
-    /// Prototype of a given Function.
-    function_prototype: JaggedArray<FunctionPrototype>,
+    /// Signature of a given Function.
+    function: JaggedArray<FunctionSignature>,
 
     //
     //  Components
@@ -84,7 +84,7 @@ impl Repository {
             record: JaggedArray::new(5),
 
             function_lookup: JaggedHashMap::new(5),
-            function_prototype: JaggedArray::new(5),
+            function: JaggedArray::new(5),
 
             names: JaggedMultiArray::new(5),
             path_components: JaggedMultiArray::new(5),
@@ -124,7 +124,7 @@ impl Repository {
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
             function_lookup: self.function_lookup.snapshot(),
-            function_prototype: self.function_prototype.snapshot(),
+            function: self.function.snapshot(),
             names: self.names.snapshot(),
             path_components: self.path_components.snapshot(),
             record_ids: self.record_ids.snapshot(),
@@ -184,13 +184,14 @@ impl Repository {
             records.push(mapper.map_record(record));
         }
 
-        let prototype = enum_.prototype;
+        let name = enum_.name;
+        let range = enum_.range;
         let variants = self.record_ids.push(&records)
             .map(|index| Id::new_repository(index as u32))
             .unwrap_or(Id::empty());
 
-        self.enum_.push(Enum { prototype, variants, });
-        self.enum_lookup.insert(enum_.prototype.name, id);
+        self.enum_.push(Enum { name, range, variants, });
+        self.enum_lookup.insert(name, id);
     }
 
     fn insert_record(
@@ -207,13 +208,12 @@ impl Repository {
         debug_assert!(id.get_repository().unwrap() == self.record.len() as u32 + 1);
 
         let record = module.get_record(r);
-        let name = record.prototype.name;
-        let enum_ = record.prototype.enum_.map(|e| mapper.map_enum(e));
-
-        let prototype = RecordPrototype { enum_, ..record.prototype };
+        let name = record.name;
+        let range = record.range;
+        let enum_ = record.enum_.map(|e| mapper.map_enum(e));
         let definition = self.insert_tuple(record.definition, module, mapper);
 
-        self.record.push(Record { prototype, definition, });
+        self.record.push(Record { name, range, enum_, definition, });
         self.record_lookup.insert(name, id);
     }
 
@@ -224,19 +224,19 @@ impl Repository {
         mapper: &IdMapper,
     )
     {
-        debug_assert!(self.function_lookup.len() == self.function_prototype.len());
+        debug_assert!(self.function_lookup.len() == self.function.len());
 
-        let prototype = module.get_function_prototype(function);
+        let signature = module.get_function(function);
 
-        let name = prototype.name;
-        let range = prototype.range;
-        let arguments = self.insert_tuple(prototype.arguments, module, mapper);
-        let result = self.insert_type(prototype.result, module, mapper);
+        let name = signature.name;
+        let range = signature.range;
+        let arguments = self.insert_tuple(signature.arguments, module, mapper);
+        let result = self.insert_type(signature.result, module, mapper);
 
-        let id = FunctionId::new_repository(self.function_prototype.len() as u32);
-        let prototype = FunctionPrototype { name, range, arguments, result, };
+        let id = FunctionId::new_repository(self.function.len() as u32);
+        let signature = FunctionSignature { name, range, arguments, result, };
 
-        self.function_prototype.push(prototype);
+        self.function.push(signature);
         self.function_lookup.insert(name, id);
     }
 
@@ -333,7 +333,7 @@ pub struct RepositorySnapshot {
 
     //  Functions
     function_lookup: JaggedHashMapSnapshot<ItemIdentifier, FunctionId>,
-    function_prototype: JaggedArraySnapshot<FunctionPrototype>,
+    function: JaggedArraySnapshot<FunctionSignature>,
 
     //  Components
     names: JaggedMultiArraySnapshot<ValueIdentifier>,
@@ -352,8 +352,8 @@ impl Registry for RepositorySnapshot {
         *self.record.at(index_of(id))
     }
 
-    fn get_function_prototype(&self, id: FunctionId) -> FunctionPrototype {
-        *self.function_prototype.at(index_of(id))
+    fn get_function(&self, id: FunctionId) -> FunctionSignature {
+        *self.function.at(index_of(id))
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

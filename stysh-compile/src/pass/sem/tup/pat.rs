@@ -67,7 +67,7 @@ mod tests {
         let a = local.value_id(5, 1);
 
         let pat = {
-            let (_, p, _, s, _, _, v) = env.source_factories();
+            let (_, p, s, _, _, v) = env.source_factories();
             let pat = p.var(a);
             let val= v.int(1, 10);
             s.var(pat, val);
@@ -78,7 +78,7 @@ mod tests {
         };
 
         {
-            let (_, p, _, s, _, _, v) = env.target_factories();
+            let (_, p, s, _, _, v) = env.target_factories();
             let pat = p.var_typed(a, Type::int());
             s.var(pat, v.int(1, 10));
         }

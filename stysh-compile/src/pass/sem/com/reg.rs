@@ -41,13 +41,13 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
-    fn get_function_prototype(&self, id: FunctionId) -> FunctionPrototype {
+    fn get_function(&self, id: FunctionId) -> FunctionSignature {
         debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
 
         if id.is_module() {
-            self.module.get_function_prototype(id)
+            self.module.get_function(id)
         } else {
-            self.repository.get_function_prototype(id)
+            self.repository.get_function(id)
         }
     }
 
@@ -135,8 +135,8 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_record(&self, id: RecordId) -> Record { self.registry.get_record(id) }
 
-    fn get_function_prototype(&self, id: FunctionId) -> FunctionPrototype {
-        self.registry.get_function_prototype(id)
+    fn get_function(&self, id: FunctionId) -> FunctionSignature {
+        self.registry.get_function(id)
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

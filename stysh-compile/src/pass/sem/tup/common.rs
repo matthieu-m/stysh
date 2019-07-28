@@ -62,7 +62,7 @@ pub mod tests {
 
     use model::hir::*;
     use model::hir::builder::{
-        Factory, ItemFactory, PatternFactory, PrototypeFactory, StatementFactory,
+        Factory, ItemFactory, PatternFactory, StatementFactory,
         TypeFactory, TypeIdFactory, ExpressionFactory, RcModule, RcTree,
     };
     use model::hir::interning::Resolver;
@@ -104,7 +104,6 @@ pub mod tests {
         pub fn source_factories(&self) -> (
             ItemFactory,
             PatternFactory,
-            PrototypeFactory,
             StatementFactory,
             TypeFactory<Tree>,
             TypeIdFactory<Tree>,
@@ -112,13 +111,12 @@ pub mod tests {
         )
         {
             let f = self.source_factory();
-            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
+            (f.item(), f.pat(), f.stmt(), f.type_(), f.type_id(), f.value())
         }
 
         pub fn target_factories(&self) -> (
             ItemFactory,
             PatternFactory,
-            PrototypeFactory,
             StatementFactory,
             TypeFactory<Tree>,
             TypeIdFactory<Tree>,
@@ -126,7 +124,7 @@ pub mod tests {
         )
         {
             let f = Factory::new(self.module.clone(), self.target_tree.clone());
-            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.type_id(), f.value())
+            (f.item(), f.pat(), f.stmt(), f.type_(), f.type_id(), f.value())
         }
     }
 

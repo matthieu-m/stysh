@@ -40,7 +40,13 @@ pub struct Tree {
 
     //  Root.
 
-    root: Option<Root>,
+    /// Function Signature the Tree represents the body of, if any, as well as
+    /// the patterns formed by its arguments.
+    ///
+    /// The body itself is found in expr_root.
+    function: Option<(FunctionSignature, Tuple<PatternId>)>,
+    /// Expression the Tree represents.
+    root: Option<ExpressionId>,
 
     //  Expressions.
 
@@ -82,24 +88,6 @@ pub struct Tree {
     types: KeyedMulti<TypeId>,
 }
 
-/// Root.
-///
-/// The root of the tree.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Root {
-    /// Expression.
-    Expression(ExpressionId),
-    /// Function.
-    ///
-    /// A function definition is composed of:
-    /// -   Its name.
-    /// -   Its arguments, as a tuple of patterns.
-    /// -   Its result type.
-    /// -   Its body, as an expression.
-    Function(ItemIdentifier, Tuple<PatternId>, TypeId, ExpressionId),
-    /// Pattern.
-    Pattern(PatternId),
-}
 
 //
 //  Public Methods
@@ -114,38 +102,56 @@ impl Tree {
 
     //  Root.
 
-    /// Returns the root.
-    pub fn get_root(&self) -> Option<Root> { self.root.clone() }
-
-    /// Returns the root.
-    pub fn get_root_mut(&mut self) -> Option<&mut Root> {
-        self.root.as_mut()
+    /// Returns the function signature, if any.
+    pub fn get_function(&self) -> Option<FunctionSignature> {
+        self.function.map(|(f, _)| f)
     }
+
+    /// Returns the function arguments, if any.
+    pub fn get_function_arguments(&self) -> Option<Tuple<PatternId>> {
+        self.function.map(|(_, p)| p)
+    }
+
+    /// Sets the function signature.
+    pub fn set_function(&mut self, fun: FunctionSignature, registry: &Registry) {
+        let names = if fun.arguments.names.is_empty() {
+            &[]
+        } else {
+            registry.get_names(fun.arguments.names)
+        };
+        let types = if fun.arguments.fields.is_empty() {
+            &[]
+        } else {
+            registry.get_type_ids(fun.arguments.fields)
+        };
+        debug_assert!(names.len() == types.len());
+
+        let mut fields = Vec::with_capacity(types.len());
+        for (&name, &ty) in names.iter().zip(types) {
+            let ty = if let Some(b) = ty.builtin() {
+                Type::Builtin(b)
+            } else {
+                registry.get_type(ty)
+            };
+
+            let pattern = Pattern::Var(name);
+            let pattern = self.push_pattern(ty, pattern, name.1);
+
+            fields.push(pattern);
+        }
+
+        let fields = self.push_patterns(fields);
+        let names = self.push_names(names.iter().cloned());
+        let arguments = Tuple { fields, names, };
+
+        self.function = Some((fun, arguments));
+    }
+
+    /// Returns the expression, if any.
+    pub fn get_root(&self) -> Option<ExpressionId> { self.root }
 
     /// Sets the root.
-    pub fn set_root(&mut self, root: Root) { self.root = Some(root); }
-
-    /// Sets the root as Expression.
-    pub fn set_root_expression(&mut self, expr: ExpressionId) {
-        self.root = Some(Root::Expression(expr));
-    }
-
-    /// Sets the root as Function.
-    pub fn set_root_function(
-        &mut self,
-        name: ItemIdentifier,
-        arguments: Tuple<PatternId>,
-        result: TypeId,
-        body: ExpressionId,
-    )
-    {
-        self.root = Some(Root::Function(name, arguments, result, body));
-    }
-
-    /// Sets the root as Pattern.
-    pub fn set_root_pattern(&mut self, pattern: PatternId) {
-        self.root = Some(Root::Pattern(pattern));
-    }
+    pub fn set_root(&mut self, root: ExpressionId) { self.root = Some(root); }
 
 
     //  Gvns.
@@ -665,7 +671,7 @@ pub mod samples {
         let range = range(0, if b { 4 } else { 5 });
         let bool_ = tree.push_expression(Type::bool_(), Expression::bool_(b), range);
 
-        tree.set_root(Root::Expression(bool_));
+        tree.set_root(bool_);
 
         tree
     }
@@ -685,7 +691,7 @@ pub mod samples {
         let op = Callable::Builtin(BuiltinFunction::Add);
         let add = tree.push_expression(Type::int(), Expression::Call(op, args), range(0, 5));
 
-        tree.set_root(Root::Expression(add));
+        tree.set_root(add);
 
         tree
     }

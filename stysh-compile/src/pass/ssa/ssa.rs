@@ -27,9 +27,8 @@ impl<'a> GraphBuilder<'a> {
     }
 
     /// Translates a semantic expression into its control-flow graph.
-    pub fn from_expression(&self, tree: &hir::Tree, expr: hir::ExpressionId)
-        -> sir::Graph
-    {
+    pub fn from_expression(&self, tree: &hir::Tree) -> sir::Graph {
+        let expr = tree.get_root().expect("ExpressionId");
         let mut imp = GraphBuilderImpl::new(self.registry, tree);
 
         imp.from_expression(
@@ -45,36 +44,27 @@ impl<'a> GraphBuilder<'a> {
     }
 
     /// Translates a semantic function into its control-flow graph.
-    pub fn from_function(&self, module: &hir::Module, fun: hir::FunctionId)
+    pub fn from_function(&self, tree: &hir::Tree, fun: hir::FunctionId)
         -> sir::Graph
     {
-        let function = module.get_function(fun);
-
-        let (args, expr) = if let Some(hir::Root::Function(_, args, _, expr)) =
-            function.body.get_root()
-        {
-            (args, expr)
-        } else {
-            panic!("Function body is not an expression!");
-        };
-
-        let patterns = function.body.get_patterns(args.fields);
+        let expr = tree.get_root().expect("Expression Id");
+        let patterns = tree.get_function_arguments().expect("Function Arguments");
+        let patterns = tree.get_patterns(patterns.fields);
         let mut arguments = Vec::with_capacity(patterns.len());
 
         for &p in patterns {
-            let type_ = function.body.get_pattern_type_id(p);
+            let type_ = tree.get_pattern_type_id(p);
             arguments.push((p.into(), type_));
         }
 
+        let mut imp = GraphBuilderImpl::new(self.registry, tree);
         let mut first = ProtoBlock::new(expr.into());
         first.arguments = arguments;
-
-        let mut imp = GraphBuilderImpl::new(self.registry, &function.body);
 
         imp.from_expression(first, expr);
 
         let mut graph = sir::Graph::new(fun);
-        graph.initialize_types(&function.body);
+        graph.initialize_types(tree);
         imp.into_blocks(&mut graph);
 
         graph
@@ -944,7 +934,7 @@ mod tests {
     fn value_simple() {
         let env = Env::new(b"1 + 2");
 
-        let (_, _, _, _, t, v) = env.hir();
+        let (_, _, _, t, v) = env.hir();
         let val = v.call()
             .builtin(BuiltinFunction::Add, t.int())
             .push(v.int(1, 0))
@@ -968,7 +958,7 @@ mod tests {
     fn tuple_simple() {
         let env = Env::new(b"(1,  2)");
 
-        let v = env.hir().5;
+        let v = env.hir().4;
 
         assert_eq!(
             env.exprit(
@@ -995,8 +985,8 @@ mod tests {
         let hir = env.factory();
 
         let rec = {
-            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
-            i.rec(p.rec(env.item_id(5, 4), 0).build())
+            let (i, t) = (hir.item(), hir.type_module());
+            i.rec(env.item_id(5, 4))
                 .push(t.int())
                 .build()
         };
@@ -1025,8 +1015,8 @@ mod tests {
         let hir = env.factory();
 
         let rec = {
-            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
-            i.rec(p.rec(env.item_id(5, 4), 0).build())
+            let (i, t) = (hir.item(), hir.type_module());
+            i.rec(env.item_id(5, 4))
                 .push(t.int())
                 .push(t.int())
                 .build()
@@ -1060,7 +1050,7 @@ mod tests {
     #[test]
     fn block_simple() {
         let env = Env::new(b"{ :var a := 1; :var b := 2; a + b }");
-        let (_, _, _, s, t, v) = env.hir();
+        let (_, _, s, t, v) = env.hir();
 
         let (a, b) = (env.var_id(7, 1), env.var_id(20, 1));
         let add = v.call()
@@ -1090,7 +1080,7 @@ mod tests {
     #[test]
     fn block_rebinding() {
         let env = Env::new(b"{ :var a := 1; :set a := 2; a }");
-        let (_, _, _, s, _, v) = env.hir();
+        let (_, _, s, _, v) = env.hir();
 
         let a = env.var_id(7, 1);
         let block =
@@ -1114,7 +1104,7 @@ mod tests {
     #[test]
     fn block_rebinding_nested_field() {
         let env = Env::new(b"{ :var a := (1, (2, 3)); :set a.1.0 := 4; a }");
-        let (_, _, _, s, _, v) = env.hir();
+        let (_, _, s, _, v) = env.hir();
 
         let a = env.var_id(7, 1);
 
@@ -1163,7 +1153,7 @@ mod tests {
     #[test]
     fn block_rebinding_tuple() {
         let env = Env::new(b"{ :var (a, b) := (1, 2); :set (a, b) := (b, a); a }");
-        let (_, p, _, s, _, v) = env.hir();
+        let (_, p, s, _, v) = env.hir();
 
         let (a, b) = (env.var_id(8, 1), env.var_id(11, 1));
 
@@ -1214,14 +1204,14 @@ mod tests {
         let hir = env.factory();
 
         let rec = {
-            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
-            i.rec(p.rec(env.item_id(5, 1), 0).build())
+            let (i, t) = (hir.item(), hir.type_module());
+            i.rec(env.item_id(5, 1))
                 .push(t.int())
                 .push(t.int())
                 .build()
         };
 
-        let (_, p, _, s, t, v) = env.hir();
+        let (_, p, s, t, v) = env.hir();
 
         let rec = t.record(rec).build();
         let (a, b) = (env.var_id(29, 1), env.var_id(32, 1));
@@ -1261,7 +1251,7 @@ mod tests {
     #[test]
     fn block_return_simple() {
         let env = Env::new(b"{ :return 1; }");
-        let (_, _, _, s, _, v) = env.hir();
+        let (_, _, s, _, v) = env.hir();
 
         let block = v.block_expression_less()
             .push(s.ret(v.int(1, 10)))
@@ -1281,7 +1271,7 @@ mod tests {
     #[test]
     fn block_tuple_binding() {
         let env = Env::new(b"{ :var (a, b) := (1, 2); a }");
-        let (_, p, _, s, _, v) = env.hir();
+        let (_, p, s, _, v) = env.hir();
 
         let (a, b) = (env.var_id(8, 1), env.var_id(11, 1));
 
@@ -1314,19 +1304,18 @@ mod tests {
 
         let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
 
-        let prototype = {
+        {
             let hir = env.factory();
-            let (p, t) = (hir.proto(), hir.type_module());
-            let prototype = p.fun(env.item_id(5, 3), t.int())
+            let (i, t) = (hir.item(), hir.type_module());
+            let signature = i.fun(env.item_id(5, 3), t.int())
                 .push(a, t.int())
                 .push(b, t.int())
                 .range(0, 31)
                 .build();
-            env.insert_function(&prototype);
-            prototype
-        };
+            env.insert_function(signature);
+        }
 
-        let (_, _, _, _, t, v) = env.hir();
+        let (_, _, _, t, v) = env.hir();
 
         let body =
             v.block(
@@ -1338,7 +1327,7 @@ mod tests {
             ).build_with_type();
 
         assert_eq!(
-            env.funit(prototype, body),
+            env.funit(body),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -1351,7 +1340,7 @@ mod tests {
     #[test]
     fn if_simple() {
         let env = Env::new(b":if true { 1 } :else { 2 }");
-        let v = env.hir().5;
+        let v = env.hir().4;
 
         let if_ = v.if_(v.bool_(true, 4), v.int(1, 11), v.int(2, 23)).build();
 
@@ -1384,20 +1373,19 @@ mod tests {
 
             let (a, b, c) = (env.var_id(8, 1), env.var_id(16, 1), env.var_id(24, 1));
 
-            let prototype = {
+            {
                 let hir = env.factory();
-                let (p, t) = (hir.proto(), hir.type_module());
-                let prototype = p.fun(env.item_id(5, 2), t.bool_())
+                let (i, t) = (hir.item(), hir.type_module());
+                let signature = i.fun(env.item_id(5, 2), t.bool_())
                         .push(a, t.int())
                         .push(b, t.int())
                         .push(c, t.int())
                         .range(0, 61)
                         .build();
-                env.insert_function(&prototype);
-                prototype
+                env.insert_function(signature);
             };
 
-            let (_, _, _, _, t, v) = env.hir();
+            let (_, _, _, t, v) = env.hir();
 
             let left = 
                 v.call()
@@ -1418,7 +1406,7 @@ mod tests {
                     v.call().builtin(fun, t.bool_()).push(left).push(right).build()
                 ).build_with_type();
 
-            env.funit(prototype, block)
+            env.funit(block)
         }
 
         assert_eq!(
@@ -1473,7 +1461,7 @@ mod tests {
     #[test]
     fn if_return() {
         let env = Env::new(b":if true { :return 1; } :else { 2 }");
-        let (_, _, _, s, _, v) = env.hir();
+        let (_, _, s, _, v) = env.hir();
 
         let if_ = v.if_(
             v.bool_(true, 4),
@@ -1522,20 +1510,20 @@ mod tests {
         let (current, next, count) =
             (env.var_id(9, 7), env.var_id(23, 4), env.var_id(34, 5));
 
-        let (prototype, callable) = {
+        let callable = {
             let hir = env.factory();
-            let (p, t) = (hir.proto(), hir.type_module());
-            let prototype =
-                p.fun(fib, t.int())
+            let (i, t) = (hir.item(), hir.type_module());
+            let signature =
+                i.fun(fib, t.int())
                     .push(current, t.int())
                     .push(next, t.int())
                     .push(count, t.int())
                     .range(0, 52)
                     .build();
-            (prototype, env.insert_function(&prototype))
+            env.insert_function(signature)
         };
 
-        let (_, _, _, _, t, v) = env.hir();
+        let (_, _, _, t, v) = env.hir();
 
         let current_ref = |pos| v.int_ref(current, pos).pattern(0).build();
         let next_ref = |pos| v.int_ref(next, pos).pattern(1).build();
@@ -1580,7 +1568,7 @@ mod tests {
         let block = v.block(if_).range(53, 105).build_with_type();
 
         assert_eq!(
-            env.funit(prototype, block),
+            env.funit(block),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := load 0 ; 1@72",
@@ -1607,7 +1595,7 @@ mod tests {
     #[test]
     fn loop_increment() {
         let env = Env::new(b"{ :var i := 0; :loop { :set i := i + 1; } }");
-        let (_, _, _, s, t, v) = env.hir();
+        let (_, _, s, t, v) = env.hir();
 
         let i = env.var_id(7, 1);
         let var = s.var_id(i, v.int(0, 12));
@@ -1654,7 +1642,7 @@ mod tests {
             "}",                                            // 208
         ]);
         let env = Env::new(fragment.as_bytes());
-        let (_, _, _, s, t, v) = env.hir();
+        let (_, _, s, t, v) = env.hir();
 
         let (n, current) = (env.var_id(11, 1), env.var_id(28, 7));
 
@@ -1749,14 +1737,13 @@ mod tests {
         fn hir(&self) -> (
             ItemFactory,
             PatternFactory,
-            PrototypeFactory,
             StatementFactory,
             TypeFactory<Tree>,
             ExpressionFactory,
         )
         {
             let f = self.factory();
-            (f.item(), f.pat(), f.proto(), f.stmt(), f.type_(), f.value())
+            (f.item(), f.pat(), f.stmt(), f.type_(), f.value())
         }
 
         fn item_id(&self, pos: usize, len: usize) -> ItemIdentifier {
@@ -1769,43 +1756,14 @@ mod tests {
             ValueIdentifier(self.resolver.from_range(range), range)
         }
 
-        fn insert_function(&self, prototype: &FunctionPrototype) -> Callable {
+        fn insert_function(&self, signature: FunctionSignature) -> Callable {
             let module = self.module.borrow();
             let mut tree = self.tree.borrow_mut();
 
-            let arguments = {
-                let mut arguments = vec!();
-                let mut names = vec!();
+            tree.set_function(signature, &*module);
 
-                let arg_names = module.get_names(prototype.arguments.names);
-                let arg_types = module.get_type_ids(prototype.arguments.fields);
-
-                for (&name, &ty) in arg_names.iter().zip(arg_types) {
-                    let ty = if let Some(b) = ty.builtin() {
-                        Type::Builtin(b)
-                    } else {
-                        module.get_type(ty)
-                    };
-
-                    let pattern = Pattern::Var(name);
-                    let pattern = tree.push_pattern(ty, pattern, name.1);
-
-                    arguments.push(pattern);
-                    names.push(name);
-                }
-
-                let fields = tree.push_patterns(arguments.iter().cloned());
-                let names = tree.push_names(names.iter().cloned());
-
-                Tuple { fields, names, }
-            };
-
-            let name = prototype.name;
-            let result = prototype.result;
-
-            tree.set_root_function(name, arguments, result, Default::default());
-
-            let fun = module.lookup_function(name).expect("Function to be registered");
+            let fun = module.lookup_function(signature.name)
+                .expect("Function to be registered");
             Callable::Function(fun)
         }
 
@@ -1813,24 +1771,22 @@ mod tests {
             self.tree.borrow().get_expression_type(e)
         }
 
-        fn funit(&self, prototype: FunctionPrototype, body: ExpressionId) -> String {
+        fn funit(&self, body: ExpressionId) -> String {
             use std::ops::Deref;
 
             let mut tree = self.tree.borrow().clone();
-            if let Some(Root::Function(name, args, res, _)) = tree.get_root() {
-                tree.set_root_function(name, args, res, body);
-            } else {
-                panic!("funit - Root not a function.");
-            }
+            tree.set_root(body);
 
-            let fun = self.factory().item().fun(prototype, tree);
-
-            println!("funit - {:#?}", self.module.borrow().get_function(fun));
+            println!("funit - {:#?}", tree);
             println!("");
 
+            let name = tree.get_function().expect("Function").name;
+
             let guard = self.module.borrow();
+            let fun = guard.lookup_function(name).expect("Function to be registered");
+
             let graph = super::GraphBuilder::new(guard.deref())
-                .from_function(guard.deref(), fun);
+                .from_function(&tree, fun);
 
             println!("funit - {:#?}", graph);
             println!();
@@ -1842,14 +1798,14 @@ mod tests {
             use std::ops::Deref;
 
             let mut tree = self.tree.borrow().clone();
-            tree.set_root_expression(expr);
+            tree.set_root(expr);
 
             println!("exprit - {:#?}", tree);
             println!("");
 
             let guard = self.module.borrow();
             let graph = super::GraphBuilder::new(guard.deref())
-                .from_expression(&tree, expr);
+                .from_expression(&tree);
 
             println!("exprit - {:#?}", graph);
             println!();

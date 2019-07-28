@@ -720,6 +720,7 @@ mod tests {
     use basic::com::Span;
 
     use model::{ast, hir};
+    use model::hir::Registry;
     use model::ast::builder::Factory as AstFactory;
     use model::hir::builder::{Factory as HirFactory, RcModule, RcTree};
     use super::super::Context;
@@ -791,10 +792,10 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, td, v) = (f.proto(), f.type_module(), f.value());
+            let (i, td, v) = (f.item(), f.type_module(), f.value());
 
             let basic = env.item_id(15, 5);
-            let basic = env.insert_function(p.fun(basic, td.int()).build(), &[0]);
+            let basic = env.insert_function(i.fun(basic, td.int()).build(), &[0]);
 
             v.call()
                 .function(basic)
@@ -820,10 +821,10 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, t, v) = (f.proto(), f.type_(), f.value());
+            let (i, t, v) = (f.item(), f.type_(), f.value());
 
             let name = env.item_id(6, 3);
-            let rec = env.insert_record(p.rec(name, 0).build(), &[0]);
+            let rec = env.insert_record(i.rec(name).build(), &[0]);
 
             let rec = t.record(rec).build();
             v.constructor(rec).range(0, 3).build()
@@ -845,10 +846,10 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, t, v) = (f.proto(), f.type_(), f.value());
+            let (i, t, v) = (f.item(), f.type_(), f.value());
 
             let name = env.item_id(9, 3);
-            let rec = env.insert_record(p.rec(name, 0).build(), &[0]);
+            let rec = env.insert_record(i.rec(name).build(), &[0]);
 
             let rec = t.record(rec).build();
             v.constructor(rec).push(v.int(1, 4)).range(0, 6).build()
@@ -872,10 +873,10 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, t, v) = (f.proto(), f.type_(), f.value());
+            let (i, t, v) = (f.item(), f.type_(), f.value());
 
             let (simple, unit) = (env.item_id(6, 6), env.item_id(38, 4));
-            let enum_ = env.insert_enum(p.enum_(simple).build(), &[30]);
+            let enum_ = env.insert_enum(i.enum_(simple).build(), &[30]);
             let rec = t.unresolved(unit)
                 .push_component(hir::PathComponent::Enum(enum_, range(30, 6)))
                 .build();
@@ -936,11 +937,11 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (p, t, v) = (f.proto(), f.type_(), f.value());
+            let (i, t, v) = (f.item(), f.type_(), f.value());
 
             let name = env.item_id(5, 3);
 
-            let rec = p.rec(name, 0).range(0, 14).build();
+            let rec = i.rec(name).range(0, 14).push(hir::TypeId::int()).build();
             let rec = env.insert_record(rec, &[15]);
             let rec = t.record(rec).build();
 
@@ -1237,7 +1238,7 @@ mod tests {
             let a = env.var_id(28, 1);
             let some = env.item_id(5, 4);
 
-            let rec = f.proto().rec(some, 0).build();
+            let rec = f.item().rec(some).push(hir::TypeId::int()).build();
             let rec = env.insert_record(rec, &[23, 34]);
             let rec = t.record(rec).build();
 
@@ -1288,8 +1289,9 @@ mod tests {
 
             let a = env.var_id(36, 1);
             let some = env.item_id(5, 4);
+            let x = env.var_id(11, 1);
 
-            let rec = f.proto().rec(some, 0).build();
+            let rec = f.item().rec(some).push(hir::TypeId::int()).name(x).build();
             let rec = env.insert_record(rec, &[27, 42]);
             let rec = t.record(rec).build();
 
@@ -1388,7 +1390,7 @@ mod tests {
 
         fn expression(&self, e: hir::ExpressionId) -> hir::Tree {
             let mut tree = self.tree.borrow().clone();
-            tree.set_root_expression(e);
+            tree.set_root(e);
 
             println!("expression - {:#?}", tree);
             println!();
@@ -1400,12 +1402,10 @@ mod tests {
             self.hir_resolver.interner().insert(bytes)
         }
 
-        fn insert_enum(&mut self, enum_: hir::EnumPrototype, positions: &[usize])
+        fn insert_enum(&mut self, enum_: hir::EnumId, positions: &[usize])
             -> hir::EnumId
         {
-            let name = enum_.name;
-            let enum_ = self.module.borrow_mut().lookup_enum(enum_.name)
-                .expect("Enum to be registered");
+            let name = self.module.borrow().get_enum(enum_).name;
 
             println!("Registering enum: {:?} -> {:?}", name, enum_);
 
@@ -1424,7 +1424,7 @@ mod tests {
 
         fn insert_function(
             &mut self,
-            function: hir::FunctionPrototype,
+            function: hir::FunctionSignature,
             positions: &[usize],
         )
             -> hir::FunctionId
@@ -1444,12 +1444,11 @@ mod tests {
             function
         }
 
-        fn insert_record(&mut self, rec: hir::RecordPrototype, positions: &[usize])
+        fn insert_record(&mut self, rec: hir::RecordId, positions: &[usize])
             -> hir::RecordId
         {
-            let name = rec.name;
-            let rec = self.module.borrow_mut().lookup_record(rec.name)
-                .expect("Record to be registered");
+            let name = self.module.borrow().get_record(rec).name;
+
             println!("Registering record: {:?} -> {:?}", name, rec);
 
             let len = name.span().length();
@@ -1494,7 +1493,7 @@ mod tests {
 
             let expr = SM::new(&self.scope, module.deref(), &self.context, &ast_tree, &tree)
                 .value_of(expr);
-            tree.borrow_mut().set_root_expression(expr);
+            tree.borrow_mut().set_root(expr);
 
             println!("value_of - {:#?}", tree);
             println!();

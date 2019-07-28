@@ -36,36 +36,35 @@ fn interpret_impl<'a>(
 {
     let (ast_module, tree) = create_ast(raw, interner);
 
-    //  Create prototypes
+    //  Create names
     let hir_module = cell::RefCell::new(hir::Module::default());
 
     for i in 0..(ast_module.len_functions() as u32) {
-        let id = ast::Item::Fun(ast::FunctionId::new(i));
+        let id = ast::FunctionId::new(i);
+        let item = create_name(ast::Item::Fun(id), &ast_module, &tree, scope, &hir_module);
 
-        let prototype = create_prototype(id, &ast_module, &tree, scope, &hir_module);
-
-        if let self::hir::Prototype::Fun(fun) = prototype {
-            let id = hir_module.borrow().lookup_function(fun.name)
-                .expect("Function to be registered");
-            scope.add_function(fun.name, id);
+        if let hir::Item::Fun(hir_id) = item {
+            let fun = ast_module.get_function(id);
+            scope.add_function(fun.name.into(), hir_id);
         }
     }
 
-    //  Pull definitions together
+    //  Create items
     for i in 0..(ast_module.len_functions() as u32) {
-        use self::hir::Item::*;
+        let item = ast::Item::Fun(ast::FunctionId::new(i));
+        create_item(item, &ast_module, &tree, scope, &hir_module);
+    }
 
-        let id = ast::Item::Fun(ast::FunctionId::new(i));
-        let item = create_item(id, &ast_module, &tree, scope, &hir_module);
+    //  Create CFGs for functions.
+    for i in 0..(ast_module.len_functions() as u32) {
+        use self::hir::ItemId;
 
-        match item {
-            Enum(_) => unimplemented!(),
-            Fun(fun) => {
-                let cfg = create_cfg_from_function(&hir_module.borrow(), fun);
-                cfg_registry.insert(cfg.source(), cfg);
-            },
-            Rec(_) => unimplemented!(),
-        }
+        let id = ast::FunctionId::new(i);
+        let body = create_function(id, &ast_module, &tree, scope, &hir_module);
+
+        let fun = hir::FunctionId::new_module(i);
+        let cfg = create_cfg_from_function(&hir_module.borrow(), &body, fun);
+        cfg_registry.insert(cfg.source(), cfg);
     }
 
     //  Finally, interpret the expression.
@@ -92,28 +91,22 @@ fn create_ast(
     Parser::new().parse(raw, interner)
 }
 
-fn create_prototype(
+fn create_name(
     item: ast::Item,
     ast_module: &ast::Module,
     tree: &ast::Tree,
     scope: &scp::Scope,
     hir_module: &cell::RefCell<hir::Module>,
 )
-    -> hir::Prototype
+    -> hir::Item
 {
     use self::sem::{Context, GraphBuilder};
 
     let repository = hir::RepositorySnapshot::default();
 
     let context = Context::default();
-    let mut builder = GraphBuilder::new(scope, &repository, &context, ast_module, tree, &hir_module);
-    builder.name(item);
-    let result = builder.prototype(item);
-
-    println!("create_prototype - {:?}", result);
-    println!("");
-
-    result
+    GraphBuilder::new(scope, &repository, &context, ast_module, tree, &hir_module)
+        .name(item)
 }
 
 fn create_item(
@@ -134,6 +127,29 @@ fn create_item(
         .item(item);
 
     println!("create_item - {:#?}", result);
+    println!("");
+
+    result
+}
+
+fn create_function(
+    function: ast::FunctionId,
+    ast_module: &ast::Module,
+    tree: &ast::Tree,
+    scope: &scp::Scope,
+    hir_module: &cell::RefCell<hir::Module>,
+)
+    -> hir::Tree
+{
+    use self::sem::{Context, GraphBuilder};
+
+    let repository = hir::RepositorySnapshot::default();
+
+    let context = Context::default();
+    let result = GraphBuilder::new(scope, &repository, &context, ast_module, tree, &hir_module)
+        .function(function);
+
+    println!("create_function - {:#?}", result);
     println!("");
 
     result
@@ -167,13 +183,7 @@ fn create_cfg_from_value(module: &hir::Module, tree: &hir::Tree)
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let id = if let Some(hir::Root::Expression(e)) = tree.get_root() {
-        e
-    } else {
-        unreachable!("Not an expression!");
-    };
-
-    let result = GraphBuilder::new(module).from_expression(tree, id);
+    let result = GraphBuilder::new(module).from_expression(tree);
 
     println!("create_cfg_from_value -\n");
     sir::display_graph(&result, module);
@@ -182,15 +192,15 @@ fn create_cfg_from_value(module: &hir::Module, tree: &hir::Tree)
     result
 }
 
-fn create_cfg_from_function(module: &hir::Module, fun: hir::FunctionId)
+fn create_cfg_from_function(module: &hir::Module, tree: &hir::Tree, fun: hir::FunctionId)
     -> sir::Graph
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result = GraphBuilder::new(module).from_function(module, fun);
+    let result = GraphBuilder::new(module).from_function(tree, fun);
 
     println!("create_cfg_from_function - {:?} =>\n",
-        module.get_function_prototype(fun).name);
+        module.get_function(fun).name);
     sir::display_graph(&result, module);
     println!("");
 

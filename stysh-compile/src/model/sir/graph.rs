@@ -433,7 +433,7 @@ impl<'a> BlockDisplayer<'a> {
         match callable {
             Builtin(b) => write!(f, "{}", b),
             Function(fun) => {
-                let fun = self.registry.get_function_prototype(fun);
+                let fun = self.registry.get_function(fun);
                 write!(f, "<{}>", fun.name.1)
             },
         }
@@ -466,8 +466,8 @@ impl<'a> BlockDisplayer<'a> {
 
         match type_ {
             Builtin(b) => write!(f, "{}", b),
-            Enum(id, _) => write!(f, "<{}>", self.registry.get_enum(id).prototype.name.1),
-            Rec(id, _) => write!(f, "<{}>", self.registry.get_record(id).prototype.name.1),
+            Enum(id, _) => write!(f, "<{}>", self.registry.get_enum(id).name.1),
+            Rec(id, _) => write!(f, "<{}>", self.registry.get_record(id).name.1),
             Tuple(tup) => self.display_tuple_types(tup.fields, f),
             Unresolved(..) => unimplemented!("Unresolved Type!"),
         }

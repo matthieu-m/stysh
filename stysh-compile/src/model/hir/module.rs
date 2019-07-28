@@ -39,8 +39,6 @@ pub struct Module {
 
     /// Enum canonical name to EnumId.
     enum_lookup: HashMap<ItemIdentifier, EnumId>,
-    /// Prototype of a given Enum.
-    enum_prototype: Table<EnumId, EnumPrototype>,
     /// Definition of a given Enum.
     enum_: Table<EnumId, Enum>,
 
@@ -50,8 +48,6 @@ pub struct Module {
 
     /// Record canonical name to RecordId.
     record_lookup: HashMap<ItemIdentifier, RecordId>,
-    /// Prototype of a given Record.
-    record_prototype: Table<RecordId, RecordPrototype>,
     /// Definition of a given Record.
     record: Table<RecordId, Record>,
 
@@ -61,10 +57,8 @@ pub struct Module {
 
     /// Function canonical name to FunctionId.
     function_lookup: HashMap<ItemIdentifier, FunctionId>,
-    /// Prototype of a given Function.
-    function_prototype: Table<FunctionId, FunctionPrototype>,
-    /// Definition of a given Function.
-    function: Table<FunctionId, Function>,
+    /// Signature of a given Function.
+    function: Table<FunctionId, FunctionSignature>,
 
     //
     //  Components
@@ -108,46 +102,20 @@ impl Module {
         self.enum_lookup.get(&name).cloned()
     }
 
-    /// Returns the prototype of the enum associated to the ID.
-    ///
-    /// #   Panics
-    ///
-    /// Panics if the ID is incorrect.
-    pub fn get_enum_prototype(&self, id: EnumId) -> EnumPrototype {
-        let id = Self::localize(id);
-        *self.enum_prototype.at(&id)
-    }
-
     /// Inserts an Enum name.
     ///
     /// Returns the EnumId created for it.
     pub fn push_enum_name(&mut self, name: ItemIdentifier) -> EnumId {
         debug_assert!(self.enum_.len() == self.enum_lookup.len());
-        debug_assert!(self.enum_.len() == self.enum_prototype.len());
         debug_assert!(!self.enum_lookup.contains_key(&name));
 
         let id = EnumId::new_module(self.enum_.len() as u32);
         let local_id = Self::localize(id);
 
-        self.enum_prototype.push(&local_id, Default::default());
         self.enum_.push(&local_id, Default::default());
         self.enum_lookup.insert(name, id);
 
         id
-    }
-
-    /// Sets an EnumPrototype.
-    ///
-    /// Overrides any existing prototype and definition for this ID.
-    pub fn set_enum_prototype(&mut self, id: EnumId, prototype: EnumPrototype) {
-        debug_assert!(id.is_module());
-        debug_assert!(self.enum_.len() == self.enum_lookup.len());
-        debug_assert!(self.enum_.len() == self.enum_prototype.len());
-        debug_assert!(self.enum_lookup.get(&prototype.name) == Some(&id));
-
-        let id = Self::localize(id);
-        *self.enum_prototype.at_mut(&id) = prototype;
-        *self.enum_.at_mut(&id) = Default::default();
     }
 
     /// Sets an Enum.
@@ -156,11 +124,8 @@ impl Module {
     pub fn set_enum(&mut self, id: EnumId, enum_: Enum) {
         debug_assert!(id.is_module());
         debug_assert!(self.enum_.len() == self.enum_lookup.len());
-        debug_assert!(self.enum_.len() == self.enum_prototype.len());
 
         let id = Self::localize(id);
-        debug_assert!(*self.enum_prototype.at(&id) == enum_.prototype);
-
         *self.enum_.at_mut(&id) = enum_;
     }
 
@@ -181,46 +146,20 @@ impl Module {
         self.record_lookup.get(&name).cloned()
     }
 
-    /// Returns the prototype of the record associated to the ID.
-    ///
-    /// #   Panics
-    ///
-    /// Panics if the ID is incorrect.
-    pub fn get_record_prototype(&self, id: RecordId) -> RecordPrototype {
-        let id = Self::localize(id);
-        *self.record_prototype.at(&id)
-    }
-
     /// Inserts a Record name.
     ///
     /// Returns the RecordId created for it.
     pub fn push_record_name(&mut self, name: ItemIdentifier) -> RecordId {
         debug_assert!(self.record.len() == self.record_lookup.len());
-        debug_assert!(self.record.len() == self.record_prototype.len());
         debug_assert!(!self.record_lookup.contains_key(&name));
 
         let id = RecordId::new_module(self.record.len() as u32);
         let local_id = Self::localize(id);
 
-        self.record_prototype.push(&local_id, Default::default());
         self.record.push(&local_id, Default::default());
         self.record_lookup.insert(name, id);
 
         id
-    }
-
-    /// Sets a RecordPrototype.
-    ///
-    /// Overrides any existing prototype and definition for this ID.
-    pub fn set_record_prototype(&mut self, id: RecordId, prototype: RecordPrototype) {
-        debug_assert!(id.is_module());
-        debug_assert!(self.record.len() == self.record_lookup.len());
-        debug_assert!(self.record.len() == self.record_prototype.len());
-        debug_assert!(self.record_lookup.get(&prototype.name) == Some(&id));
-
-        let id = Self::localize(id);
-        *self.record_prototype.at_mut(&id) = prototype;
-        *self.record.at_mut(&id) = Default::default();
     }
 
     /// Sets a Record.
@@ -229,11 +168,8 @@ impl Module {
     pub fn set_record(&mut self, id: RecordId, record: Record) {
         debug_assert!(id.is_module());
         debug_assert!(self.record.len() == self.record_lookup.len());
-        debug_assert!(self.record.len() == self.record_prototype.len());
 
         let id = Self::localize(id);
-        debug_assert!(*self.record_prototype.at(&id) == record.prototype);
-
         *self.record.at_mut(&id) = record;
     }
 
@@ -254,59 +190,30 @@ impl Module {
         self.function_lookup.get(&name).cloned()
     }
 
-    /// Returns the definition of the function associated to the ID.
-    ///
-    /// #   Panics
-    ///
-    /// Panics if the ID is incorrect.
-    pub fn get_function(&self, id: FunctionId) -> &Function {
-        let id = Self::localize(id);
-        self.function.at(&id)
-    }
-
     /// Inserts a Function name.
     ///
     /// Returns the FunctionId created for it.
     pub fn push_function_name(&mut self, name: ItemIdentifier) -> FunctionId {
         debug_assert!(self.function.len() == self.function_lookup.len());
-        debug_assert!(self.function.len() == self.function_prototype.len());
         debug_assert!(!self.function_lookup.contains_key(&name));
 
         let id = FunctionId::new_module(self.function.len() as u32);
         let local_id = Self::localize(id);
 
-        self.function_prototype.push(&local_id, Default::default());
         self.function.push(&local_id, Default::default());
         self.function_lookup.insert(name, id);
 
         id
     }
 
-    /// Sets a FunctionPrototype.
-    ///
-    /// Overrides any existing prototype and definition for this ID.
-    pub fn set_function_prototype(&mut self, id: FunctionId, prototype: FunctionPrototype) {
-        debug_assert!(id.is_module());
-        debug_assert!(self.function.len() == self.function_lookup.len());
-        debug_assert!(self.function.len() == self.function_prototype.len());
-        debug_assert!(self.function_lookup.get(&prototype.name) == Some(&id));
-
-        let id = Self::localize(id);
-        *self.function_prototype.at_mut(&id) = prototype;
-        *self.function.at_mut(&id) = Default::default();
-    }
-
     /// Sets a Function.
     ///
     /// Overrides any existing definition for this ID.
-    pub fn set_function(&mut self, id: FunctionId, function: Function) {
+    pub fn set_function(&mut self, id: FunctionId, function: FunctionSignature) {
         debug_assert!(id.is_module());
         debug_assert!(self.function.len() == self.function_lookup.len());
-        debug_assert!(self.function.len() == self.function_prototype.len());
 
         let id = Self::localize(id);
-        debug_assert!(*self.function_prototype.at(&id) == function.prototype);
-
         *self.function.at_mut(&id) = function;
     }
 
@@ -436,9 +343,9 @@ impl Registry for Module {
         *self.record.at(&id)
     }
 
-    fn get_function_prototype(&self, id: FunctionId) -> FunctionPrototype {
+    fn get_function(&self, id: FunctionId) -> FunctionSignature {
         let id = Self::localize(id);
-        *self.function_prototype.at(&id)
+        *self.function.at(&id)
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

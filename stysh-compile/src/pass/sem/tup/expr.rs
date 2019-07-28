@@ -77,7 +77,7 @@ impl<'a> ExprUnifier<'a> {
                 Some(Action::Update(fun.result_type())),
             Function(id) => {
                 let registry = self.core.registry();
-                let function = registry.get_function_prototype(id);
+                let function = registry.get_function(id);
                 Some(Action::Update(registry.get_type(function.result)))
             },
             Unknown(_) | Unresolved(_) =>
@@ -117,7 +117,7 @@ mod tests {
         let a = local.value_id(5, 1);
 
         let expr = {
-            let (_, p, _, s, _, _, v) = env.source_factories();
+            let (_, p, s, _, _, v) = env.source_factories();
             let pat = p.var_typed(a, Type::int());
             s.var(pat, v.int(1, 10));
 
@@ -128,7 +128,7 @@ mod tests {
         };
 
         {
-            let (_, p, _, s, _, _, v) = env.target_factories();
+            let (_, p, s, _, _, v) = env.target_factories();
             let pat = p.var_typed(a, Type::int());
             s.var(pat, v.int(1, 10));
             v.int_ref(a, 17).build();

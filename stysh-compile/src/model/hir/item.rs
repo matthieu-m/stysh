@@ -2,14 +2,14 @@
 
 use std::convert;
 
-use basic::com::{Range, Span};
+use basic::com::Range;
 
 use model::hir::*;
 
 /// The ID of an Enum.
 pub type EnumId = Id<Enum>;
 /// The ID of a Function.
-pub type FunctionId = Id<Function>;
+pub type FunctionId = Id<FunctionSignature>;
 /// The ID of a Path.
 pub type PathId = Id<[PathComponent]>;
 /// The ID of a Record.
@@ -78,33 +78,17 @@ pub enum Type {
 /// An enum definition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Enum {
-    /// The prototype.
-    pub prototype: EnumPrototype,
-    /// The variants.
-    pub variants: Id<[RecordId]>,
-}
-
-/// An enum prototype.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct EnumPrototype {
     /// The enum identifier.
     pub name: ItemIdentifier,
     /// The enum range.
     pub range: Range,
+    /// The variants.
+    pub variants: Id<[RecordId]>,
 }
 
-/// A function.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Function {
-    /// The prototype.
-    pub prototype: FunctionPrototype,
-    /// The body.
-    pub body: Tree,
-}
-
-/// A function prototype.
+/// A function signature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct FunctionPrototype {
+pub struct FunctionSignature {
     /// The function identifier.
     pub name: ItemIdentifier,
     /// The function arguments.
@@ -127,35 +111,17 @@ pub enum PathComponent {
     //  TODO: add module.
 }
 
-/// An annotated prototype.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub enum Prototype {
-    /// An enum prototype.
-    Enum(EnumPrototype),
-    /// A function prototype.
-    Fun(FunctionPrototype),
-    /// A record prototype.
-    Rec(RecordPrototype),
-}
-
 /// A record.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Record {
-    /// The prototype.
-    pub prototype: RecordPrototype,
-    /// The definition.
-    pub definition: Tuple<TypeId>,
-}
-
-/// A record prototype.
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct RecordPrototype {
     /// The record identifier.
     pub name: ItemIdentifier,
     /// The record range.
     pub range: Range,
     /// The enum this record is a part of, if any, or undefined.
     pub enum_: Option<EnumId>,
+    /// The definition.
+    pub definition: Tuple<TypeId>,
 }
 
 
@@ -302,24 +268,6 @@ impl ItemId for TypeId {
 
 
 //
-//  Span Implementations
-//
-
-impl Span for Prototype {
-    /// Returns the range spanned by the prototype.
-    fn span(&self) -> Range {
-        use self::Prototype::*;
-
-        match self {
-            Enum(e) => e.range,
-            Fun(fun) => fun.range,
-            Rec(r) => r.range,
-        }
-    }
-}
-
-
-//
 //  Default Implementations
 //
 
@@ -341,16 +289,4 @@ impl convert::From<FunctionId> for Item {
 
 impl convert::From<RecordId> for Item {
     fn from(r: RecordId) -> Self { Item::Rec(r) }
-}
-
-impl convert::From<EnumPrototype> for Prototype {
-    fn from(e: EnumPrototype) -> Self { Prototype::Enum(e) }
-}
-
-impl convert::From<FunctionPrototype> for Prototype {
-    fn from(f: FunctionPrototype) -> Self { Prototype::Fun(f) }
-}
-
-impl convert::From<RecordPrototype> for Prototype {
-    fn from(r: RecordPrototype) -> Self { Prototype::Rec(r) }
 }

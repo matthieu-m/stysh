@@ -51,14 +51,16 @@ impl<'a> GraphBuilder<'a> {
         }
     }
 
-    /// Extracts and registers the prototypes of an item.
-    pub fn prototype(&mut self, item: ast::Item) -> hir::Prototype {
+    /// Translates and registers a full-fledged item.
+    pub fn item(&mut self, item: ast::Item)
+        -> hir::Item
+    {
         use self::ast::Item::*;
 
         match item {
-            Enum(e) => self.enum_prototype(e),
-            Fun(fun) => self.fun_prototype(fun),
-            Rec(r) => self.rec_prototype(r),
+            Enum(i) => self.enum_item(i),
+            Fun(f) => self.fun_item(f),
+            Rec(r) => self.rec_item(r),
         }
     }
 
@@ -74,24 +76,56 @@ impl<'a> GraphBuilder<'a> {
         let expr = self.symbol_mapper(self.scope, &registry, self.ast_tree, &tree)
             .value_of(e);
 
-        tree.borrow_mut().set_root_expression(expr);
+        tree.borrow_mut().set_root(expr);
 
         self.resolve(&tree);
 
         tree.into_inner()
     }
 
-    /// Translates and registers a full-fledged item.
-    pub fn item(&mut self, item: ast::Item)
-        -> hir::Item
-    {
-        use self::ast::Item::*;
+    /// Translates a function body.
+    pub fn function(&mut self, f: ast::FunctionId) -> hir::Tree {
+        let function = self.ast_module.get_function(f);
+        let id = self.hir_module.borrow().lookup_function(function.name.into())
+            .expect("Function to be registered");
 
-        match item {
-            Enum(i) => self.enum_item(i),
-            Fun(f) => self.fun_item(f),
-            Rec(r) => self.rec_item(r),
+        let signature = self.hir_module.borrow().get_function(id);
+        let body = cell::RefCell::new(hir::Tree::default());
+
+        {
+            use std::ops::Deref;
+
+            let module = self.hir_module.borrow();
+            let registry = Reg::new(&self.repository, module.deref());
+
+            body.borrow_mut().set_function(signature, &registry);
+
+            {
+                let body = body.borrow();
+                let arguments = body.get_function_arguments().expect("Arguments");
+    
+                let patterns = body.get_patterns(arguments.fields);
+                let names = body.get_names(arguments.names);
+                debug_assert!(patterns.len() == names.len());
+    
+                for (&name, &pattern) in names.iter().zip(patterns) {
+                    self.context.insert_value(name, pattern.into());
+                }
+            }
+
+            let ast_tree = self.ast_module.get_function_body(f);
+            let ast_arguments = self.ast_module.get_arguments(function.arguments);
+
+            let scope = self.function_scope(self.scope, ast_arguments);
+            let expr = self.symbol_mapper(&scope, &registry, ast_tree, &body)
+                .value_of(ast_tree.get_root_function().expect("Function Root").1);
+
+            body.borrow_mut().set_root(expr);
+
+            self.resolve(&body);
         }
+
+        body.into_inner()
     }
 }
 
@@ -117,21 +151,46 @@ impl<'a> GraphBuilder<'a> {
         hir::Item::Fun(id)
     }
 
-    fn enum_prototype(&mut self, e: ast::EnumId) -> hir::Prototype {
+    fn enum_item(&mut self, e: ast::EnumId) -> hir::Item {
         let e = self.ast_module.get_enum(e);
+        let id = self.hir_module.borrow().lookup_enum(e.name.into())
+            .expect("Enum to be registered");
+
+        let ast_variants = self.ast_module.get_inner_records(e.variants);
+        let mut variants = Vec::with_capacity(ast_variants.len());
+
+        for ev in ast_variants {
+            use self::ast::InnerRecord::*;
+
+            match *ev {
+                Tuple(..) => unimplemented!("InnerRecord::Tuple"),
+                Unit(name) => {
+                    let name = name.into();
+                    let range = ev.span();
+                    let enum_ = Some(id);
+                    let record = hir::Record { name, range, enum_, definition: hir::Tuple::unit() };
+
+                    let mut module = self.hir_module.borrow_mut();
+                    let id = module.push_record_name(name);
+                    module.set_record(id, record);
+
+                    variants.push(id);
+                },
+                Missing(_) | Unexpected(_) => (),
+            }
+        }
 
         let name = e.name.into();
         let range = Range::new(e.keyword as usize, 5).extend(e.name.span());
-        let prototype = hir::EnumPrototype { name, range, };
+        let variants = self.hir_module.borrow_mut().push_record_ids(variants);
 
-        let id = self.hir_module.borrow().lookup_enum(name)
-            .expect("Enum to be registered");
-        self.hir_module.borrow_mut().set_enum_prototype(id, prototype);
+        let enum_ = hir::Enum { name, range, variants };
+        self.hir_module.borrow_mut().set_enum(id, enum_);
 
-        hir::Prototype::Enum(prototype)
+        hir::Item::Enum(id)
     }
 
-    fn fun_prototype(&mut self, fun: ast::FunctionId) -> hir::Prototype {
+    fn fun_item(&mut self, fun: ast::FunctionId) -> hir::Item {
         let fun = self.ast_module.get_function(fun);
         let name = fun.name.into();
 
@@ -161,127 +220,11 @@ impl<'a> GraphBuilder<'a> {
             self.ast_module.get_type_range(fun.result).end_offset() - (fun.keyword as usize)
         );
 
-        let prototype = hir::FunctionPrototype { name, arguments, result, range, };
+        let signature = hir::FunctionSignature { name, arguments, result, range, };
 
         let id = self.hir_module.borrow().lookup_function(name)
             .expect("Function to be registered");
-        self.hir_module.borrow_mut().set_function_prototype(id, prototype);
-
-        hir::Prototype::Fun(prototype)
-    }
-
-    fn rec_prototype(&mut self, r: ast::RecordId) -> hir::Prototype {
-        let r = self.ast_module.get_record(r);
-
-        let name = r.name().into();
-        let range = r.span();
-        let enum_ = None;
-        let prototype = hir::RecordPrototype { name, range, enum_, };
-
-        let id = self.hir_module.borrow().lookup_record(name)
-            .expect("Record to be registered");
-        self.hir_module.borrow_mut().set_record_prototype(id, prototype);
-
-        hir::Prototype::Rec(prototype)
-    }
-
-    fn enum_item(&mut self, e: ast::EnumId) -> hir::Item {
-        let e = self.ast_module.get_enum(e);
-        let id = self.hir_module.borrow().lookup_enum(e.name.into())
-            .expect("Enum to be registered");
-
-        let ast_variants = self.ast_module.get_inner_records(e.variants);
-        let mut variants = Vec::with_capacity(ast_variants.len());
-
-        for ev in ast_variants {
-            use self::ast::InnerRecord::*;
-
-            match *ev {
-                Tuple(..) => unimplemented!("InnerRecord::Tuple"),
-                Unit(name) => {
-                    let name = name.into();
-                    let range = ev.span();
-                    let enum_ = Some(id);
-                    let prototype = hir::RecordPrototype { name, range, enum_, };
-                    let record = hir::Record { prototype, definition: hir::Tuple::unit() };
-
-                    let mut module = self.hir_module.borrow_mut();
-                    let id = module.push_record_name(name);
-                    module.set_record_prototype(id, prototype);
-                    module.set_record(id, record);
-
-                    variants.push(id);
-                },
-                Missing(_) | Unexpected(_) => (),
-            }
-        }
-
-        let prototype = self.hir_module.borrow().get_enum_prototype(id);
-        let variants = self.hir_module.borrow_mut().push_record_ids(variants);
-
-        let enum_ = hir::Enum { prototype, variants };
-        self.hir_module.borrow_mut().set_enum(id, enum_);
-
-        hir::Item::Enum(id)
-    }
-
-    fn fun_item(&mut self, f: ast::FunctionId) -> hir::Item {
-        let function = self.ast_module.get_function(f);
-        let id = self.hir_module.borrow().lookup_function(function.name.into())
-            .expect("Function to be registered");
-
-        let prototype = self.hir_module.borrow().get_function_prototype(id);
-        let body = cell::RefCell::new(hir::Tree::default());
-
-        {
-            use std::ops::Deref;
-
-            let module = self.hir_module.borrow();
-            let registry = Reg::new(&self.repository, module.deref());
-
-            let ast_tree = self.ast_module.get_function_body(f);
-            let ast_arguments = self.ast_module.get_arguments(function.arguments);
-
-            let arguments = {
-                let types = registry.get_type_ids(prototype.arguments.fields);
-                debug_assert!(ast_arguments.len() == types.len(),
-                    "Expecting matching length: {:?} vs {:?}", ast_arguments, types);
-
-                let mut arguments = Vec::with_capacity(ast_arguments.len());
-                let mut names = Vec::with_capacity(ast_arguments.len());
-
-                for (&a, &t) in ast_arguments.iter().zip(types) {
-                    let ty = registry.get_type(t);
-                    let name = a.name.into();
-
-                    let pattern = hir::Pattern::Var(name);
-                    let pattern = body.borrow_mut().push_pattern(ty, pattern, name.span());
-
-                    arguments.push(pattern);
-                    names.push(name);
-
-                    self.context.insert_value(name, pattern.into());
-                }
-
-                let fields = body.borrow_mut().push_patterns(arguments);
-                let names = body.borrow_mut().push_names(names);
-
-                hir::Tuple { fields, names }
-            };
-
-            let result = prototype.result;
-
-            let scope = self.function_scope(self.scope, ast_arguments);
-            let expr = self.symbol_mapper(&scope, &registry, ast_tree, &body)
-                .value_of(ast_tree.get_root_function().expect("Function Root").1);
-
-            body.borrow_mut().set_root_function(prototype.name, arguments, result, expr);
-
-            self.resolve(&body);
-        }
-
-        let function = hir::Function { prototype, body: body.into_inner() };
-        self.hir_module.borrow_mut().set_function(id, function);
+        self.hir_module.borrow_mut().set_function(id, signature);
 
         hir::Item::Fun(id)
     }
@@ -295,14 +238,16 @@ impl<'a> GraphBuilder<'a> {
         let id = self.hir_module.borrow().lookup_record(r.name().into())
             .expect("Record to be registered");
 
-        let prototype = self.hir_module.borrow().get_record_prototype(id);
+        let name = r.name().into();
+        let range = r.span();
+        let enum_ = None;
         let definition = match r.inner {
             Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
             Tuple(_, tup) => self.type_mapper(self.scope, self.ast_module, self.hir_module)
                 .tuple_of(tup),
         };
 
-        let record = hir::Record { prototype, definition, };
+        let record = hir::Record { name, range, enum_, definition, };
         self.hir_module.borrow_mut().set_record(id, record);
 
         hir::Item::Rec(id)
@@ -415,26 +360,6 @@ mod tests {
     use super::scp::mocks::MockScope;
 
     #[test]
-    fn prototype_enum() {
-        let env = Env::new(b":enum Simple { One, Two }");
-
-        let ast = {
-            let ast = env.ast();
-            ast.item()
-                    .enum_(6, 6)
-                    .push_unit(15, 3)
-                    .push_unit(20, 3)
-                    .build()
-        };
-        {
-            let hir = env.hir();
-            hir.proto().enum_(env.item_id(6, 6)).build();
-        }
-
-        assert_eq!(env.proto_of(ast), env.module());
-    }
-
-    #[test]
     fn item_enum() {
         let env = Env::new(b":enum Simple { One, Two }");
 
@@ -448,36 +373,19 @@ mod tests {
         };
 
         {
-            let hir = env.hir();
-            let (i, p) = (hir.item(), hir.proto());
+            let i = env.hir().item();
+            let name = env.item_id(6, 6);
+            let enum_id = env.enum_id(name);
 
-            let e = p.enum_(env.item_id(6, 6)).build();
-            let enum_id = env.enum_id(e.name);
             let (one, two) = (env.item_id(15, 3), env.item_id(20, 3));
 
-            i.enum_(e)
+            i.enum_(name)
                 .push(i.unit_of_enum(one, enum_id))
                 .push(i.unit_of_enum(two, enum_id))
                 .build();
         }
 
         assert_eq!(env.item_of(ast), env.module());
-    }
-
-    #[test]
-    fn prototype_rec() {
-        let env = Env::new(b":rec Simple;");
-
-        let ast = {
-            let ast = env.ast();
-            ast.item().record(5, 6).build()
-        };
-        {
-            let hir = env.hir();
-            hir.proto().rec(env.item_id(5, 6), 0).range(0, 12).build();
-        }
-
-        assert_eq!(env.proto_of(ast), env.module());
     }
 
     #[test]
@@ -489,11 +397,9 @@ mod tests {
             ast.item().record(5, 6).build()
         };
         {
-            let hir = env.hir();
-            let (i, p) = (hir.item(), hir.proto());
+            let i = env.hir().item();
 
-            let r = p.rec(env.item_id(5, 6), 0).range(0, 12).build();
-            i.rec(r).build();
+            i.rec(env.item_id(5, 6)).range(0, 12).build();
         }
 
         assert_eq!(env.item_of(ast), env.module());
@@ -516,17 +422,20 @@ mod tests {
         };
         {
             let hir = env.hir();
-            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+            let (i, t) = (hir.item(), hir.type_module());
 
-            let r = p.rec(env.item_id(5, 3), 0).range(0, 22).build();
-            i.rec(r).push(t.int()).push(t.string()).build();
+            i.rec(env.item_id(5, 3))
+                .range(0, 22)
+                .push(t.int())
+                .push(t.string())
+                .build();
         }
 
         assert_eq!(env.item_of(ast), env.module());
     }
 
     #[test]
-    fn prototype_fun() {
+    fn item_fun() {
         let env = Env::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
 
         let ast = {
@@ -543,15 +452,15 @@ mod tests {
         };
         {
             let hir = env.hir();
-            let (p, t) = (hir.proto(), hir.type_module());
-            p.fun(env.item_id(5, 3), t.int())
+            let (i, t) = (hir.item(), hir.type_module());
+            i.fun(env.item_id(5, 3), t.int())
                 .push(env.var_id(9, 1), t.int())
                 .push(env.var_id(17, 1), t.int())
                 .range(0, 31)
                 .build();
         }
 
-        assert_eq!(env.proto_of(ast), env.module());
+        assert_eq!(env.item_of(ast), env.module());
     }
 
     #[test]
@@ -574,22 +483,22 @@ mod tests {
             .build()
         };
 
-        {
+        let hir = {
             let hir = env.hir();
             let add = env.item_id(5, 3);
             let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
 
-            let prototype = {
-                let (p, td) = (hir.proto(), hir.type_module());
+            let signature = {
+                let (i, td) = (hir.item(), hir.type_module());
 
-                p.fun(add, td.int())
+                i.fun(add, td.int())
                     .push(a, td.int())
                     .push(b, td.int())
                     .range(0, 31)
                     .build()
             };
 
-            let arguments = env.arguments(prototype);
+            env.arguments(signature);
 
             let body = {
                 let (t, v) = (hir.type_(), hir.value());
@@ -606,10 +515,10 @@ mod tests {
                 v.block(call).build_with_type()
             };
 
-            hir.item().fun(prototype, env.function(prototype, arguments, body));
-        }
+            env.body(body)
+        };
 
-        assert_eq!(env.item_of(ast), env.module());
+        assert_eq!(env.function_of(ast), hir);
     }
 
     #[test]
@@ -634,19 +543,19 @@ mod tests {
                 .build()
         };
 
-        {
+        let hir = {
             let hir = env.hir();
             let add = env.item_id(5, 3);
 
-            let prototype = {
-                let (p, td) = (hir.proto(), hir.type_module());
+            let signature = {
+                let (i, td) = (hir.item(), hir.type_module());
 
-                p.fun(add, td.tuple().push(td.int()).push(td.int()).build())
+                i.fun(add, td.tuple().push(td.int()).push(td.int()).build())
                     .range(0, 24)
                     .build()
             };
 
-            let arguments = env.arguments(prototype);
+            env.arguments(signature);
 
             let body = {
                 let v = hir.value();
@@ -660,10 +569,10 @@ mod tests {
                 ).build_with_type()
             };
 
-            hir.item().fun(prototype, env.function(prototype, arguments, body));
-        }
+            env.body(body)
+        };
 
-        assert_eq!(env.item_of(ast), env.module());
+        assert_eq!(env.function_of(ast), hir);
     }
 
     struct Env {
@@ -708,7 +617,12 @@ mod tests {
         }
 
         fn enum_id(&self, name: hir::ItemIdentifier) -> hir::EnumId {
-            self.module.borrow().lookup_enum(name).expect("Enum to be registered")
+            let id = self.module.borrow().lookup_enum(name);
+            if let Some(id) = id {
+                id
+            } else {
+                self.module.borrow_mut().push_enum_name(name)
+            }
         }
 
         fn item_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
@@ -739,28 +653,6 @@ mod tests {
             )
         }
 
-        fn proto_of<I: convert::Into<ast::Item>>(&self, item: I) -> hir::Module {
-            let item: ast::Item = item.into();
-
-            println!("proto_of - {:#?}", item);
-            println!();
-
-            let result = {
-                let ast_module = self.ast_module.borrow();
-                let ast_tree = self.ast_tree.borrow();
-                let hir_module = cell::RefCell::default();
-                let mut builder = self.builder(&ast_module, &ast_tree, &hir_module);
-                builder.name(item);
-                builder.prototype(item);
-                hir_module.into_inner()
-            };
-
-            println!("proto_of - {:#?}", result);
-            println!();
-
-            result
-        }
-
         fn item_of<I: convert::Into<ast::Item>>(&self, item: I) -> hir::Module {
             let item: ast::Item = item.into();
 
@@ -773,7 +665,6 @@ mod tests {
                 let hir_module = cell::RefCell::default();
                 let mut builder = self.builder(&ast_module, &ast_tree, &hir_module);
                 builder.name(item);
-                builder.prototype(item);
                 builder.item(item);
                 hir_module.into_inner()
             };
@@ -784,50 +675,34 @@ mod tests {
             result
         }
 
-        fn arguments(&self, prototype: hir::FunctionPrototype) -> hir::Tuple<hir::PatternId> {
-            use std::ops::Deref;
-            use self::hir::Registry;
+        fn function_of(&self, fun: ast::FunctionId) -> hir::Tree {
+            println!("function_of - {:#?}", fun);
+            println!();
 
-            let repository = Default::default();
-            let module = self.module.borrow();
-            let registry = super::Reg::new(&repository, module.deref());
+            let result = {
+                let ast_module = self.ast_module.borrow();
+                let ast_tree = self.ast_tree.borrow();
+                let hir_module = cell::RefCell::default();
+                let mut builder = self.builder(&ast_module, &ast_tree, &hir_module);
+                builder.name(fun.into());
+                builder.item(fun.into());
+                builder.function(fun)
+            };
 
-            let mut body = self.tree.borrow_mut();
+            println!("function_of - {:#?}", result);
+            println!();
 
-            let types = registry.get_type_ids(prototype.arguments.fields);
-            let type_names = registry.get_names(prototype.arguments.names);
-            debug_assert!(types.len() == types.len(),
-                "Expecting matching lengths {:?} vs {:?}", types, type_names);
-
-            let mut arguments = Vec::with_capacity(types.len());
-            let mut names = Vec::with_capacity(types.len());
-
-            for (&name, &ty) in type_names.iter().zip(types) {
-                let ty = registry.get_type(ty);
-
-                let pattern = hir::Pattern::Var(name);
-                let pattern = body.push_pattern(ty, pattern, name.1);
-
-                arguments.push(pattern);
-                names.push(name);
-            }
-
-            let fields = body.push_patterns(arguments);
-            let names = body.push_names(names);
-
-            hir::Tuple { fields, names }
+            result
         }
 
-        fn function(
-            &self,
-            prototype: hir::FunctionPrototype,
-            arguments: hir::Tuple<hir::PatternId>,
-            expr: hir::ExpressionId
-        )
-            -> hir::Tree
-        {
+        fn arguments(&self, signature: hir::FunctionSignature) {
+            let module = self.module.borrow();
+            self.tree.borrow_mut().set_function(signature, &*module);
+        }
+
+        fn body(&self, expr: hir::ExpressionId) -> hir::Tree {
             let mut body = self.tree.borrow().clone();
-            body.set_root_function(prototype.name, arguments, prototype.result, expr);
+            body.set_root(expr);
 
             println!("function - {:#?}", body);
             println!();

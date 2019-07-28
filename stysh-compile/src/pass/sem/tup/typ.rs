@@ -145,7 +145,7 @@ impl<'a> TypeUnifier<'a> {
         if let Type::Rec(rec, ..) = registry.get_type(ty) {
             let record = registry.get_record(rec);
 
-            if record.prototype.enum_ == Some(enum_) {
+            if record.enum_ == Some(enum_) {
                 return Some(Action::Cast(Type::Enum(enum_, path)));
             }
         }
@@ -277,7 +277,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let ty = t.unresolved();
         let linked = t.unresolved();
 
@@ -289,7 +289,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let ty = t.unresolved();
 
         assert_eq!(
@@ -303,7 +303,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let ty = t.unresolved();
 
         assert_eq!(
@@ -317,7 +317,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let ty = t.unresolved();
 
         assert_eq!(
@@ -351,7 +351,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
 
         let ty = t.unresolved();
         let rel = Relation::Identical(t.tuple().push(t.int()).push(t.int()).build());
@@ -368,7 +368,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let i = t.int();
 
         let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
@@ -393,7 +393,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"(.first: Int, .second: Int)");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let (b, i) = (t.bool_(), t.int());
         let (first, second) = (local.value_id(1, 6), local.value_id(14, 7));
 
@@ -419,7 +419,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let i = t.int();
 
         let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
@@ -444,7 +444,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let i = t.int();
 
         let ty = t.tuple().push(t.unresolved()).push(t.unresolved()).build();
@@ -458,7 +458,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"(.first: Int, .second: Int)");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let i = t.int();
         let (first, second) = (local.value_id(1, 6), local.value_id(14, 7));
 
@@ -475,7 +475,7 @@ mod tests {
         let env = Env::default();
         let local = env.local(b"(.first: Int, .second: Int, .third: Int)");
 
-        let (_, _, _, _, _, t, _) = env.source_factories();
+        let (_, _, _, _, t, _) = env.source_factories();
         let i = t.int();
         let (first, second, third) =
             (local.value_id(1, 6), local.value_id(14, 7), local.value_id(28, 6));

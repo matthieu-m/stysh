@@ -110,7 +110,7 @@ impl<'a> TypeFetcher<'a> {
         {
             let registry = self.core.registry();
             for r in registry.get_record_ids(registry.get_enum(e).variants) {
-                if name.id() == registry.get_record(*r).prototype.name.id() {
+                if name.id() == registry.get_record(*r).name.id() {
                     record = Some(Type::Rec(*r, path));
                     break;
                 }

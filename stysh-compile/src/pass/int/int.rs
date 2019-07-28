@@ -447,8 +447,8 @@ mod tests {
 
         let fun = {
             let hir = env.hir();
-            let (p, t) = (hir.proto(), hir.type_module());
-            p.fun(id, t.int()).build();
+            let (i, t) = (hir.item(), hir.type_module());
+            i.fun(id, t.int()).build();
             env.module.borrow().lookup_function(id)
                 .expect("Function to be registered")
         };
@@ -495,11 +495,10 @@ mod tests {
 
         let rec = {
             let hir = env.hir();
-            let (i, p, t) = (hir.item(), hir.proto(), hir.type_module());
+            let (i, t) = (hir.item(), hir.type_module());
 
             let name = hir::ItemIdentifier(Default::default(), range(5, 4));
-            let prototype = p.rec(name, 0).build();
-            let rec = i.rec(prototype)
+            let rec = i.rec(name)
                 .push(t.int())
                 .push(t.int())
                 .build();

@@ -347,7 +347,7 @@ impl Tree {
 
     /// Returns the callables associated to the id.
     pub fn get_callables(&self, id: Id<[Callable]>) -> &[Callable] {
-        self.callables.get(&id)
+        if id.is_empty() { &[] } else { self.callables.get(&id) }
     }
 
     /// Inserts a new array of callables.
@@ -357,13 +357,13 @@ impl Tree {
         where
             I: IntoIterator<Item = Callable>,
     {
-        self.callables.extend(callables).unwrap_or(Id::empty())
+        self.callables.create(callables).unwrap_or(Id::empty())
     }
 
 
     /// Returns the expressions associated to the id.
     pub fn get_expressions(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
-        self.expressions.get(&id)
+        if id.is_empty() { &[] } else { self.expressions.get(&id) }
     }
 
     /// Inserts a new array of expressions.
@@ -373,7 +373,7 @@ impl Tree {
         where
             I: IntoIterator<Item = ExpressionId>,
     {
-        self.expressions.extend(expressions).unwrap_or(Id::empty())
+        self.expressions.create(expressions).unwrap_or(Id::empty())
     }
 
 
@@ -382,7 +382,7 @@ impl Tree {
 
     /// Returns the names associated to the id.
     pub fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
-        self.names.get(&id)
+        if id.is_empty() { &[] } else { self.names.get(&id) }
     }
 
     /// Inserts a new array of names.
@@ -392,7 +392,7 @@ impl Tree {
         where
             I: IntoIterator<Item = ValueIdentifier>,
     {
-        self.names.extend(names).unwrap_or(Id::empty())
+        self.names.create(names).unwrap_or(Id::empty())
     }
 
 
@@ -401,7 +401,7 @@ impl Tree {
 
     /// Returns the path associated to the id.
     pub fn get_path(&self, id: Id<[PathComponent]>) -> &[PathComponent] {
-        self.paths.get(&id)
+        if id.is_empty() { &[] } else { self.paths.get(&id) }
     }
 
     /// Inserts a new array of path components.
@@ -411,13 +411,13 @@ impl Tree {
         where
             I: IntoIterator<Item = PathComponent>,
     {
-        self.paths.extend(path).unwrap_or(Id::empty())
+        self.paths.create(path).unwrap_or(Id::empty())
     }
 
 
     /// Returns the patterns associated to the id.
     pub fn get_patterns(&self, id: Id<[PatternId]>) -> &[PatternId] {
-        self.patterns.get(&id)
+        if id.is_empty() { &[] } else { self.patterns.get(&id) }
     }
 
     /// Inserts a new array of patterns.
@@ -427,13 +427,13 @@ impl Tree {
         where
             I: IntoIterator<Item = PatternId>,
     {
-        self.patterns.extend(patterns).unwrap_or(Id::empty())
+        self.patterns.create(patterns).unwrap_or(Id::empty())
     }
 
 
     /// Returns the statements associated to the id.
     pub fn get_statements(&self, id: Id<[Statement]>) -> &[Statement] {
-        self.stmts.get(&id)
+        if id.is_empty() { &[] } else { self.stmts.get(&id) }
     }
 
     /// Inserts a new array of statements.
@@ -443,7 +443,7 @@ impl Tree {
         where
             I: IntoIterator<Item = Statement>,
     {
-        self.stmts.extend(stmts).unwrap_or(Id::empty())
+        self.stmts.create(stmts).unwrap_or(Id::empty())
     }
 
 
@@ -452,7 +452,7 @@ impl Tree {
 
     /// Returns the type ids associated to the id.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        self.types.get(&id)
+        if id.is_empty() { &[] } else { self.types.get(&id) }
     }
 
     /// Inserts a new array of type ids.
@@ -462,7 +462,7 @@ impl Tree {
         where
             I: IntoIterator<Item = TypeId>,
     {
-        self.types.extend(types).unwrap_or(Id::empty())
+        self.types.create(types).unwrap_or(Id::empty())
     }
 
     /// Inserts a new array of types.
@@ -474,7 +474,7 @@ impl Tree {
     {
         let tys = &mut self.tys;
         self.types
-            .extend(
+            .create(
                 types.into_iter()
                     .map(|t| Self::push_type_impl(tys, t))
             )

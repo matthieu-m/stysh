@@ -16,6 +16,8 @@
 //! -   direct addressing of individual nodes, through their ID.
 //! -   in-place mutation of nodes, as more information trickles through.
 
+mod multi_table;
 mod table;
 
+pub use self::multi_table::*;
 pub use self::table::*;

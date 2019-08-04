@@ -264,7 +264,7 @@ impl Module {
 
     /// Returns the arguments associated to the ID.
     pub fn get_arguments(&self, id: Id<[Argument]>) -> &[Argument] {
-        self.arguments.get(&id)
+        if id.is_empty() { &[] } else { self.arguments.get(&id) }
     }
 
     /// Pushes a new slice of arguments.
@@ -279,7 +279,7 @@ impl Module {
 
     /// Returns the identifiers associated to the ID.
     pub fn get_identifiers(&self, id: Id<[Identifier]>) -> &[Identifier] {
-        self.identifiers.get(&id)
+        if id.is_empty() { &[] } else { self.identifiers.get(&id) }
     }
 
     /// Pushes a new slice of expression IDs.
@@ -294,7 +294,7 @@ impl Module {
 
     /// Returns the inner records associated to the ID.
     pub fn get_inner_records(&self, id: Id<[InnerRecord]>) -> &[InnerRecord] {
-        self.inner_records.get(&id)
+        if id.is_empty() { &[] } else { self.inner_records.get(&id) }
     }
 
     /// Pushes a new slice of inner records.
@@ -309,7 +309,7 @@ impl Module {
 
     /// Returns the positions associated to the ID.
     pub fn get_positions(&self, id: Id<[u32]>) -> &[u32] {
-        self.positions.get(&id)
+        if id.is_empty() { &[] } else { self.positions.get(&id) }
     }
 
     /// Pushes a new slice of positions.
@@ -324,7 +324,7 @@ impl Module {
 
     /// Returns the type IDs associated to the ID.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        self.type_ids.get(&id)
+        if id.is_empty() { &[] } else { self.type_ids.get(&id) }
     }
 
     /// Pushes a new slice of type IDs.
@@ -461,18 +461,12 @@ type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
 
 impl Module {
     /// Generic Push.
-    fn push_slice<T: Clone + ?Sized>(
+    fn push_slice<T: Copy>(
         table: &mut KeyedMulti<T>,
         value: &[T]
     )
         -> Id<[T]>
     {
-        if value.is_empty() {
-            return Id::empty();
-        }
-
-        let id = Id::new(table.len() as u32);
-        table.push(&id, value);
-        id
+        table.create(value.iter().cloned()).unwrap_or(Id::empty())
     }
 }

@@ -229,21 +229,9 @@ impl Module {
         where
             I: IntoIterator<Item = ValueIdentifier>
     {
-        self.names.extend(names)
+        self.names.create(names)
             .map(Self::modularize)
             .unwrap_or(Id::empty())
-    }
-
-    /// Returns the path components associated to the ID.
-    ///
-    /// #   Panics
-    ///
-    /// Panics if the ID is incorrect.
-    pub fn get_path_components_mut(&mut self, id: Id<[PathComponent]>)
-        -> &mut [PathComponent]
-    {
-        let id = Self::localize(id);
-        self.path_components.get_mut(&id)
     }
 
     /// Pushes a new slice of path components.
@@ -254,7 +242,7 @@ impl Module {
         where
             I: IntoIterator<Item = PathComponent>
     {
-        self.path_components.extend(path_components)
+        self.path_components.create(path_components)
             .map(Self::modularize)
             .unwrap_or(Id::empty())
     }
@@ -266,7 +254,7 @@ impl Module {
         where
             I: IntoIterator<Item = RecordId>
     {
-        self.record_ids.extend(record_ids)
+        self.record_ids.create(record_ids)
             .map(Self::modularize)
             .unwrap_or(Id::empty())
     }
@@ -316,7 +304,7 @@ impl Module {
         where
             I: IntoIterator<Item = TypeId>
     {
-        self.type_ids.extend(type_ids)
+        self.type_ids.create(type_ids)
             .map(Self::modularize)
             .unwrap_or(Id::empty())
     }
@@ -392,7 +380,7 @@ impl Store<Type, TypeId> for Module {
 
 impl MultiStore<ValueIdentifier> for Module {
     fn get_slice(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
-        self.get_names(id)
+        if id.is_empty() { &[] } else { self.get_names(id) }
     }
 
     fn push_slice(&mut self, items: &[ValueIdentifier]) -> Id<[ValueIdentifier]> {
@@ -402,7 +390,7 @@ impl MultiStore<ValueIdentifier> for Module {
 
 impl MultiStore<PathComponent> for Module {
     fn get_slice(&self, id: Id<[PathComponent]>) -> &[PathComponent] {
-        self.get_path_components(id)
+        if id.is_empty() { &[] } else { self.get_path_components(id) }
     }
 
     fn push_slice(&mut self, items: &[PathComponent]) -> Id<[PathComponent]> {
@@ -412,7 +400,7 @@ impl MultiStore<PathComponent> for Module {
 
 impl MultiStore<TypeId> for Module {
     fn get_slice(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        self.get_type_ids(id)
+        if id.is_empty() { &[] } else { self.get_type_ids(id) }
     }
 
     fn push_slice(&mut self, items: &[TypeId]) -> Id<[TypeId]> {

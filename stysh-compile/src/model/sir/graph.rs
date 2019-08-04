@@ -101,26 +101,26 @@ impl Graph {
         }
 
         for n in 0..tree.len_names() as u32 {
-            self.names.extend(tree.get_names(Id::new(n)).iter().cloned());
+            self.names.create(tree.get_names(Id::new(n)).iter().cloned());
         }
 
         for p in 0..tree.len_paths() as u32 {
-            self.paths.extend(tree.get_path(Id::new(p)).iter().cloned());
+            self.paths.create(tree.get_path(Id::new(p)).iter().cloned());
         }
 
         for t in 0..tree.len_type_ids() as u32 {
-            self.type_ids.extend(tree.get_type_ids(Id::new(t)).iter().cloned());
+            self.type_ids.create(tree.get_type_ids(Id::new(t)).iter().cloned());
         }
     }
 
     /// Returns the names associated to the id.
     pub fn get_names(&self, id: Id<[hir::ValueIdentifier]>) -> &[hir::ValueIdentifier] {
-        self.names.get(&id)
+        if id.is_empty() { &[] } else { self.names.get(&id) }
     }
 
     /// Returns the path associated to the id.
     pub fn get_path(&self, id: Id<[hir::PathComponent]>) -> &[hir::PathComponent] {
-        self.paths.get(&id)
+        if id.is_empty() { &[] } else { self.paths.get(&id) }
     }
 
     /// Returns the number of types.
@@ -131,7 +131,7 @@ impl Graph {
 
     /// Returns the types associated to the id.
     pub fn get_type_ids(&self, id: Id<[hir::TypeId]>) -> &[hir::TypeId] {
-        self.type_ids.get(&id)
+        if id.is_empty() { &[] } else { self.type_ids.get(&id) }
     }
 
     /// Inserts a new array of types.
@@ -141,7 +141,7 @@ impl Graph {
         where
             I: IntoIterator<Item = hir::TypeId>,
     {
-        self.type_ids.extend(type_ids).unwrap_or(Id::empty())
+        self.type_ids.create(type_ids).unwrap_or(Id::empty())
     }
 }
 
@@ -279,7 +279,7 @@ impl Block {
 
     /// Returns the values associated to the id.
     pub fn get_instruction_ids(&self, id: Id<[ValueId]>) -> &[ValueId] {
-        self.instruction_ids.get(&id)
+        if id.is_empty() { &[] } else { self.instruction_ids.get(&id) }
     }
 
     /// Inserts a new array of values.
@@ -289,12 +289,12 @@ impl Block {
         where
             I: IntoIterator<Item = ValueId>,
     {
-        self.instruction_ids.extend(instruction_ids).unwrap_or(Id::empty())
+        self.instruction_ids.create(instruction_ids).unwrap_or(Id::empty())
     }
 
     /// Returns the values associated to the id.
     pub fn get_jump_ids(&self, id: Id<[JumpId]>) -> &[JumpId] {
-        self.jump_ids.get(&id)
+        if id.is_empty() { &[] } else { self.jump_ids.get(&id) }
     }
 
     /// Inserts a new array of values.
@@ -304,7 +304,7 @@ impl Block {
         where
             I: IntoIterator<Item = JumpId>,
     {
-        self.jump_ids.extend(jump_ids).unwrap_or(Id::empty())
+        self.jump_ids.create(jump_ids).unwrap_or(Id::empty())
     }
 }
 

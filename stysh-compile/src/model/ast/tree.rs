@@ -256,7 +256,7 @@ impl Tree {
 
     /// Returns the arguments associated to the ID.
     pub fn get_arguments(&self, id: Id<[Argument]>) -> &[Argument] {
-        self.arguments.get(&id)
+        if id.is_empty() { &[] } else { self.arguments.get(&id) }
     }
 
     /// Pushes a new slice of arguments.
@@ -271,7 +271,7 @@ impl Tree {
 
     /// Returns the expression IDs associated to the ID.
     pub fn get_expression_ids(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
-        self.expression_ids.get(&id)
+        if id.is_empty() { &[] } else { self.expression_ids.get(&id) }
     }
 
     /// Pushes a new slice of expression IDs.
@@ -286,7 +286,7 @@ impl Tree {
 
     /// Returns the identifiers associated to the ID.
     pub fn get_identifiers(&self, id: Id<[Identifier]>) -> &[Identifier] {
-        self.identifiers.get(&id)
+        if id.is_empty() { &[] } else { self.identifiers.get(&id) }
     }
 
     /// Pushes a new slice of expression IDs.
@@ -301,7 +301,7 @@ impl Tree {
 
     /// Returns the pattern IDs associated to the ID.
     pub fn get_pattern_ids(&self, id: Id<[PatternId]>) -> &[PatternId] {
-        self.pattern_ids.get(&id)
+        if id.is_empty() { &[] } else { self.pattern_ids.get(&id) }
     }
 
     /// Pushes a new slice of pattern IDs.
@@ -316,7 +316,7 @@ impl Tree {
 
     /// Returns the positions associated to the ID.
     pub fn get_positions(&self, id: Id<[u32]>) -> &[u32] {
-        self.positions.get(&id)
+        if id.is_empty() { &[] } else { self.positions.get(&id) }
     }
 
     /// Pushes a new slice of positions.
@@ -331,7 +331,7 @@ impl Tree {
 
     /// Returns the statement IDs associated to the ID.
     pub fn get_statement_ids(&self, id: Id<[StatementId]>) -> &[StatementId] {
-        self.statement_ids.get(&id)
+        if id.is_empty() { &[] } else { self.statement_ids.get(&id) }
     }
 
     /// Pushes a new slice of statement IDs.
@@ -346,7 +346,7 @@ impl Tree {
 
     /// Returns the string fragments associated to the ID.
     pub fn get_string_fragments(&self, id: Id<[StringFragment]>) -> &[StringFragment] {
-        self.string_fragments.get(&id)
+        if id.is_empty() { &[] } else { self.string_fragments.get(&id) }
     }
 
     /// Pushes a new slice of string fragments.
@@ -361,7 +361,7 @@ impl Tree {
 
     /// Returns the type IDs associated to the ID.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        self.type_ids.get(&id)
+        if id.is_empty() { &[] } else { self.type_ids.get(&id) }
     }
 
     /// Pushes a new slice of type IDs.
@@ -522,18 +522,12 @@ type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
 
 impl Tree {
     /// Generic Push.
-    fn push_slice<T: Clone + ?Sized>(
+    fn push_slice<T: Copy>(
         table: &mut KeyedMulti<T>,
         value: &[T]
     )
         -> Id<[T]>
     {
-        if value.is_empty() {
-            return Id::empty();
-        }
-
-        let id = Id::new(table.len() as u32);
-        table.push(&id, value);
-        id
+        table.create(value.iter().cloned()).unwrap_or(Id::empty())
     }
 }

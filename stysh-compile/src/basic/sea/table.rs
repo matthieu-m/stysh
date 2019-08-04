@@ -1,12 +1,11 @@
-//! Tables.
+//! Table.
 //!
-//! The `Table` and `MultiTable` are collections geared toward tracking
-//! one-to-one and one-to-many relationships with O(1) memory allocations.
+//! The `Table` is a collection geared toward tracking one-to-one relationships
+//! with O(1) memory allocations.
 //!
-//! In exchange for the efficiency, they only offer a limited interface.
+//! In exchange for the efficiency, it only offers a limited interface.
 
 use std::{fmt, iter, marker};
-use std::ops::Range;
 use std::slice::from_raw_parts_mut;
 
 //
@@ -35,19 +34,6 @@ pub struct Table<K: TableIndex, V> {
     _marker: marker::PhantomData<*const K>,
 }
 
-/// MultiTable.
-///
-/// An append-only container mapping a key to multiple values.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct MultiTable<K: TableIndex, V> {
-    //  Maps a key to the range of indices of its values.
-    index: Vec<Range<u32>>,
-    //  Pool of all values, in order of insertion.
-    values: Vec<V>,
-    //  Marker for ownership reasons.
-    _marker: marker::PhantomData<*const K>,
-}
-
 /// TableIter
 ///
 /// An iterator over a Table.
@@ -63,24 +49,6 @@ pub struct TableIter<'a, K: TableIndex, V> {
 #[derive(Debug)]
 pub struct TableIterMut<'a, K: TableIndex, V> {
     table: &'a mut Table<K, V>,
-    index: usize,
-}
-
-/// MultiTableIter
-///
-/// An iterator over a MultiTable.
-#[derive(Clone, Debug)]
-pub struct MultiTableIter<'a, K: TableIndex, V> {
-    table: &'a MultiTable<K, V>,
-    index: usize,
-}
-
-/// MultiTableIterMut
-///
-/// A mutable iterator over a MultiTable.
-#[derive(Debug)]
-pub struct MultiTableIterMut<'a, K: TableIndex, V> {
-    table: &'a mut MultiTable<K, V>,
     index: usize,
 }
 
@@ -304,220 +272,6 @@ impl<K: fmt::Debug + TableIndex, V: Clone + Default> Table<K, V> {
     }
 }
 
-impl<K: TableIndex, V> MultiTable<K, V> {
-    /// Creates an instance.
-    pub fn new() -> Self { Default::default() }
-
-    /// Returns true if and only if the map contains no element.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn is_empty(&self) -> bool { self.index.is_empty() }
-
-    /// Returns the number of keys in the map.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn len(&self) -> usize { self.index.len() }
-
-    /// Clears the map.
-    ///
-    /// # Complexity
-    ///
-    /// O(keys.len() + values.len())
-    pub fn clear(&mut self) {
-        self.index.clear();
-        self.values.clear();
-    }
-
-    /// Returns true if and only if the map contains the key.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn contains(&self, key: &K) -> bool { key.index() < self.len() }
-
-    /// Returns the values associated to a key.
-    ///
-    /// If there is no such key, returns an empty slice.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn get<'a>(&'a self, key: &K) -> &'a [V] {
-        let range = self.range(key);
-        &self.values[range]
-    }
-
-    /// Returns the values associated to a key.
-    ///
-    /// If there is no such key, returns an empty slice.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn get_mut<'a>(&'a mut self, key: &K) -> &'a mut [V] {
-        let range = self.range(key);
-        &mut self.values[range]
-    }
-
-    /// Returns the values associated to the two keys.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    ///
-    /// # Panics
-    ///
-    /// Panic if the keys are equal.
-    pub fn get_duo_mut<'a>(&'a mut self, one: &K, two: &K)
-        -> (&'a mut [V], &'a mut [V])
-    {
-        let first = self.range(one);
-        let second = self.range(two);
-
-        assert!(first != second || first.start == first.end);
-
-        let ptr = self.values.as_mut_ptr();
-        let len = self.values.len();
-
-        //  Safety checks:
-        //  -   non-overlapping slices.
-        //  -   lifetime constrained.
-        unsafe { (
-            part_of::<'a>(ptr, len, first),
-            part_of::<'a>(ptr, len, second),
-        ) }
-    }
-
-    /// Returns the values associated to the three keys.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    ///
-    /// # Panics
-    ///
-    /// Panics if any two keys are equal.
-    pub fn get_trio_mut<'a>(&'a mut self, one: &K, two: &K, three: &K)
-        -> (&'a mut [V], &'a mut [V], &'a mut [V])
-    {
-        let first = self.range(one);
-        let second = self.range(two);
-        let third = self.range(three);
-
-        assert!(first != second || first.start == first.end);
-        assert!(first != third || first.start == first.end);
-        assert!(second != third || second.start == second.end);
-
-        let ptr = self.values.as_mut_ptr();
-        let len = self.values.len();
-
-        //  Safety checks:
-        //  -   non-overlapping slices.
-        //  -   lifetime constrained.
-        unsafe { (
-            part_of::<'a>(ptr, len, first),
-            part_of::<'a>(ptr, len, second),
-            part_of::<'a>(ptr, len, third),
-        ) }
-    }
-
-    /// Returns an Iterator over the values of the Table.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn iter<'a>(&'a self) -> MultiTableIter<'a, K, V> {
-        iter::IntoIterator::into_iter(self)
-    }
-
-    /// Returns an Iterator over the mutable values of the Table.
-    ///
-    /// # Complexity
-    ///
-    /// O(1)
-    pub fn iter_mut<'a>(&'a mut self) -> MultiTableIterMut<'a, K, V> {
-        iter::IntoIterator::into_iter(self)
-    }
-
-    /// Extends the table with a new key and its values.
-    ///
-    /// Returns the generated key, if any element was inserted.
-    ///
-    /// # Complexity
-    ///
-    /// Amortized O(1)
-    pub fn extend<I>(&mut self, into_iterator: I) -> Option<K>
-        where
-            I: IntoIterator<Item = V>,
-    {
-        let start = self.values.len() as u32;
-        self.values.extend(into_iterator);
-        let end = self.values.len() as u32;
-
-        if start == end { 
-            None
-        } else {
-            let index = self.index.len();
-            self.index.push(Range { start, end, });
-            Some(K::from_index(index))
-        }
-    }
-}
-
-impl<K: fmt::Debug + TableIndex, V: Clone> MultiTable<K, V> {
-    /// Inserts a new key and its value.
-    ///
-    /// # Complexity
-    ///
-    /// Amortized O(1)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the key's index differs from `self.len()`.
-    pub fn push(&mut self, key: &K, values: &[V]) {
-        let index = key.index();
-
-        assert!(
-            index == self.len(),
-            "Cannot insert {:?} mapping to {:?} != {:?}.", key, index, self.len()
-        );
-
-        self.insert(key, values)
-    }
-
-    /// Inserts a new key and its values.
-    ///
-    /// # Complexity
-    ///
-    /// Amortized O(1 + values.len())
-    ///
-    /// # Panics
-    ///
-    /// Panics if the key already exists.
-    pub fn insert(&mut self, key: &K, values: &[V]) {
-        fn make_range(index: usize, length: usize) -> Range<u32> {
-            Range { start: index as u32, end: (index + length) as u32 }
-        }
-
-        let index = key.index();
-        let start = self.values.len();
-
-        assert!(
-            index >= self.index.len(),
-            "Cannot insert {:?} mapping to {:?} >= {:?}.", key, index, self.index.len()
-        );
-
-        self.index.resize(index, 0..0);
-
-        self.values.extend_from_slice(values);
-        self.index.push(make_range(start, values.len()));
-    }
-}
-
 //
 //  Trait Implementations
 //
@@ -531,25 +285,11 @@ impl<K: TableIndex, V> Default for Table<K, V> {
     }
 }
 
-impl<K: TableIndex, V> Default for MultiTable<K, V> {
-    fn default() -> Self {
-        MultiTable {
-            index: Default::default(),
-            values: Default::default(),
-            _marker: marker::PhantomData,
-        }
-    }
-}
-
 impl<K: TableIndex + fmt::Debug, V: fmt::Debug> fmt::Debug for Table<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "Table {{ values: {:?} }}", self.values)
-    }
-}
-
-impl<K: TableIndex + fmt::Debug, V: fmt::Debug> fmt::Debug for MultiTable<K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "MultiTable {{ index: {:?}, values: {:?} }}", self.index, self.values)
+        f.debug_struct("Table")
+            .field("values", &self.values)
+            .finish()
     }
 }
 
@@ -591,44 +331,6 @@ impl<'a, K: TableIndex, V> iter::Iterator for TableIterMut<'a, K, V> {
     }
 }
 
-impl<'a, K: TableIndex, V> iter::Iterator for MultiTableIter<'a, K, V> {
-    type Item = &'a [V];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.table.len() {
-            let index = K::from_index(self.index);
-            debug_assert!(index.index() == self.index);
-
-            self.index += 1;
-            Some(self.table.get(&index))
-        } else {
-            None
-        }
-    }
-}
-
-impl<'a, K: TableIndex, V> iter::Iterator for MultiTableIterMut<'a, K, V> {
-    type Item = &'a mut [V];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.table.len() {
-            let index = K::from_index(self.index);
-            assert!(index.index() == self.index);
-
-            //  Safety:
-            //  -   non-overlapping indices.
-            //  -   constrained lifetime.
-            let table: &'a mut MultiTable<K, V> =
-                unsafe { &mut *(self.table as *mut _) };
-
-            self.index += 1;
-            Some(table.get_mut(&index))
-        } else {
-            None
-        }
-    }
-}
-
 impl<'a, K: TableIndex, V> iter::IntoIterator for &'a Table<K, V> {
     type Item = &'a V;
     type IntoIter = TableIter<'a, K, V>;
@@ -647,46 +349,13 @@ impl<'a, K: TableIndex, V> iter::IntoIterator for &'a mut Table<K, V> {
     }
 }
 
-impl<'a, K: TableIndex, V> iter::IntoIterator for &'a MultiTable<K, V> {
-    type Item = &'a [V];
-    type IntoIter = MultiTableIter<'a, K, V>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        MultiTableIter { table: self, index: 0 }
-    }
-}
-
-impl<'a, K: TableIndex, V> iter::IntoIterator for &'a mut MultiTable<K, V> {
-    type Item = &'a mut [V];
-    type IntoIter = MultiTableIterMut<'a, K, V>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        MultiTableIterMut { table: self, index: 0 }
-    }
-}
-
 //
 //  Private Methods
 //
-
-impl<K: TableIndex, V> MultiTable<K, V> {
-    fn range(&self, key: &K) -> Range<usize> {
-        self.index.get(key.index())
-            .map(|r| Range { start: r.start as usize, end: r.end as usize })
-            .unwrap_or(Range { start: 0, end: 0 })
-    }
-}
 
 unsafe fn element_of<'a, T: 'a>(ptr: *mut T, len: usize, index: usize)
     -> Option<&'a mut T>
 {
     let slice = from_raw_parts_mut(ptr, len);
     slice.get_mut(index)
-}
-
-unsafe fn part_of<'a, T: 'a>(ptr: *mut T, len: usize, range: Range<usize>)
-    -> &'a mut [T]
-{
-    let slice = from_raw_parts_mut(ptr, len);
-    &mut slice[range]
 }

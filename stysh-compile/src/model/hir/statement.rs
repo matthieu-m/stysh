@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com;
+use crate::basic::com::{Range, Span};
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// A Statement.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -26,7 +26,7 @@ pub struct Binding {
     /// The right-hand side value.
     pub right: ExpressionId,
     /// The range of the statement.
-    pub range: com::Range,
+    pub range: Range,
 }
 
 /// A re-binding.
@@ -37,7 +37,7 @@ pub struct ReBinding {
     /// The right-hand side value.
     pub right: ExpressionId,
     /// The range of the re-binding statement.
-    pub range: com::Range,
+    pub range: Range,
 }
 
 /// A return statement.
@@ -46,7 +46,7 @@ pub struct Return {
     /// The returned value.
     pub value: ExpressionId,
     /// The range of the return statement.
-    pub range: com::Range,
+    pub range: Range,
 }
 
 //
@@ -71,24 +71,24 @@ impl Statement {
 //  Span Implementations
 //
 
-impl com::Span for Binding {
+impl Span for Binding {
     /// Range spanned by the re-binding.
-    fn span(&self) -> com::Range { self.range }
+    fn span(&self) -> Range { self.range }
 }
 
-impl com::Span for ReBinding {
+impl Span for ReBinding {
     /// Range spanned by the re-binding.
-    fn span(&self) -> com::Range { self.range }
+    fn span(&self) -> Range { self.range }
 }
 
-impl com::Span for Return {
+impl Span for Return {
     /// Range spanned by the return statement.
-    fn span(&self) -> com::Range { self.range }
+    fn span(&self) -> Range { self.range }
 }
 
-impl com::Span for Statement {
+impl Span for Statement {
     /// Range spanned by the statement.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         use self::Statement::*;
 
         match self {

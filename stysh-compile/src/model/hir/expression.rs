@@ -2,9 +2,9 @@
 
 use std::{convert, fmt};
 
-use basic::mem;
+use crate::basic::mem;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 //
 //  Public Values

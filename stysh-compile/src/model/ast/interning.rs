@@ -4,10 +4,10 @@
 
 use std::rc;
 
-use basic::com::{self, Span};
-use basic::mem;
+use crate::basic::com::{self, Span};
+use crate::basic::mem;
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// Resolver
 #[derive(Clone)]

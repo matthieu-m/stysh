@@ -5,11 +5,11 @@
 
 use std::{cell, collections::HashMap, fmt};
 
-use basic::com::{CoreId, Range};
-use basic::sea::{Table, TableIndex};
+use crate::basic::com::{CoreId, Range};
+use crate::basic::sea::{Table, TableIndex};
 
-use model::{hir, sir};
-use model::hir::ItemId;
+use crate::model::{hir, sir};
+use crate::model::hir::ItemId;
 
 use super::proto::*;
 
@@ -220,7 +220,7 @@ impl<'a> GraphBuilderImpl<'a> {
     {
         //  :and and :or have short-circuiting semantics.
         if let hir::Callable::Builtin(b) = callable {
-            use model::hir::BuiltinFunction::{And, Or};
+            use self::hir::BuiltinFunction::{And, Or};
 
             match b {
                 And | Or => return self.convert_call_shortcircuit(
@@ -264,7 +264,7 @@ impl<'a> GraphBuilderImpl<'a> {
     {
         //  Short circuiting expressions are close to sugar for if/else
         //  expressions.
-        use model::hir::BuiltinFunction::{And, Or};
+        use self::hir::BuiltinFunction::{And, Or};
 
         let arguments = self.tree.get_expressions(args.fields);
         debug_assert!(arguments.len() == 2, "Too many arguments: {:?}", arguments);
@@ -923,12 +923,12 @@ impl TableIndex for LocalExpressionId {
 mod tests {
     use std::rc;
 
-    use basic::com::Range;
-    use basic::mem;
+    use crate::basic::com::Range;
+    use crate::basic::mem;
 
-    use model::hir::builder::*;
-    use model::hir::*;
-    use model::sir;
+    use crate::model::hir::builder::*;
+    use crate::model::hir::*;
+    use crate::model::sir;
 
     #[test]
     fn value_simple() {

@@ -1,8 +1,8 @@
 //! String Literal lexing pass.
 
-use basic::{com, mem};
+use crate::basic::{com, mem};
 
-use model::tt::*;
+use crate::model::tt::*;
 use super::raw::RawToken;
 
 pub fn parse<'g>(
@@ -291,8 +291,8 @@ fn parse_fragment<'a>(quote: u8, offset: usize, raw: &'a [u8])
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
-    use model::tt::{Kind, StringFragment, Token};
+    use crate::basic::{com, mem};
+    use crate::model::tt::{Kind, StringFragment, Token};
     use super::super::raw::{RawKind, RawToken};
 
     #[test]

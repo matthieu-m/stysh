@@ -2,9 +2,9 @@
 
 use std::ops;
 
-use basic::mem::{JaggedArray, JaggedArraySnapshot, JaggedHashMap, JaggedHashMapSnapshot};
+use crate::basic::mem::{JaggedArray, JaggedArraySnapshot, JaggedHashMap, JaggedHashMapSnapshot};
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// Repository.
 ///

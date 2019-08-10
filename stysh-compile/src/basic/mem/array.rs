@@ -4,7 +4,7 @@
 
 use std::{cmp, fmt, hash, iter, mem, ops, ptr, slice, usize};
 
-use basic::mem::Arena;
+use crate::basic::mem::Arena;
 
 /// The Array structure
 ///

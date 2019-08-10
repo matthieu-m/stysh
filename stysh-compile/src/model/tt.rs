@@ -4,8 +4,8 @@
 //! raw tokens and simply groups them according to braces and quotes.
 
 use std;
-use basic::com::{self, Span};
-use basic::mem::{CloneInto, Arena};
+use crate::basic::com::{self, Span};
+use crate::basic::mem::{CloneInto, Arena};
 
 /// A List of Token Trees.
 pub type List<'a> = &'a [Node<'a>];

@@ -7,9 +7,9 @@
 
 use std::cell;
 
-use basic::com::{Id, Span, Store, MultiStore};
+use crate::basic::com::{Id, Span, Store, MultiStore};
 
-use model::{ast, hir};
+use crate::model::{ast, hir};
 
 use super::scp::Scope;
 
@@ -37,7 +37,7 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 {
     /// Translates a type into... a type!
     pub fn type_of(&self, t: ast::TypeId) -> hir::TypeId {
-        use model::ast::Type;
+        use self::ast::Type;
 
         match self.ast_store.get(t) {
             Type::Missing(_) => unimplemented!(),

@@ -1,6 +1,6 @@
 //! Type Fetcher
 
-use model::hir::*;
+use crate::model::hir::*;
 
 use super::com::*;
 

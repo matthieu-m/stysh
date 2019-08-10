@@ -21,11 +21,11 @@
 
 use std::collections::HashMap;
 
-use basic::com::{Range, Store, MultiStore};
-use basic::sea::{MultiTable, Table};
+use crate::basic::com::{Range, Store, MultiStore};
+use crate::basic::sea::{MultiTable, Table};
 
-use model::com::ModuleId;
-use model::hir::*;
+use crate::model::com::ModuleId;
+use crate::model::hir::*;
 
 /// Module.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

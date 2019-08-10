@@ -2,9 +2,9 @@
 //!
 //! This module defines the entry point of the interpreter.
 
-use basic::mem::InternerSnapshot;
-use model::{hir, sir};
-use model::hir::ItemId;
+use crate::basic::mem::InternerSnapshot;
+use crate::model::{hir, sir};
+use crate::model::hir::ItemId;
 use super::reg;
 
 /// Stysh Interpreter.
@@ -141,7 +141,7 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn evaluate(&mut self) -> BlockResult  {
-        use model::sir::TerminatorInstruction::*;
+        use self::sir::TerminatorInstruction::*;
 
         for i in self.block.get_instructions() {
             let value = self.eval_instruction(i);
@@ -228,7 +228,7 @@ impl<'a> BlockInterpreter<'a> {
     )
         -> Value
     {
-        use model::hir::BuiltinFunction::*;
+        use self::hir::BuiltinFunction::*;
         use self::Value::{Bool, Int};
 
         let left = args.get(0).map(|&v| self.get_value(v));
@@ -288,7 +288,7 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn load(&self, v: hir::BuiltinValue) -> Value {
-        use model::hir::BuiltinValue::*;
+        use self::hir::BuiltinValue::*;
 
         match v {
             Bool(b) => Value::Bool(b),
@@ -369,9 +369,9 @@ struct External<'a> {
 #[cfg(test)]
 mod tests {
     use std::mem;
-    use basic::com::Range;
-    use basic::mem::Interner;
-    use model::{hir, sir};
+    use crate::basic::com::Range;
+    use crate::basic::mem::Interner;
+    use crate::model::{hir, sir};
     use self::hir::builder::*;
     use super::Value;
     use super::super::reg::SimpleRegistry;

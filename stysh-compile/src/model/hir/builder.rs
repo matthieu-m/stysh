@@ -2,10 +2,10 @@
 
 use std::{self, cell, rc};
 
-use basic::mem;
-use basic::com::{Range, Span, Store, MultiStore};
+use crate::basic::mem;
+use crate::basic::com::{Range, Span, Store, MultiStore};
 
-use model::hir::*;
+use crate::model::hir::*;
 
 //
 //  High-Level Builders

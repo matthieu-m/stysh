@@ -6,10 +6,10 @@
 
 use std::iter;
 
-use basic::com::Span;
-use basic::mem;
+use crate::basic::com::Span;
+use crate::basic::mem;
 
-use model::tt::*;
+use crate::model::tt::*;
 use super::str;
 use super::raw::{AsciiSet, RawStream, RawToken};
 
@@ -398,8 +398,8 @@ impl<'a, 'b> iter::Iterator for RawPeekableStream<'a, 'b> {
 //
 #[cfg(test)]
 mod tests {
-    use basic::mem;
-    use model::tt::*;
+    use crate::basic::mem;
+    use crate::model::tt::*;
     use super::Lexer;
 
     #[test]

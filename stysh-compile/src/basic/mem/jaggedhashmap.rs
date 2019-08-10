@@ -18,7 +18,7 @@ use std::collections::hash_map;
 use std::hash::{self, BuildHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use basic::mem::{JaggedArray, JaggedArrayIterator, JaggedArraySnapshot};
+use crate::basic::mem::{JaggedArray, JaggedArrayIterator, JaggedArraySnapshot};
 
 /// JaggedHashMap
 #[derive(Clone, Debug)]

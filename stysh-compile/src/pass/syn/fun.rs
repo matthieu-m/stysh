@@ -4,8 +4,8 @@
 
 use std::cell;
 
-use model::ast::*;
-use model::tt;
+use crate::model::ast::*;
+use crate::model::tt;
 
 use super::com::RawParser;
 use super::{expr, typ};
@@ -154,7 +154,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
 #[cfg(test)]
 mod tests {
     use std::ops;
-    use model::ast::*;
+    use crate::model::ast::*;
     use super::super::com::tests::Env;
 
     #[test]

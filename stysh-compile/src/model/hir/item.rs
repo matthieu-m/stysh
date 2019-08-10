@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com::Range;
+use crate::basic::com::Range;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// The ID of an Enum.
 pub type EnumId = Id<Enum>;

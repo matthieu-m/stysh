@@ -18,10 +18,10 @@
 //! Note:   this layout is inspired by the realization that ECS are a great fit
 //!         for Rust.
 
-use basic::com::{Range, Store, MultiStore};
-use basic::sea::{MultiTable, Table};
+use crate::basic::com::{Range, Store, MultiStore};
+use crate::basic::sea::{MultiTable, Table};
 
-use model::hir::*;
+use crate::model::hir::*;
 
 //
 //  Public Types

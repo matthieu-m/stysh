@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use basic::com;
+use crate::basic::com;
 
 /// ModuleId.
 ///

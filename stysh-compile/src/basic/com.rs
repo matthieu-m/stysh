@@ -4,7 +4,7 @@
 
 use std::{self, cmp, convert, fmt, hash, iter, marker, num, ops, sync};
 
-use basic::sea::TableIndex;
+use crate::basic::sea::TableIndex;
 
 /// A fragment of source code.
 #[derive(Clone)]

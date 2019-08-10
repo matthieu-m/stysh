@@ -29,4 +29,4 @@ pub use self::typ::*;
 pub use self::module::Module;
 pub use self::tree::{Root, Tree};
 
-pub use model::tt::StringFragment;
+pub use crate::model::tt::StringFragment;

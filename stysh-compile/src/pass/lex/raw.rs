@@ -13,7 +13,7 @@
 
 use std::{fmt, iter, ops};
 
-use basic::com;
+use crate::basic::com;
 
 pub trait PeekableTokenStream<'a>: iter::Iterator<Item = RawToken<'a>> {
     fn underlying(&mut self) -> &mut iter::Peekable<RawStream<'a>>;
@@ -678,4 +678,3 @@ mod tests {
         RawStream::new(&raw).collect()
     }
 }
-

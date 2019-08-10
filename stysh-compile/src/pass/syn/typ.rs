@@ -4,10 +4,10 @@
 
 use std::cell;
 
-use basic::com::{self, Span, Store, MultiStore};
+use crate::basic::com::{Range, Span, Store, MultiStore};
 
-use model::tt::{Kind, Node};
-use model::ast::*;
+use crate::model::tt::{Kind, Node};
+use crate::model::ast::*;
 
 use super::com::RawParser;
 
@@ -110,7 +110,7 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
 
     fn parse_record(&mut self) -> RecordId {
         let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
-        let missing = com::Range::new(keyword.span().end_offset(), 0);
+        let missing = Range::new(keyword.span().end_offset(), 0);
 
         let (inner, semi) =
             self.parse_inner_record(Kind::SignSemiColon)
@@ -142,7 +142,7 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
             (Some(variant), None)
                 => Some((variant, variant.span().end_offset() as u32 - 1)),
             (None, Some(semi)) => Some((
-                InnerRecord::Missing(com::Range::new(semi as usize, 0)),
+                InnerRecord::Missing(Range::new(semi as usize, 0)),
                 semi
             )),
             (None, None) => unimplemented!(),
@@ -187,9 +187,9 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
         }
 
         let range = if let Some(n) = self.raw.peek() {
-            com::Range::new(n.span().offset(), 0)
+            Range::new(n.span().offset(), 0)
         } else {
-            com::Range::new(0, 0)
+            Range::new(0, 0)
         };
 
         self.store.borrow_mut().push(Type::Missing(range), range)
@@ -273,7 +273,7 @@ fn parse_type_impl<'a, 'tree, S>(raw: &mut RawParser<'a, 'tree>, store: &cell::R
 #[cfg(test)]
 mod tests {
     use std::ops;
-    use model::ast::*;
+    use crate::model::ast::*;
     use super::super::com::tests::Env;
 
     #[test]

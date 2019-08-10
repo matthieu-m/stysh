@@ -2,10 +2,10 @@
 
 use std::{cell, collections, fmt, marker};
 
-use basic::com::{Range, Span};
-use basic::sea::{self, TableIndex};
+use crate::basic::com::{Range, Span};
+use crate::basic::sea::{self, TableIndex};
 
-use model::hir::*;
+use crate::model::hir::*;
 
 use super::Relation;
 

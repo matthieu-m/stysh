@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// Registry.
 pub trait Registry: fmt::Debug {

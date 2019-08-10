@@ -5,7 +5,7 @@
 
 use std::mem;
 
-use basic::com::Range;
+use crate::basic::com::Range;
 use super::{
     JaggedArray, JaggedArraySnapshot, JaggedHashMap, JaggedHashMapSnapshot
 };

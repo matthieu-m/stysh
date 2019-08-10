@@ -2,7 +2,7 @@
 
 use std::cell;
 
-use model::hir::{Gvn, Registry, Tree};
+use crate::model::hir::{Gvn, Registry, Tree};
 
 use super::{fld, typ, Context, Scope};
 use super::com::*;

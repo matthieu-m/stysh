@@ -20,10 +20,10 @@
 
 use std::fmt;
 
-use basic::com::{IdIterator, Range};
-use basic::sea::{MultiTable, Table};
+use crate::basic::com::{IdIterator, Range};
+use crate::basic::sea::{MultiTable, Table};
 
-use model::hir::{self, ItemId};
+use crate::model::hir::{self, ItemId};
 
 use super::*;
 

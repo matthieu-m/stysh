@@ -1,8 +1,8 @@
 //! Field Fetcher
 
-use basic::com::Span;
+use crate::basic::com::Span;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 use super::com::*;
 

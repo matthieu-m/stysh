@@ -2,10 +2,10 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
-use basic::mem::InternId;
+use crate::basic::com::{Range, Span};
+use crate::basic::mem::InternId;
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// An ExpressionId.
 pub type ExpressionId = Id<Expression>;
@@ -94,7 +94,7 @@ pub struct FieldAccess {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum FieldIdentifier {
     /// Index of the field.
-    Index(u16, com::Range),
+    Index(u16, Range),
     /// Interned ID of the name of the field.
     Name(Identifier),
 }
@@ -158,7 +158,7 @@ pub enum PrefixOperator {
 
 /// A Value Identifier.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct VariableIdentifier(pub InternId, pub com::Range);
+pub struct VariableIdentifier(pub InternId, pub Range);
 
 //
 //  Implementations
@@ -176,7 +176,7 @@ impl FieldIdentifier {
     }
 
     /// Sets the range spanned by the FieldIdentifier.
-    pub fn with_range(self, range: com::Range) -> Self {
+    pub fn with_range(self, range: Range) -> Self {
         use self::FieldIdentifier::*;
 
         match self {
@@ -202,7 +202,7 @@ impl VariableIdentifier {
 
 impl Span for FieldIdentifier {
     /// Returns the range spanned by the field identifier.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         use self::FieldIdentifier::*;
 
         match self {
@@ -213,21 +213,21 @@ impl Span for FieldIdentifier {
 
 impl Span for Block {
     /// Returns the range spanned by the loop.
-    fn span(&self) -> com::Range {
-        com::Range::new(self.open as usize, (self.close + 1 - self.open) as usize)
+    fn span(&self) -> Range {
+        Range::new(self.open as usize, (self.close + 1 - self.open) as usize)
     }
 }
 
 impl Span for Loop {
     /// Returns the range spanned by the loop.
-    fn span(&self) -> com::Range {
-        com::Range::new(self.loop_ as usize, (self.close + 1 - self.loop_) as usize)
+    fn span(&self) -> Range {
+        Range::new(self.loop_ as usize, (self.close + 1 - self.loop_) as usize)
     }
 }
 
 impl Span for VariableIdentifier {
     /// Returns the range spanned by the variable identifier.
-    fn span(&self) -> com::Range { self.1 }
+    fn span(&self) -> Range { self.1 }
 }
 
 
@@ -294,7 +294,7 @@ impl convert::From<VariableIdentifier> for Expression {
 //
 #[cfg(test)]
 mod tests {
-    use basic::com;
+    use crate::basic::com::Range;
     use super::super::common::tests::Env;
 
     #[test]
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(env.tree().borrow().get_expression_range(id), range(3, 5));
     }
 
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
+    fn range(offset: usize, length: usize) -> Range {
+        Range::new(offset, length)
     }
 }

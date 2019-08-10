@@ -27,9 +27,9 @@
 //!     for all supported targets unless explicitly fiddling with target
 //!     specific functions (such as `std::mem::size_of`).
 
-pub use basic::com::Id;
+pub use crate::basic::com::Id;
 
-use model::hir;
+use crate::model::hir;
 use super::Block;
 
 /// Block ID.

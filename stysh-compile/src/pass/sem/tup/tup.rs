@@ -7,7 +7,7 @@
 
 use std::cell;
 
-use model::hir::{self, *};
+use crate::model::hir::{self, *};
 use super::{common, expr, pat, Context};
 
 /// The Type Unifier.

@@ -4,12 +4,12 @@
 
 use std::{cell, fmt};
 
-use basic::mem;
-use basic::com::{Range, Span, Store, MultiStore};
-use model::tt;
-use model::ast::*;
-use pass::syn::typ;
+use crate::basic::mem;
+use crate::basic::com::{Range, Span, Store, MultiStore};
+use crate::model::tt;
+use crate::model::ast::*;
 
+use super::typ;
 use super::com::RawParser;
 
 pub fn parse_expression<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
@@ -69,10 +69,10 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
     fn parse(&mut self) -> ExpressionId {
-        use model::tt::Kind as K;
+        use crate::model::tt::Kind as K;
 
         fn binop(kind: tt::Kind) -> Option<(Operator, Precedence)> {
-            use model::ast::BinaryOperator as B;
+            use crate::model::ast::BinaryOperator as B;
 
             //  Ordered from higher precedence to lower; higher binding tigther.
             match kind {
@@ -205,7 +205,7 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
     }
 
     fn parse_braced(&mut self, node: tt::Node<'a>) -> (Expression, Range) {
-        use model::tt::Kind as K;
+        use crate::model::tt::Kind as K;
 
         if let tt::Node::Braced(o, n, c) = node {
             self.raw.pop_node();
@@ -560,7 +560,7 @@ impl<'a, 'tree> PatternParser<'a, 'tree> {
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
     fn parse(&mut self) -> PatternId {
-        use model::tt::Kind as K;
+        use crate::model::tt::Kind as K;
 
         match self.raw.peek_kind() {
             Some(K::NameType) => self.parse_type_name(),
@@ -638,7 +638,7 @@ impl<'a, 'tree> StmtParser<'a, 'tree> {
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
     fn parse(&mut self) -> StatementId {
-        use model::tt::Kind as K;
+        use crate::model::tt::Kind as K;
 
         match self.raw.peek_kind() {
             Some(K::KeywordReturn) => self.parse_return(),
@@ -655,7 +655,7 @@ impl<'a, 'tree> StmtParser<'a, 'tree> {
     }
 
     fn parse_return(&mut self) -> StatementId {
-        use model::tt::Kind as K;
+        use crate::model::tt::Kind as K;
 
         let ret = self.pop(K::KeywordReturn).expect(":return");
 
@@ -781,7 +781,7 @@ fn parse_statements_impl<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
 #[cfg(test)]
 mod tests {
     use std::ops;
-    use model::ast::*;
+    use crate::model::ast::*;
     use super::super::com::tests::Env;
 
     #[test]

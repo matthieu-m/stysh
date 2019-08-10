@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com;
+use crate::basic::com;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// A Pattern
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]

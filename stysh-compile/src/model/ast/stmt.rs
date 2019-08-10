@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
+use crate::basic::com::{Range, Span};
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// A Statement ID.
 pub type StatementId = Id<Statement>;
@@ -72,7 +72,7 @@ pub struct VariableReBinding {
 
 impl Span for Statement {
     /// Returns the range spanned by the statement.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         use self::Statement::*;
 
         match *self {
@@ -85,16 +85,16 @@ impl Span for Statement {
 
 impl Span for Return {
     /// Returns the range spanned by the return statement.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         let len = self.semi + 1 - self.ret;
-        com::Range::new(self.ret as usize, len as usize)
+        Range::new(self.ret as usize, len as usize)
     }
 }
 
 impl Span for VariableBinding {
     /// Returns the range spanned by the binding.
-    fn span(&self) -> com::Range {
-        com::Range::new(
+    fn span(&self) -> Range {
+        Range::new(
             self.var as usize,
             (self.semi + 1 - self.var) as usize
         )
@@ -103,8 +103,8 @@ impl Span for VariableBinding {
 
 impl Span for VariableReBinding {
     /// Returns the range spanned by the binding.
-    fn span(&self) -> com::Range {
-        com::Range::new(
+    fn span(&self) -> Range {
+        Range::new(
             self.set as usize,
             (self.semi + 1 - self.set) as usize
         )

@@ -4,10 +4,10 @@
 
 use std::cell;
 
-use basic::com::{Range, Span};
+use crate::basic::com::{Range, Span};
 
-use model::{ast, hir};
-use model::hir::Registry;
+use crate::model::{ast, hir};
+use crate::model::hir::Registry;
 
 use super::Reg;
 use super::{nef, tup, Context};
@@ -351,11 +351,11 @@ impl<'a> GraphBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use std::{cell, convert, rc};
-    use basic::{com, mem};
-    use model::ast;
-    use model::ast::builder::Factory as SynFactory;
-    use model::hir;
-    use model::hir::builder::{Factory as SemFactory, RcModule, RcTree};
+    use crate::basic::{com, mem};
+    use crate::model::ast;
+    use crate::model::ast::builder::Factory as SynFactory;
+    use crate::model::hir;
+    use crate::model::hir::builder::{Factory as SemFactory, RcModule, RcTree};
     use super::Context;
     use super::scp::mocks::MockScope;
 

@@ -12,8 +12,8 @@
 
 use std::{cell, fmt, mem, ptr, slice, usize};
 
-use basic::com::Range;
-use basic::mem::Array;
+use crate::basic::com::Range;
+use crate::basic::mem::Array;
 
 /// The Arena structure
 ///

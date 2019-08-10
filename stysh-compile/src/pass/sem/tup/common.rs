@@ -2,7 +2,7 @@
 
 use std::cell;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 use super::{Context, RegRef};
 
@@ -58,14 +58,14 @@ impl<'a> CoreUnifier<'a> {
 pub mod tests {
     use std::{cell, rc};
 
-    use basic::{com, mem};
+    use crate::basic::{com, mem};
 
-    use model::hir::*;
-    use model::hir::builder::{
+    use crate::model::hir::*;
+    use crate::model::hir::builder::{
         Factory, ItemFactory, PatternFactory, StatementFactory,
         TypeFactory, TypeIdFactory, ExpressionFactory, RcModule, RcTree,
     };
-    use model::hir::interning::Resolver;
+    use crate::model::hir::interning::Resolver;
 
     use super::Context;
     use super::super::Relation;

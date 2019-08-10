@@ -7,10 +7,10 @@
 
 use std::cell;
 
-use basic::{com, mem};
-use basic::com::Span;
+use crate::basic::{com, mem};
+use crate::basic::com::Span;
 
-use model::{ast, hir};
+use crate::model::{ast, hir};
 use self::hir::Registry;
 
 use super::{Context, Relation};
@@ -43,7 +43,7 @@ impl<'a> SymbolMapper<'a> {
 
     /// Translates a pattern into... a pattern!
     pub fn pattern_of(&self, p: ast::PatternId) -> hir::PatternId {
-        use model::ast::Pattern;
+        use self::ast::Pattern;
 
         match self.ast_tree.get_pattern(p) {
             Pattern::Constructor(c) => self.pattern_of_constructor(c),
@@ -55,7 +55,7 @@ impl<'a> SymbolMapper<'a> {
 
     /// Translates a type into... a type!
     pub fn type_of(&self, t: ast::TypeId) -> hir::Type {
-        use model::ast::Type;
+        use self::ast::Type;
 
         match self.ast_tree.get_type(t) {
             Type::Missing(_) => unimplemented!(),
@@ -251,7 +251,7 @@ impl<'a> SymbolMapper<'a> {
     }
 
     fn value_of_expr(&self, expr: ast::ExpressionId) -> hir::ExpressionId {
-        use model::ast::Expression::*;
+        use self::ast::Expression::*;
 
         let range = self.ast_tree.get_expression_range(expr);
 
@@ -280,8 +280,8 @@ impl<'a> SymbolMapper<'a> {
     )
         -> hir::ExpressionId
     {
-        use model::ast::BinaryOperator as O;
-        use model::hir::BuiltinFunction as F;
+        use self::ast::BinaryOperator as O;
+        use self::hir::BuiltinFunction as F;
 
         let left = self.value_of_expr(left);
         let right = self.value_of_expr(right);
@@ -439,7 +439,7 @@ impl<'a> SymbolMapper<'a> {
     fn value_of_literal(&self, lit: ast::Literal, r: com::Range)
         -> hir::ExpressionId
     {
-        use model::ast::Literal::*;
+        use self::ast::Literal::*;
 
         match lit {
             Bool(b) => self.value_of_literal_bool(b, r),
@@ -507,8 +507,8 @@ impl<'a> SymbolMapper<'a> {
     )
         -> hir::ExpressionId
     {
-        use model::ast::PrefixOperator as O;
-        use model::hir::BuiltinFunction as F;
+        use self::ast::PrefixOperator as O;
+        use self::hir::BuiltinFunction as F;
 
         let arg = self.value_of_expr(expr);
         let arguments = hir::Tuple {
@@ -716,13 +716,13 @@ impl<'a> SymbolMapper<'a> {
 mod tests {
     use std::{cell, rc};
 
-    use basic::{com, mem};
-    use basic::com::Span;
+    use crate::basic::{com, mem};
+    use crate::basic::com::Span;
 
-    use model::{ast, hir};
-    use model::hir::Registry;
-    use model::ast::builder::Factory as AstFactory;
-    use model::hir::builder::{Factory as HirFactory, RcModule, RcTree};
+    use crate::model::{ast, hir};
+    use crate::model::hir::Registry;
+    use crate::model::ast::builder::Factory as AstFactory;
+    use crate::model::hir::builder::{Factory as HirFactory, RcModule, RcTree};
     use super::super::Context;
     use super::super::scp::{self, mocks::MockScope};
 

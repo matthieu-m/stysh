@@ -3,8 +3,8 @@
 use std::convert;
 use std::collections::HashMap;
 
-use basic::com::Range;
-use model::{hir, sir};
+use crate::basic::com::Range;
+use crate::model::{hir, sir};
 
 //  A sir::BasicBlock in the process of being constructed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -233,7 +233,7 @@ impl ProtoTerminator {
         -> sir::TerminatorInstruction
     {
         use self::ProtoTerminator::*;
-        use model::sir::TerminatorInstruction as TI;
+        use self::sir::TerminatorInstruction as TI;
 
         match self {
             Branch(value, protos) => {

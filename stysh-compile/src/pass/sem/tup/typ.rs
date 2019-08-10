@@ -1,6 +1,6 @@
 //! Type Unifier & Propagator.
 
-use model::hir::*;
+use crate::model::hir::*;
 use super::{common, RegRef, Relation};
 
 /// Action.
@@ -267,7 +267,7 @@ impl<'a> TypeUnifier<'a> {
 
 #[cfg(test)]
 mod tests {
-    use model::hir::*;
+    use crate::model::hir::*;
 
     use super::{common, Action, Relation, TypeUnifier};
     use super::super::tests::{Env, LocalEnv};

@@ -19,10 +19,10 @@
 
 use std::fmt;
 
-use basic::com::{Range, Span, Store, MultiStore};
-use basic::sea::{MultiTable, Table};
+use crate::basic::com::{Range, Span, Store, MultiStore};
+use crate::basic::sea::{MultiTable, Table};
 
-use model::ast::*;
+use crate::model::ast::*;
 
 //
 //  Public Types

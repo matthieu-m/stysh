@@ -1,10 +1,10 @@
 //! Common types.
 
-use basic::{com, mem};
+use crate::basic::{com, mem};
 
-use model::ast::*;
+use crate::model::ast::*;
 
-pub use basic::com::Id;
+pub use self::com::Id;
 
 /// A Constructor.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -107,9 +107,9 @@ impl<T> Default for Tuple<T> {
 pub mod tests {
     use std::cell;
 
-    use model::ast::{Module, Tree};
-    use model::ast::builder::{Factory, RcModule, RcTree};
-    use model::ast::interning::Resolver;
+    use crate::model::ast::{Module, Tree};
+    use crate::model::ast::builder::{Factory, RcModule, RcTree};
+    use crate::model::ast::interning::Resolver;
 
     pub struct Env {
         module: RcModule,

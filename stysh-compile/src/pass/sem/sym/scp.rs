@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use basic::mem;
+use crate::basic::mem;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// A Lexical Scope trait.
 pub trait Scope: fmt::Debug {
@@ -142,7 +142,7 @@ impl Scope for BuiltinScope {
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
-        use model::hir::BuiltinType::*;
+        use self::BuiltinType::*;
 
         let builtin = match name.id() {
             id if id == mem::InternId::bool_() => Some(Bool),
@@ -249,7 +249,7 @@ impl<'a> fmt::Debug for BlockScope<'a> {
 pub mod mocks {
     use std::collections::HashMap;
 
-    use model::hir::*;
+    use crate::model::hir::*;
 
     use super::{BuiltinScope, CallableCandidate, IdMap, Scope};
 
@@ -311,7 +311,7 @@ pub mod mocks {
 //
 #[cfg(test)]
 mod tests {
-    use basic::{com, mem};
+    use crate::basic::{com, mem};
 
     use super::{ValueIdentifier, Scope, BuiltinScope, FunctionScope};
 

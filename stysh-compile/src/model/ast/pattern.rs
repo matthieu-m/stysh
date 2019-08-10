@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com;
+use crate::basic::com::Range;
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// A PatternId.
 pub type PatternId = Id<Pattern>;
@@ -15,7 +15,7 @@ pub enum Pattern {
     /// A constructor.
     Constructor(Constructor<Pattern>),
     /// An ignored binding, always '_'.
-    Ignored(com::Range),
+    Ignored(Range),
     /// A tuple.
     Tuple(Tuple<Pattern>),
     /// A variable identifier.

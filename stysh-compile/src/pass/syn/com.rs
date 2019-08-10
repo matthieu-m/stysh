@@ -4,10 +4,10 @@
 
 use std::{cell, fmt};
 
-use basic::mem;
-use basic::com::{Range, Span, MultiStore};
-use model::{tt, ast};
-use pass::lex;
+use crate::basic::mem;
+use crate::basic::com::{Range, Span, MultiStore};
+use crate::model::{tt, ast};
+use crate::pass::lex;
 
 #[derive(Clone, Copy)]
 pub struct RawParser<'a, 'tree> {
@@ -305,13 +305,13 @@ impl<'a> fmt::Debug for ParserState<'a>  {
 #[cfg(test)]
 pub mod tests {
     use std::{cell, rc};
-    use basic::mem;
-    use model::ast;
-    use model::ast::builder::{
+    use crate::basic::mem;
+    use crate::model::ast;
+    use crate::model::ast::builder::{
         Factory, ExprFactory, ItemFactory, PatternFactory, StmtFactory,
         TypeFactory, RcModule, RcTree,
     };
-    use model::ast::interning::Resolver;
+    use crate::model::ast::interning::Resolver;
     use super::RawParser;
 
     pub struct Env {

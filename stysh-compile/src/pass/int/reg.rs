@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use model::{hir, sir};
+use crate::model::{hir, sir};
 
 /// Registry
 ///

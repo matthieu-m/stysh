@@ -1,6 +1,6 @@
 //! Pattern Unifier & Propagator.
 
-use model::hir::*;
+use crate::model::hir::*;
 use super::common::{self, Status};
 use super::typ::{self, Action};
 
@@ -54,7 +54,7 @@ impl<'a> PatternUnifier<'a> {
 
 #[cfg(test)]
 mod tests {
-    use model::hir::*;
+    use crate::model::hir::*;
 
     use super::{common, PatternUnifier, Status};
     use super::super::Relation;

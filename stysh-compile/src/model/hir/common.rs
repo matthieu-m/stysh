@@ -2,11 +2,11 @@
 
 use std::{convert, fmt};
 
-use basic::{com, mem};
-use basic::sea::TableIndex;
+use crate::basic::{com, mem};
+use crate::basic::sea::TableIndex;
 
-use model::ast;
-use model::hir::ItemId;
+use crate::model::ast;
+use crate::model::hir::ItemId;
 
 //
 //  Public Types (IDs)

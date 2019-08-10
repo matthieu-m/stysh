@@ -2,9 +2,9 @@
 
 use std::convert;
 
-use basic::com::{self, Span};
+use crate::basic::com::{Range, Span};
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// An EnumId.
 pub type EnumId = Id<Enum>;
@@ -80,11 +80,11 @@ pub struct Function {
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum InnerRecord {
     /// A missing record, when a semi-colon immediately appears for example.
-    Missing(com::Range),
+    Missing(Range),
     /// A tuple record, where fields are identified by index.
     Tuple(TypeIdentifier, Tuple<Type>),
     /// An unexpected range of tokens.
-    Unexpected(com::Range),
+    Unexpected(Range),
     /// A unit record, with no argument.
     Unit(TypeIdentifier),
 }
@@ -127,23 +127,23 @@ impl Record {
 
 impl Span for Argument {
     /// Returns the range spanned by the argument.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         let offset = self.name.span().offset();
         let end_offset = self.comma as usize + 1;
-        com::Range::new(offset, end_offset - offset)
+        Range::new(offset, end_offset - offset)
     }
 }
 
 impl Span for Enum {
     /// Returns the range spanned by the enum.
-    fn span(&self) -> com::Range {
-        com::Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
+    fn span(&self) -> Range {
+        Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
     }
 }
 
 impl Span for InnerRecord {
     /// Returns the range spanned by the inner record.
-    fn span(&self) -> com::Range {
+    fn span(&self) -> Range {
         use self::InnerRecord::*;
 
         match *self {
@@ -156,8 +156,8 @@ impl Span for InnerRecord {
 
 impl Span for Record {
     /// Returns the range spanned by the record.
-    fn span(&self) -> com::Range {
-        com::Range::new(self.keyword as usize, (self.semi_colon + 1 - self.keyword) as usize)
+    fn span(&self) -> Range {
+        Range::new(self.keyword as usize, (self.semi_colon + 1 - self.keyword) as usize)
     }
 }
 
@@ -182,7 +182,7 @@ impl convert::From<RecordId> for Item {
 //
 #[cfg(test)]
 mod tests {
-    use basic::com;
+    use crate::basic::com::Range;
     use super::super::common::tests::Env;
 
     #[test]
@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(env.module().borrow().get_function_range(item), range(3, 27));
     }
 
-    fn range(offset: usize, length: usize) -> com::Range {
-        com::Range::new(offset, length)
+    fn range(offset: usize, length: usize) -> Range {
+        Range::new(offset, length)
     }
 }

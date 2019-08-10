@@ -2,11 +2,11 @@
 
 use std::{self, cell, rc};
 
-use basic::com::{self, Span, Store, MultiStore};
+use crate::basic::com::{self, Span, Store, MultiStore};
 
-use model::tt;
-use model::ast::*;
-use model::ast::interning::Resolver;
+use crate::model::tt;
+use crate::model::ast::*;
+use crate::model::ast::interning::Resolver;
 
 //
 //  Module and Tree.

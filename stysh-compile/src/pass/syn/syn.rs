@@ -5,13 +5,13 @@
 
 use std::cell;
 
-use basic::mem;
+use crate::basic::mem;
 
-use model::tt;
-use model::ast::*;
+use crate::model::tt;
+use crate::model::ast::*;
 
-use pass::syn::com::RawParser;
-use pass::syn::{expr, fun, typ};
+use super::com::RawParser;
+use super::{expr, fun, typ};
 
 /// The Stysh parser.
 ///

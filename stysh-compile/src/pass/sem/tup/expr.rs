@@ -1,6 +1,6 @@
 //! Unifier of Expression Types.
 
-use model::hir::*;
+use crate::model::hir::*;
 use super::common::{self, Status};
 use super::typ::{self, Action};
 
@@ -104,7 +104,7 @@ impl<'a> ExprUnifier<'a> {
 
 #[cfg(test)]
 mod tests {
-    use model::hir::*;
+    use crate::model::hir::*;
 
     use super::{common, ExprUnifier, Status};
     use super::super::Relation;

@@ -2,10 +2,10 @@
 
 use std::convert;
 
-use basic::com::{Range, Span, Store, MultiStore};
-use basic::mem::InternId;
+use crate::basic::com::{Range, Span, Store, MultiStore};
+use crate::basic::mem::InternId;
 
-use model::ast::*;
+use crate::model::ast::*;
 
 /// A TypeId.
 pub type TypeId = Id<Type>;

@@ -2,7 +2,7 @@
 
 use std::cell;
 
-use model::hir::*;
+use crate::model::hir::*;
 
 /// Reg
 ///

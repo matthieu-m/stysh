@@ -21,8 +21,8 @@ impl<'a> NestedEntityFetcher<'a> {
     /// Creates a new instance.
     pub fn new(
         context: &'a Context,
-        scope: &'a Scope,
-        registry: &'a Registry,
+        scope: &'a dyn Scope,
+        registry: &'a dyn Registry,
         tree: &'a cell::RefCell<Tree>,
     )
         -> Self

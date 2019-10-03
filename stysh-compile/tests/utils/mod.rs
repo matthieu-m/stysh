@@ -95,7 +95,7 @@ fn create_name(
     item: ast::Item,
     ast_module: &ast::Module,
     tree: &ast::Tree,
-    scope: &scp::Scope,
+    scope: &dyn scp::Scope,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Item
@@ -113,7 +113,7 @@ fn create_item(
     item: ast::Item,
     ast_module: &ast::Module,
     tree: &ast::Tree,
-    scope: &scp::Scope,
+    scope: &dyn scp::Scope,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Item
@@ -136,7 +136,7 @@ fn create_function(
     function: ast::FunctionId,
     ast_module: &ast::Module,
     tree: &ast::Tree,
-    scope: &scp::Scope,
+    scope: &dyn scp::Scope,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Tree
@@ -159,7 +159,7 @@ fn create_value(
     expr: ast::ExpressionId,
     ast_module: &ast::Module,
     tree: &ast::Tree,
-    scope: &scp::Scope,
+    scope: &dyn scp::Scope,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Tree
@@ -211,7 +211,7 @@ fn evaluate(
     cfg: &sir::Graph,
     interner: mem::InternerSnapshot,
     module: &hir::Module,
-    registry: &int::Registry,
+    registry: &dyn int::Registry,
 )
     -> int::Value
 {

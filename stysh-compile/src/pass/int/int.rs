@@ -20,8 +20,8 @@ impl<'a> Interpreter<'a> {
     /// Creates a new instance of an interpreter.
     pub fn new(
         interner: InternerSnapshot,
-        hir_registry: &'a hir::Registry,
-        cfg_registry: &'a reg::Registry,
+        hir_registry: &'a dyn hir::Registry,
+        cfg_registry: &'a dyn reg::Registry,
     )
         -> Interpreter<'a>
     {
@@ -359,8 +359,8 @@ enum BlockResult {
 #[derive(Clone)]
 struct External<'a> {
     interner: InternerSnapshot,
-    hir_registry: &'a hir::Registry,
-    cfg_registry: &'a reg::Registry,
+    hir_registry: &'a dyn hir::Registry,
+    cfg_registry: &'a dyn reg::Registry,
 }
 
 //

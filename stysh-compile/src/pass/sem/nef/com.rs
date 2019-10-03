@@ -12,9 +12,9 @@ pub struct CoreFetcher<'a> {
     /// Context.
     pub context: &'a Context,
     /// Scope.
-    pub scope: &'a Scope,
+    pub scope: &'a dyn Scope,
     /// Registry.
-    pub registry: &'a Registry,
+    pub registry: &'a dyn Registry,
     /// Tree.
     pub tree: &'a cell::RefCell<Tree>,
 }
@@ -23,8 +23,8 @@ impl<'a> CoreFetcher<'a> {
     /// Creates a new instance.
     pub fn new(
         context: &'a Context,
-        scope: &'a Scope,
-        registry: &'a Registry,
+        scope: &'a dyn Scope,
+        registry: &'a dyn Registry,
         tree: &'a cell::RefCell<Tree>,
     )
         -> Self 

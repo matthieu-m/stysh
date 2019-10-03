@@ -17,7 +17,7 @@ use super::sym::{self, scp};
 ///
 /// Builds the Abstract Semantic Graph.
 pub struct GraphBuilder<'a> {
-    scope: &'a scp::Scope,
+    scope: &'a dyn scp::Scope,
     repository: &'a hir::RepositorySnapshot,
     context: &'a Context,
     ast_module: &'a ast::Module,
@@ -28,7 +28,7 @@ pub struct GraphBuilder<'a> {
 impl<'a> GraphBuilder<'a> {
     /// Creates a new instance of the graph builder.
     pub fn new(
-        scope: &'a scp::Scope,
+        scope: &'a dyn scp::Scope,
         repository: &'a hir::RepositorySnapshot,
         context: &'a Context,
         ast_module: &'a ast::Module,
@@ -292,7 +292,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn function_scope<'b>(
         &'b self,
-        parent: &'b scp::Scope,
+        parent: &'b dyn scp::Scope,
         patterns: &[ast::Argument],
     )
         -> scp::FunctionScope<'b>
@@ -302,8 +302,8 @@ impl<'a> GraphBuilder<'a> {
 
     fn symbol_mapper<'b>(
         &'b self,
-        scope: &'b scp::Scope,
-        registry: &'b hir::Registry,
+        scope: &'b dyn scp::Scope,
+        registry: &'b dyn hir::Registry,
         ast_tree: &'b ast::Tree,
         tree: &'b cell::RefCell<hir::Tree>,
     )
@@ -315,7 +315,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn type_mapper<'b, A, H>(
         &'b self,
-        scope: &'b scp::Scope,
+        scope: &'b dyn scp::Scope,
         ast_store: &'b A,
         hir_store: &'b cell::RefCell<H>,
     )
@@ -326,7 +326,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn nested<'b>(
         &'b self,
-        registry: &'b hir::Registry,
+        registry: &'b dyn hir::Registry,
         tree: &'b cell::RefCell<hir::Tree>,
     )
         -> nef::NestedEntityFetcher<'b>
@@ -336,7 +336,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn unifier<'b>(
         &'b self,
-        registry: &'b hir::Registry,
+        registry: &'b dyn hir::Registry,
         tree: &'b cell::RefCell<hir::Tree>,
     )
         -> tup::TypeUnifier<'b>

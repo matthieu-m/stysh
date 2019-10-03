@@ -12,7 +12,7 @@ pub struct CoreUnifier<'a> {
     /// Context.
     pub context: &'a Context,
     /// Registry.
-    pub registry: &'a Registry,
+    pub registry: &'a dyn Registry,
     /// Tree.
     pub tree: &'a cell::RefCell<Tree>,
 }
@@ -34,7 +34,7 @@ impl<'a> CoreUnifier<'a> {
     /// Creates a new instance.
     pub fn new(
         context: &'a Context,
-        registry: &'a Registry,
+        registry: &'a dyn Registry,
         tree: &'a cell::RefCell<Tree>,
     )
         -> Self 

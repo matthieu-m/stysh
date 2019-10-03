@@ -26,7 +26,7 @@ impl<'a> TypeUnifier<'a> {
     /// Creates a new instance.
     pub fn new(
         context: &'a Context,
-        registry: &'a hir::Registry,
+        registry: &'a dyn hir::Registry,
         tree: &'a cell::RefCell<hir::Tree>,
     )
         -> Self

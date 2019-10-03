@@ -17,12 +17,12 @@ use super::proto::*;
 ///
 /// Builds the Control-Flow Graph.
 pub struct GraphBuilder<'a> {
-    registry: &'a hir::Registry,
+    registry: &'a dyn hir::Registry,
 }
 
 impl<'a> GraphBuilder<'a> {
     /// Creates a new instance of a GraphBuilder.
-    pub fn new(registry: &'a hir::Registry) -> GraphBuilder {
+    pub fn new(registry: &'a dyn hir::Registry) -> GraphBuilder {
         GraphBuilder { registry }
     }
 
@@ -83,7 +83,7 @@ struct LocalExpression {
 }
 
 struct GraphBuilderImpl<'a> {
-    registry: &'a hir::Registry,
+    registry: &'a dyn hir::Registry,
     tree: &'a hir::Tree,
     blocks: Vec<ProtoBlock>,
     expression_offset: u32,
@@ -94,7 +94,7 @@ impl<'a> GraphBuilderImpl<'a> {
     //
     //  High-level methods
     //
-    fn new(registry: &'a hir::Registry, tree: &'a hir::Tree) -> Self {
+    fn new(registry: &'a dyn hir::Registry, tree: &'a hir::Tree) -> Self {
         let expression_offset = tree.len_expressions() as u32;
 
         GraphBuilderImpl {

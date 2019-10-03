@@ -119,13 +119,13 @@ impl<'a> Registry for Reg<'a> {
 /// A Registry unifiying over a local and a distant Registry.
 #[derive(Debug)]
 pub struct RegRef<'a> {
-    registry: &'a Registry,
+    registry: &'a dyn Registry,
     tree: cell::Ref<'a, Tree>,
 }
 
 impl<'a> RegRef<'a> {
     /// Creates an instance.
-    pub fn new(registry: &'a Registry, tree: cell::Ref<'a, Tree>) -> Self {
+    pub fn new(registry: &'a dyn Registry, tree: cell::Ref<'a, Tree>) -> Self {
         RegRef { registry, tree }
     }
 }

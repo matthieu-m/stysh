@@ -531,7 +531,7 @@ fn parse_integral_impl(raw: &[u8], allow_underscores: bool) -> Option<i64> {
     let mut value = 0;
     for byte in raw {
         match *byte {
-            b'0'...b'9' => {
+            b'0'..=b'9' => {
                 value *= 10;
                 value += (byte - b'0') as i64;
             },

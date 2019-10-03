@@ -248,9 +248,9 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
 
         self.stream.next().and_then(|tok| {
             match tok.raw[0] {
-                b'0'...b'9' => self.parse_number(tok),
-                b'A'...b'Z' => self.parse_name_type(tok),
-                b'a'...b'z' => {
+                b'0'..=b'9' => self.parse_number(tok),
+                b'A'..=b'Z' => self.parse_name_type(tok),
+                b'a'..=b'z' => {
                     let peek = self.stream.peek();
                     self.parse_name_module_value(tok, peek)
                 },

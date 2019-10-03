@@ -1570,7 +1570,7 @@ impl RefBuilder {
 pub struct ConstructorBuilder<E, Id> {
     type_: Type,
     tuple: TupleBuilder<Tree, Id>,
-    transformer: Box<Fn(Tuple<Id>) -> E>,
+    transformer: Box<dyn Fn(Tuple<Id>) -> E>,
     range: Range,
 }
 
@@ -1599,7 +1599,7 @@ impl<E, Id> ConstructorBuilder<E, Id> {
     pub fn new(
         tree: RcTree,
         type_: Type,
-        transformer: Box<Fn(Tuple<Id>) -> E>,
+        transformer: Box<dyn Fn(Tuple<Id>) -> E>,
     )
         -> Self
     {

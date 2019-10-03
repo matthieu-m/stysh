@@ -17,14 +17,14 @@ use super::scp::Scope;
 ///
 /// For each top-level reference to a symbol, resolves the symbol.
 pub struct TypeMapper<'a, A, H> {
-    scope: &'a Scope,
+    scope: &'a dyn Scope,
     ast_store: &'a A,
     hir_store: &'a cell::RefCell<H>,
 }
 
 impl<'a, A, H> TypeMapper<'a, A, H> {
     /// Creates a new instance.
-    pub fn new(scope: &'a Scope, ast_store: &'a A, hir_store: &'a cell::RefCell<H>) -> Self {
+    pub fn new(scope: &'a dyn Scope, ast_store: &'a A, hir_store: &'a cell::RefCell<H>) -> Self {
         TypeMapper { scope, ast_store, hir_store, }
     }
 }

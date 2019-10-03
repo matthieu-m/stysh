@@ -113,7 +113,7 @@ impl Tree {
     }
 
     /// Sets the function signature.
-    pub fn set_function(&mut self, fun: FunctionSignature, registry: &Registry) {
+    pub fn set_function(&mut self, fun: FunctionSignature, registry: &dyn Registry) {
         let names = if fun.arguments.names.is_empty() {
             &[]
         } else {

@@ -56,13 +56,13 @@ impl BuiltinScope {
 
 /// A Function Prototype Scope.
 pub struct FunctionScope<'a> {
-    parent: &'a Scope,
+    parent: &'a dyn Scope,
     arguments: IdMap<ValueIdentifier>,
 }
 
 impl<'a> FunctionScope<'a> {
     /// Creates an instance of FunctionScope.
-    pub fn new<I>(parent: &'a Scope, args: I) -> Self
+    pub fn new<I>(parent: &'a dyn Scope, args: I) -> Self
         where
             I: Iterator<Item = ValueIdentifier>,
     {
@@ -78,7 +78,7 @@ impl<'a> FunctionScope<'a> {
 
 /// A Block Scope.
 pub struct BlockScope<'a> {
-    parent: &'a Scope,
+    parent: &'a dyn Scope,
     functions: IdMap<CallableCandidate>,
     types: IdMap<Type>,
     values: IdMap<ValueIdentifier>,
@@ -86,7 +86,7 @@ pub struct BlockScope<'a> {
 
 impl<'a> BlockScope<'a> {
     /// Create a new instance of BlockScope.
-    pub fn new(parent: &'a Scope) -> BlockScope<'a> {
+    pub fn new(parent: &'a dyn Scope) -> BlockScope<'a> {
         BlockScope {
             parent: parent,
             functions: IdMap::new(),

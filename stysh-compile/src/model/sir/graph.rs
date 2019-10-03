@@ -314,7 +314,7 @@ impl Block {
 //
 
 /// Displays the graph in a human readable form.
-pub fn display_graph(graph: &Graph, registry: &hir::Registry) -> String {
+pub fn display_graph(graph: &Graph, registry: &dyn hir::Registry) -> String {
     let displayer = GraphDisplayer{ graph, registry };
     
     format!("{}", displayer)
@@ -322,7 +322,7 @@ pub fn display_graph(graph: &Graph, registry: &hir::Registry) -> String {
 
 struct GraphDisplayer<'a> {
     graph: &'a Graph,
-    registry: &'a hir::Registry,
+    registry: &'a dyn hir::Registry,
 }
 
 impl<'a> fmt::Display for GraphDisplayer<'a> {
@@ -343,7 +343,7 @@ impl<'a> fmt::Display for GraphDisplayer<'a> {
 struct BlockDisplayer<'a> {
     block: &'a Block,
     graph: &'a Graph,
-    registry: &'a hir::Registry,
+    registry: &'a dyn hir::Registry,
 }
 
 impl<'a> BlockDisplayer<'a> {

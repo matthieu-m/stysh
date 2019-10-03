@@ -20,8 +20,8 @@ use super::scp::{BlockScope, CallableCandidate, Scope};
 ///
 /// For each top-level reference to a symbol, resolves the symbol.
 pub struct SymbolMapper<'a> {
-    scope: &'a Scope,
-    registry: &'a Registry,
+    scope: &'a dyn Scope,
+    registry: &'a dyn Registry,
     context: &'a Context,
     ast_tree: &'a ast::Tree,
     tree: &'a cell::RefCell<hir::Tree>,
@@ -30,8 +30,8 @@ pub struct SymbolMapper<'a> {
 impl<'a> SymbolMapper<'a> {
     /// Creates a new instance.
     pub fn new(
-        scope: &'a Scope,
-        registry: &'a Registry,
+        scope: &'a dyn Scope,
+        registry: &'a dyn Registry,
         context: &'a Context,
         ast_tree: &'a ast::Tree,
         tree: &'a cell::RefCell<hir::Tree>,
@@ -578,7 +578,7 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn rescope<'b>(&self, scope: &'b Scope) -> SymbolMapper<'b>
+    fn rescope<'b>(&self, scope: &'b dyn Scope) -> SymbolMapper<'b>
         where 'a: 'b
     {
         SymbolMapper {

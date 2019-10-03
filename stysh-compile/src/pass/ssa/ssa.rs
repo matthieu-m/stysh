@@ -212,7 +212,7 @@ impl<'a> GraphBuilderImpl<'a> {
         current: ProtoBlock,
         result: hir::TypeId,
         callable: hir::Callable,
-        _receiver: Option<hir::ExpressionId>,
+        receiver: Option<hir::ExpressionId>,
         args: hir::Tuple<hir::ExpressionId>,
         gvn: hir::Gvn,
         range: Range,
@@ -237,12 +237,13 @@ impl<'a> GraphBuilderImpl<'a> {
 
         let callable = match callable {
             hir::Callable::Builtin(b) => sir::Callable::Builtin(b),
-            hir::Callable::Function(f) => sir::Callable::Function(f),
+            hir::Callable::Function(f) | hir::Callable::Method(f) =>
+                sir::Callable::Function(f),
             _ => unreachable!("Incomplete HIR: {:?}", callable),
         };
 
         let (mut current, arguments) =
-            self.convert_array_of_values(current, args.fields);
+            self.convert_array_of_values(current, receiver, args.fields);
 
         current.push_instruction(
             gvn.into(),
@@ -312,7 +313,7 @@ impl<'a> GraphBuilderImpl<'a> {
         -> ProtoBlock
     {
         let (mut current, arguments) =
-            self.convert_array_of_values(current, cons.fields);
+            self.convert_array_of_values(current, None, cons.fields);
 
         let ty = self.get_expression_type_id(id);
 
@@ -682,7 +683,7 @@ impl<'a> GraphBuilderImpl<'a> {
         -> ProtoBlock
     {
         let (mut current, arguments) =
-            self.convert_array_of_values(current, tuple.fields);
+            self.convert_array_of_values(current, None, tuple.fields);
 
         current.push_instruction(
             gvn.into(),
@@ -696,16 +697,27 @@ impl<'a> GraphBuilderImpl<'a> {
     fn convert_array_of_values(
         &mut self,
         mut current: ProtoBlock,
+        receiver: Option<hir::ExpressionId>,
         expressions: hir::Id<[hir::ExpressionId]>,
     )
         -> (ProtoBlock, sir::Id<[sir::ValueId]>)
     {
+        if let Some(e) = receiver {
+            current = self.convert_expression(current, e).expect("!Void");
+        }
+
         let expressions = self.tree.get_expressions(expressions);
         for &e in expressions {
             current = self.convert_expression(current, e).expect("!Void");
         }
 
-        let mut arguments = Vec::with_capacity(expressions.len());
+        let bonus_capacity = if receiver.is_some() { 1 } else { 0 };
+        let mut arguments = Vec::with_capacity(bonus_capacity + expressions.len());
+
+        if let Some(e) = receiver {
+            let ty = self.get_expression_type_id(e);
+            arguments.push(current.bind(self.binding_of(e), ty));
+        }
 
         for &e in expressions {
             let ty = self.get_expression_type_id(e);
@@ -1300,7 +1312,7 @@ mod tests {
     }
 
     #[test]
-    fn fun_simple() {
+    fn call_fun_simple() {
         let env = Env::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
 
         let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
@@ -1332,6 +1344,45 @@ mod tests {
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
+                "    return $0",
+                ""
+            ])
+        );
+    }
+
+    #[test]
+    fn call_method_simple() {
+        let env = Env::new(b":fun add(a: Int, b: Int) -> Int { a.add(b) }");
+
+        let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
+
+        let add = {
+            let hir = env.factory();
+            let (i, t) = (hir.item(), hir.type_module());
+            let signature = i.fun(env.item_id(5, 3), t.int())
+                .push(a, t.int())
+                .push(b, t.int())
+                .range(0, 31)
+                .build();
+            env.insert_function(signature)
+        };
+
+        let (_, _, _, _, v) = env.hir();
+
+        let body =
+            v.block(
+                v.call()
+                    .range(34, 8)
+                    .method(v.int_ref(a, 34).pattern(0).build(), add)
+                    .push(v.int_ref(b, 40).pattern(1).build())
+                    .build()
+            ).build_with_type();
+
+        assert_eq!(
+            env.funit(body),
+            cat(&[
+                "0 (Int, Int):",
+                "    $0 := <3@5>(@0, @1) ; 8@34",
                 "    return $0",
                 ""
             ])
@@ -1521,7 +1572,7 @@ mod tests {
                     .push(count, t.int())
                     .range(0, 52)
                     .build();
-            env.insert_function(signature)
+            Callable::Function(env.insert_function(signature))
         };
 
         let (_, _, _, t, v) = env.hir();
@@ -1757,15 +1808,14 @@ mod tests {
             ValueIdentifier(self.resolver.from_range(range), range)
         }
 
-        fn insert_function(&self, signature: FunctionSignature) -> Callable {
+        fn insert_function(&self, signature: FunctionSignature) -> FunctionId {
             let module = self.module.borrow();
             let mut tree = self.tree.borrow_mut();
 
             tree.set_function(signature, &*module);
 
-            let fun = module.lookup_function(signature.name)
-                .expect("Function to be registered");
-            Callable::Function(fun)
+            module.lookup_function(signature.name)
+                .expect("Function to be registered")
         }
 
         fn type_of(&self, e: ExpressionId) -> Type {

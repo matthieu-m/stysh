@@ -862,6 +862,7 @@ pub struct BuiltinValueBuilder;
 #[derive(Clone, Debug)]
 pub struct CallBuilder {
     tree: RcTree,
+    receiver: Option<ExpressionId>,
     callable: Callable,
     unresolved: Vec<Callable>,
     arguments: TupleBuilder<Tree, ExpressionId>,
@@ -1158,6 +1159,7 @@ impl CallBuilder {
     pub fn new(tree: RcTree) -> Self {
         CallBuilder {
             tree: tree.clone(),
+            receiver: None,
             callable: Callable::Builtin(BuiltinFunction::Add),
             unresolved: vec!(),
             arguments: TupleBuilder::new(tree),
@@ -1184,6 +1186,12 @@ impl CallBuilder {
         self
     }
 
+    /// Sets the receiver.
+    pub fn receiver(&mut self, receiver: ExpressionId) -> &mut Self {
+        self.receiver = Some(receiver);
+        self
+    }
+
     /// Shortcut: sets built-in function.
     pub fn builtin(&mut self, b: BuiltinFunction, typ: Type) -> &mut Self {
         self.callable = Callable::Builtin(b);
@@ -1194,6 +1202,13 @@ impl CallBuilder {
     /// Shortcut: sets a user-defined function.
     pub fn function(&mut self, function: FunctionId) -> &mut Self {
         self.callable = Callable::Function(function);
+        self
+    }
+
+    /// Shortcut: sets a user-defined method.
+    pub fn method(&mut self, receiver: ExpressionId, method: FunctionId) -> &mut Self {
+        self.receiver = Some(receiver);
+        self.callable = Callable::Method(method);
         self
     }
 
@@ -1212,6 +1227,12 @@ impl CallBuilder {
     /// Pushes an unresolved user-defined function.
     pub fn push_function(&mut self, function: FunctionId) -> &mut Self {
         self.unresolved.push(Callable::Function(function));
+        self
+    }
+
+    /// Pushes an unresolved user-defined method.
+    pub fn push_method(&mut self, method: FunctionId) -> &mut Self {
+        self.unresolved.push(Callable::Method(method));
         self
     }
 
@@ -1241,7 +1262,7 @@ impl CallBuilder {
         let range = self.compute_range(&callable);
 
         let args = self.arguments.build();
-        let expr = Expression::Call(callable, args);
+        let expr = Expression::Call(callable, self.receiver, args);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
     }
@@ -1271,7 +1292,7 @@ impl CallBuilder {
                     let n = n.span().length();
                     (off - 1 - n, len + 2 + n)
                 },
-                Function(_) | Unresolved(_) => (0, 0),
+                Function(_) | Method(_) | Unresolved(_) => (0, 0),
             }
         }).unwrap_or((0, 0));
 

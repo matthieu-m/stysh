@@ -61,6 +61,8 @@ pub enum Callable {
     Builtin(BuiltinFunction),
     /// A static user-defined function.
     Function(FunctionId),
+    /// A static or dynamic user-defined function.
+    Method(FunctionId),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),
     /// An unresolved callable binding.
@@ -77,8 +79,8 @@ pub enum Expression {
     Block(Id<[Statement]>, Option<ExpressionId>),
     /// A built-in value.
     BuiltinVal(BuiltinValue),
-    /// A function call.
-    Call(Callable, Tuple<ExpressionId>),
+    /// A function call; the receiver is only set for method calls.
+    Call(Callable, Option<ExpressionId>, Tuple<ExpressionId>),
     /// A constructor call.
     Constructor(Tuple<ExpressionId>),
     /// A field access.

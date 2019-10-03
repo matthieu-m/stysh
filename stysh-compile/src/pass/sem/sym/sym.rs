@@ -261,11 +261,11 @@ impl<'a> SymbolMapper<'a> {
             Block(b) => self.value_of_block(b),
             Constructor(c) => self.value_of_constructor(c, range),
             FieldAccess(f) => self.value_of_field(f),
-            FunctionCall(fun) => self.value_of_call(fun),
+            FunctionCall(fun) => self.value_of_function_call(fun),
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit) => self.value_of_literal(lit, range),
             Loop(loop_) => self.value_of_loop(loop_),
-            MethodCall(..) => unimplemented!("MethodCall"),
+            MethodCall(met) => self.value_of_method_call(met),
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, range),
             Tuple(t) => self.value_of_tuple(t),
@@ -313,7 +313,7 @@ impl<'a> SymbolMapper<'a> {
 
         let typ = hir::Type::unresolved();
         let range = left_range.extend(right_range);
-        let expr = hir::Expression::Call(hir::Callable::Builtin(op), arguments);
+        let expr = hir::Expression::Call(hir::Callable::Builtin(op), None, arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.link_expressions(result.into(), arguments.fields);
@@ -365,14 +365,14 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn value_of_call(&self, fun: ast::FunctionCall) -> hir::ExpressionId {
+    fn value_of_function_call(&self, fun: ast::FunctionCall) -> hir::ExpressionId {
         let function = self.ast_tree.get_expression(fun.function);
         let function_range = self.ast_tree.get_expression_range(fun.function);
 
         let candidate = if let ast::Expression::Var(id) = function {
             self.scope.lookup_callable(id.into())
         } else {
-            unimplemented!()
+            unimplemented!("value_of_function_call - {:?}", function)
         };
 
         let callable = self.convert_callable(&candidate);
@@ -385,7 +385,7 @@ impl<'a> SymbolMapper<'a> {
         );
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expression::Call(callable, arguments);
+        let expr = hir::Expression::Call(callable, None, arguments);
         let range = function_range.extend(fun.arguments.span());
 
         let result = self.tree_mut().push_expression(typ, expr, range);
@@ -501,6 +501,34 @@ impl<'a> SymbolMapper<'a> {
         self.tree_mut().push_expression(typ, expr, loop_.span())
     }
 
+    fn value_of_method_call(&self, met: ast::MethodCall) -> hir::ExpressionId {
+        let receiver = self.value_of(met.receiver);
+        let receiver_range = self.ast_tree.get_expression_range(met.receiver);
+
+        let candidate = if let ast::FieldIdentifier::Name(id) = met.method {
+            self.scope.lookup_callable(id.into())
+        } else {
+            unimplemented!("value_of_method_call - {:?}", met.method)
+        };
+
+        let callable = self.convert_callable(&candidate);
+
+        let arguments = self.tuple_of(
+            self.ast_tree.get_expression_ids(met.arguments.fields),
+            self.ast_tree.get_identifiers(met.arguments.names),
+            |a| self.value_of(a),
+            |e| self.tree_mut().push_expressions(e.iter().cloned()),
+        );
+
+        let typ = hir::Type::unresolved();
+        let expr = hir::Expression::Call(callable, Some(receiver), arguments);
+        let range = receiver_range.extend(met.arguments.span());
+
+        let result = self.tree_mut().push_expression(typ, expr, range);
+        self.link_expressions(result.into(), arguments.fields);
+        result
+    }
+
     fn value_of_prefix_operator(&self, 
         op: ast::PrefixOperator,
         expr: ast::ExpressionId,
@@ -522,7 +550,7 @@ impl<'a> SymbolMapper<'a> {
         };
 
         let typ = hir::Type::unresolved();
-        let expr = hir::Expression::Call(hir::Callable::Builtin(op), arguments);
+        let expr = hir::Expression::Call(hir::Callable::Builtin(op), None, arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
         self.context.link_gvns(&[result.into(), arg.into()]);
@@ -803,6 +831,38 @@ mod tests {
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
                 .range(0, 11)
+                .build()
+        };
+
+        assert_eq!(env.value_of(ast), env.expression(hir));
+    }
+
+    #[test]
+    fn value_call_method() {
+        let env = Env::new(b"foo.bar(1, 2)");
+
+        let ast = {
+            let e = env.ast().expr();
+
+            e.method_call(e.var(0, 3), 7, 12)
+                    .name(3, 4)
+                    .push(e.int(1, 8))
+                    .push(e.int(2, 11))
+                    .build()
+        };
+
+        let hir = {
+            let v = env.hir().value();
+
+            let foo = env.var_id(0, 3);
+            let bar = env.field_id(3, 4);
+
+            v.call()
+                .receiver(v.unresolved_ref(foo))
+                .unknown(bar)
+                .push(v.int(1, 8))
+                .push(v.int(2, 11))
+                .range(0, 13)
                 .build()
         };
 

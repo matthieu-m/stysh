@@ -60,7 +60,7 @@ impl<'a> ExprUnifier<'a> {
         match expr {
             BuiltinVal(value) =>
                 Some(Action::Update(value.result_type())),
-            Call(fun, _) =>
+            Call(fun, _, _) =>
                 self.determine_from_callable(fun),
             Block(..) | Constructor(..) | FieldAccess(..) | If(..) |
             Implicit(..) | Loop(..) | Ref(..) | Tuple(..) | UnresolvedRef(..) =>
@@ -75,7 +75,7 @@ impl<'a> ExprUnifier<'a> {
         match fun {
             Builtin(fun) =>
                 Some(Action::Update(fun.result_type())),
-            Function(id) => {
+            Function(id) | Method(id) => {
                 let registry = self.core.registry();
                 let function = registry.get_function(id);
                 Some(Action::Update(registry.get_type(function.result)))

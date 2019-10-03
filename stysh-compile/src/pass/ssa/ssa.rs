@@ -147,8 +147,8 @@ impl<'a> GraphBuilderImpl<'a> {
                 => self.convert_block(current, stmts, e),
             hir::Expression::BuiltinVal(val)
                 => Some(self.convert_literal(current, val, gvn, r)),
-            hir::Expression::Call(callable, args)
-                => Some(self.convert_call(current, t, callable, args, gvn, r)),
+            hir::Expression::Call(callable, rec, args)
+                => Some(self.convert_call(current, t, callable, rec, args, gvn, r)),
             hir::Expression::Constructor(c)
                 => Some(self.convert_constructor(current, c, id, r)),
             hir::Expression::FieldAccess(e, f)
@@ -212,6 +212,7 @@ impl<'a> GraphBuilderImpl<'a> {
         current: ProtoBlock,
         result: hir::TypeId,
         callable: hir::Callable,
+        _receiver: Option<hir::ExpressionId>,
         args: hir::Tuple<hir::ExpressionId>,
         gvn: hir::Gvn,
         range: Range,

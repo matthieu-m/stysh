@@ -689,7 +689,7 @@ pub mod samples {
         let args = Tuple::unnamed(args);
 
         let op = Callable::Builtin(BuiltinFunction::Add);
-        let add = tree.push_expression(Type::int(), Expression::Call(op, args), range(0, 5));
+        let add = tree.push_expression(Type::int(), Expression::Call(op, None, args), range(0, 5));
 
         tree.set_root(add);
 
@@ -723,6 +723,7 @@ pub mod tests {
             tree.get_expression(ExpressionId::new(2)),
             Expression::Call(
                 Callable::Builtin(BuiltinFunction::Add),
+                None,
                 Tuple::unnamed(Id::new(0)),
             )
         );

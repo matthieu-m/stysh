@@ -125,6 +125,15 @@ pub struct LoopBuilder {
     close: u32,
 }
 
+/// MethodCallBuilder
+#[derive(Clone)]
+pub struct MethodCallBuilder {
+    tree: RcTree,
+    receiver: ExpressionId,
+    method: FieldIdentifier,
+    arguments: TupleBuilder<Tree, Expression>,
+}
+
 /// PreOpBuilder
 #[derive(Clone)]
 pub struct PreOpBuilder {
@@ -400,6 +409,13 @@ impl ExprFactory {
         LoopBuilder::new(self.tree.clone(), pos)
     }
 
+    /// Creates a MethodCallBuilder.
+    pub fn method_call(&self, receiver: ExpressionId, open: u32, close: u32)
+        -> MethodCallBuilder
+    {
+        MethodCallBuilder::new(self.tree.clone(), self.resolver.clone(), receiver, open, close)
+    }
+
     /// Creates a PreOpBuilder, defaults to Not.
     pub fn pre_op(&self, expr: ExpressionId) -> PreOpBuilder {
         PreOpBuilder::new(self.tree.clone(), expr)
@@ -637,7 +653,7 @@ impl FunctionCallBuilder {
         FunctionCallBuilder {
             tree,
             callee,
-            arguments: arguments,
+            arguments,
         }
     }
 
@@ -872,6 +888,76 @@ impl LoopBuilder {
         }.into();
 
         self.tree.borrow_mut().push_expression(expr, range(self.loop_, close + 1 - self.loop_))
+    }
+}
+
+impl MethodCallBuilder {
+    pub fn new(
+        tree: RcTree,
+        resolver: Resolver,
+        receiver: ExpressionId,
+        open: u32,
+        close: u32,
+    )
+        -> Self
+    {
+        let mut arguments = TupleBuilder::new(tree.clone(), resolver);
+        arguments.parens(open, close);
+
+        let end = tree.borrow().get_expression_range(receiver).end_offset() as u32;
+
+        MethodCallBuilder {
+            tree,
+            receiver,
+            method: FieldIdentifier::Index(0, range(end, open - end)),
+            arguments,
+        }
+    }
+
+    /// Sets the index of the method.
+    pub fn index(&mut self, i: u16) -> &mut Self {
+        let range = self.method.span();
+        self.method = FieldIdentifier::Index(i, range);
+        self
+    }
+
+    /// Sets the name of the method.
+    pub fn name(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.method = field_id(&self.arguments.resolver, pos, len);
+        self
+    }
+
+    /// Sets the offset of the method.
+    pub fn range(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.method = self.method.with_range(range(pos, len));
+        self
+    }
+
+    /// Appends an argument.
+    pub fn push(&mut self, arg: ExpressionId) -> &mut Self {
+        self.arguments.push(arg);
+        self
+    }
+
+    /// Overrides the position of the last comma.
+    pub fn comma(&mut self, pos: u32) -> &mut Self {
+        self.arguments.comma(pos);
+        self
+    }
+
+    /// Creates a MethodCall instance.
+    pub fn build(&mut self) -> ExpressionId {
+        let expr = MethodCall {
+            receiver: self.receiver,
+            method: self.method,
+            arguments: self.arguments.build_tuple(),
+        };
+        let range = {
+            let receiver = self.tree.borrow().get_expression_range(self.receiver);
+            let arguments = expr.arguments.span();
+            receiver.extend(arguments)
+        };
+        self.tree.borrow_mut().push_expression(expr.into(), range)
     }
 }
 
@@ -1709,6 +1795,12 @@ impl<S, T> TupleBuilder<S, T> {
 
     /// Sets the position of the parentheses.
     pub fn parens(&mut self, open: u32, close: u32) -> &mut Self {
+        debug_assert!(
+            close >= open,
+            "TupleBuilder::parens - open ({}) > close ({})",
+            open, close,
+        );
+
         self.open = open;
         self.close = close;
         self

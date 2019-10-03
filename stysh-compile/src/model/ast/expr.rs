@@ -29,6 +29,8 @@ pub enum Expression {
     Lit(Literal),
     /// A loop.
     Loop(Loop),
+    /// A method call expression.
+    MethodCall(MethodCall),
     /// A prefix unary operation.
     PreOp(PrefixOperator, u32, ExpressionId),
     /// A tuple.
@@ -147,6 +149,17 @@ pub struct Loop {
     pub open: u32,
     /// Offset of close brace.
     pub close: u32,
+}
+
+/// A method call expression.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct MethodCall {
+    /// Receiver of the method call.
+    pub receiver: ExpressionId,
+    /// Method name.
+    pub method: FieldIdentifier,
+    /// Arguments.
+    pub arguments: Tuple<Expression>,
 }
 
 /// A Prefix Unary Operator such as `:not`.
@@ -274,6 +287,12 @@ impl convert::From<Literal> for Expression {
 impl convert::From<Loop> for Expression {
     fn from(l: Loop) -> Expression {
         Expression::Loop(l)
+    }
+}
+
+impl convert::From<MethodCall> for Expression {
+    fn from(m: MethodCall) -> Expression {
+        Expression::MethodCall(m)
     }
 }
 

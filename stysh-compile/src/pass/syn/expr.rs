@@ -419,11 +419,16 @@ impl<'a> ShuntingYard<'a> {
         //  without an intervening operator.
         if let Expression::Tuple(arguments) = expr {
             if let Some((callee, range)) = self.pop_trailing_expression() {
-                let function = self.insert(callee, range);
-                self.expr_stack.push((
-                    FunctionCall { function, arguments, }.into(),
-                    range.extend(arguments.span()),
-                ));
+                //  Method calls are distinguished from Function calls by
+                //  having a tuple expression following a field access.
+                let expr = if let Expression::FieldAccess(fa) = callee {
+                    MethodCall { receiver: fa.accessed, method: fa.field, arguments, }.into()
+                } else {
+                    let function = self.insert(callee, range);
+                    FunctionCall { function, arguments, }.into()
+                };
+                let range = range.extend(arguments.span());
+                self.expr_stack.push((expr, range));
                 return;
             }
         }
@@ -971,6 +976,46 @@ mod tests {
         let env = LocalEnv::new(b":loop { }");
         let e = env.factory().expr();
         e.loop_(0).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
+    fn method_call_basic() {
+        let env = LocalEnv::new(b"foo.42()");
+        let e = env.factory().expr();
+        e.method_call(e.var(0, 3), 6, 7).index(42).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
+    fn method_call_keyed() {
+        let env = LocalEnv::new(b"foo.bar()");
+        let e = env.factory().expr();
+        e.method_call(e.var(0, 3), 7, 8).name(3, 4).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
+    fn method_call_recursive() {
+        let env = LocalEnv::new(b"foo.42.53()");
+        let e = env.factory().expr();
+        let field = e.field_access(e.var(0, 3)).index(42).range(3, 3).build();
+        e.method_call(field, 9, 10).index(53).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
+    fn method_call_single_argument() {
+        let env = LocalEnv::new(b"foo.bar(42)");
+        let e = env.factory().expr();
+        e.method_call(e.var(0, 3), 7, 10)
+            .name(3, 4)
+            .push(e.int(42, 8))
+            .build();
 
         assert_eq!(env.actual_expression(), env.expected_tree());
     }

@@ -265,6 +265,7 @@ impl<'a> SymbolMapper<'a> {
             If(if_else) => self.value_of_if_else(if_else),
             Lit(lit) => self.value_of_literal(lit, range),
             Loop(loop_) => self.value_of_loop(loop_),
+            MethodCall(..) => unimplemented!("MethodCall"),
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, range),
             Tuple(t) => self.value_of_tuple(t),

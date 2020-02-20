@@ -46,6 +46,7 @@ impl<'a> GraphBuilder<'a> {
 
         match item {
             Enum(e) => self.enum_name(e),
+            Ext(_) => todo!(),
             Fun(f) => self.function_name(f),
             Rec(r) => self.record_name(r),
         }
@@ -59,6 +60,7 @@ impl<'a> GraphBuilder<'a> {
 
         match item {
             Enum(i) => self.enum_item(i),
+            Ext(_) => todo!(),
             Fun(f) => self.fun_item(f),
             Rec(r) => self.rec_item(r),
         }

@@ -9,6 +9,9 @@ use crate::model::ast::*;
 /// An EnumId.
 pub type EnumId = Id<Enum>;
 
+/// An ExtensionId.
+pub type ExtensionId = Id<Extension>;
+
 /// A FunctionId.
 pub type FunctionId = Id<Function>;
 
@@ -20,6 +23,8 @@ pub type RecordId = Id<Record>;
 pub enum Item {
     /// An enum.
     Enum(EnumId),
+    /// An extension.
+    Ext(ExtensionId),
     /// A function.
     Fun(FunctionId),
     /// A record.
@@ -55,6 +60,21 @@ pub struct Enum {
     /// Offsets of the comma separating the variants, an absent comma is placed
     /// at the offset of the last character of the field it would have followed.
     pub commas: Id<[u32]>,
+}
+
+/// An Extension.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Extension {
+    /// Name of the extended type.
+    pub name: TypeIdentifier,
+    /// Functions.
+    pub functions: Id<[FunctionId]>,
+    /// Offset of the `:ext` keyword.
+    pub keyword: u32,
+    /// Offset of the opening brace.
+    pub open: u32,
+    /// Offset of the closing brace.
+    pub close: u32,
 }
 
 /// A Function.
@@ -141,6 +161,13 @@ impl Span for Enum {
     }
 }
 
+impl Span for Extension {
+    /// Returns the range spanned by the enum.
+    fn span(&self) -> Range {
+        Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
+    }
+}
+
 impl Span for InnerRecord {
     /// Returns the range spanned by the inner record.
     fn span(&self) -> Range {
@@ -167,6 +194,10 @@ impl Span for Record {
 
 impl convert::From<EnumId> for Item {
     fn from(e: EnumId) -> Item { Item::Enum(e) }
+}
+
+impl convert::From<ExtensionId> for Item {
+    fn from(e: ExtensionId) -> Item { Item::Ext(e) }
 }
 
 impl convert::From<FunctionId> for Item {
@@ -214,6 +245,15 @@ mod tests {
                 .push_unit(20, 3)
                 .build();
         assert_eq!(env.module().borrow().get_enum_range(e), range(0, 25));
+    }
+
+    #[test]
+    fn range_extension_minimal() {
+        let env = Env::new(b":ext Simple { }");
+        let item = env.factory().item();
+
+        let e = item.extension(5, 6).build();
+        assert_eq!(env.module().borrow().get_extension_range(e), range(0, 15));
     }
 
     #[test]

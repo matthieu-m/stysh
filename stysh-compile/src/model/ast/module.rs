@@ -20,7 +20,7 @@
 //!         for Rust.
 
 use std::fmt;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::basic::com::{Range, Span, Store, MultiStore};
 use crate::basic::sea::{MultiTable, Table};
@@ -47,11 +47,13 @@ pub struct Module {
     //
 
     /// Enums.
-    enum_lookup: HashMap<TypeIdentifier, EnumId>,
+    enum_lookup: BTreeMap<TypeIdentifier, EnumId>,
+    /// Extensions.
+    extension_lookup: BTreeMap<TypeIdentifier, ExtensionId>,
     /// Functions.
-    function_lookup: HashMap<VariableIdentifier, FunctionId>,
+    function_lookup: BTreeMap<VariableIdentifier, FunctionId>,
     /// Records.
-    record_lookup: HashMap<TypeIdentifier, RecordId>,
+    record_lookup: BTreeMap<TypeIdentifier, RecordId>,
 
     //
     //  Single
@@ -59,12 +61,16 @@ pub struct Module {
 
     /// Enum.
     enum_: KeyedSingle<Enum>,
+    /// Extension.
+    extension: KeyedSingle<Extension>,
     /// Function.
     function: KeyedSingle<Function>,
     /// Range of a function.
     function_range: KeyedRange<Function>,
     /// Body of a function.
     function_body: Table<FunctionId, Tree>,
+    /// Extension of a function, if any.
+    function_extension: Table<FunctionId, Option<ExtensionId>>,
     /// Record.
     record: KeyedSingle<Record>,
     /// Type.
@@ -78,6 +84,8 @@ pub struct Module {
 
     /// Arguments.
     arguments: KeyedMulti<Argument>,
+    /// Functions.
+    functions: KeyedMulti<FunctionId>,
     /// Identifiers.
     identifiers: KeyedMulti<Identifier>,
     /// InnerRecords.
@@ -109,9 +117,9 @@ impl Module {
     /// Returns the number of enums.
     pub fn len_enums(&self) -> usize { self.enum_lookup.len() }
 
-    /// Looks up an enum Id by identifier.
+    /// Looks up an enum ID by identifier.
     pub fn get_enum_id(&self, id: TypeIdentifier) -> Option<EnumId> {
-        self.enum_lookup.get(&id).cloned()
+        self.enum_lookup.get(&id).copied()
     }
 
     /// Returns the enum associated to the ID.
@@ -137,14 +145,47 @@ impl Module {
     }
 
 
+    //  Extensions.
+
+    /// Returns the number of extensions.
+    pub fn len_extensions(&self) -> usize { self.extension_lookup.len() }
+
+    /// Looks up an extension ID by identifier.
+    pub fn get_extension_id(&self, id: TypeIdentifier) -> Option<ExtensionId> {
+        self.extension_lookup.get(&id).copied()
+    }
+
+    /// Returns the extension associated to the ID.
+    pub fn get_extension(&self, id: ExtensionId) -> Extension {
+        *self.extension.at(&id)
+    }
+
+    /// Returns the range of the extension associated to the ID.
+    pub fn get_extension_range(&self, id: ExtensionId) -> Range {
+        self.extension.at(&id).span()
+    }
+
+    /// Pushes a new extension.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_extension(&mut self, ext: Extension) -> ExtensionId {
+        let id = Id::new(self.extension.len() as u32);
+        self.extension.push(&id, ext);
+
+        self.extension_lookup.insert(ext.name, id);
+
+        id
+    }
+
+
     //  Functions.
 
     /// Returns the number of functions.
     pub fn len_functions(&self) -> usize { self.function_lookup.len() }
 
-    /// Looks up an function Id by identifier.
+    /// Looks up an function ID by identifier.
     pub fn get_function_id(&self, id: VariableIdentifier) -> Option<FunctionId> {
-        self.function_lookup.get(&id).cloned()
+        self.function_lookup.get(&id).copied()
     }
 
     /// Returns the function associated to the ID.
@@ -162,12 +203,23 @@ impl Module {
         self.function_body.at(&id)
     }
 
+    /// Returns the extension to which the function belongs to, if any.
+    pub fn get_function_extension(&self, id: FunctionId) -> Option<ExtensionId> {
+        *self.function_extension.at(&id)
+    }
+
+    /// Associate function to an extension.
+    pub fn set_function_extension(&mut self, fun: FunctionId, ext: ExtensionId) {
+        self.function_extension.replace(&fun, Some(ext));
+    }
+
     /// Pushes a new function.
     ///
     /// Returns the ID created for it.
     pub fn push_function(&mut self, tree: Tree) -> FunctionId {
         debug_assert!(self.function.len() == self.function_range.len());
         debug_assert!(self.function.len() == self.function_body.len());
+        debug_assert!(self.function.len() == self.function_extension.len());
 
         let (mut function, body) = if let Some(Root::Function(fun, body)) = tree.get_root() {
             (fun, body)
@@ -192,6 +244,7 @@ impl Module {
         self.function.push(&id, function);
         self.function_range.push(&id, range);
         self.function_body.push(&id, tree);
+        self.function_extension.push(&id, None);
 
         self.function_lookup.insert(function.name, id);
 
@@ -204,9 +257,9 @@ impl Module {
     /// Returns the number of records.
     pub fn len_records(&self) -> usize { self.record_lookup.len() }
 
-    /// Looks up an record Id by identifier.
+    /// Looks up an record ID by identifier.
     pub fn get_record_id(&self, id: TypeIdentifier) -> Option<RecordId> {
-        self.record_lookup.get(&id).cloned()
+        self.record_lookup.get(&id).copied()
     }
 
     /// Returns the record associated to the ID.
@@ -272,6 +325,21 @@ impl Module {
     /// Returns the ID created for it.
     pub fn push_arguments(&mut self, arguments: &[Argument]) -> Id<[Argument]> {
         Self::push_slice(&mut self.arguments, arguments)
+    }
+
+
+    //  Functions
+
+    /// Returns the function IDs associated to the ID.
+    pub fn get_function_ids(&self, id: Id<[FunctionId]>) -> &[FunctionId] {
+        if id.is_empty() { &[] } else { self.functions.get(&id) }
+    }
+
+    /// Pushes a new slice of function IDs.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_function_ids(&mut self, functions: &[FunctionId]) -> Id<[FunctionId]> {
+        Self::push_slice(&mut self.functions, functions)
     }
 
 
@@ -347,6 +415,13 @@ impl Store<Enum> for Module {
     fn push(&mut self, e: Enum, _: Range) -> EnumId { self.push_enum(e) }
 }
 
+impl Store<Extension> for Module {
+    fn len(&self) -> usize { self.len_extensions() }
+    fn get(&self, id: ExtensionId) -> Extension { self.get_extension(id) }
+    fn get_range(&self, id: ExtensionId) -> Range { self.get_extension_range(id) }
+    fn push(&mut self, e: Extension, _: Range) -> ExtensionId { self.push_extension(e) }
+}
+
 impl Store<Record> for Module {
     fn len(&self) -> usize { self.len_records() }
     fn get(&self, id: RecordId) -> Record { self.get_record(id) }
@@ -369,6 +444,11 @@ impl Store<Type> for Module {
 impl MultiStore<Argument> for Module {
     fn get_slice(&self, id: Id<[Argument]>) -> &[Argument] { self.get_arguments(id) }
     fn push_slice(&mut self, items: &[Argument]) -> Id<[Argument]> { self.push_arguments(items) }
+}
+
+impl MultiStore<FunctionId> for Module {
+    fn get_slice(&self, id: Id<[FunctionId]>) -> &[FunctionId] { self.get_function_ids(id) }
+    fn push_slice(&mut self, items: &[FunctionId]) -> Id<[FunctionId]> { self.push_function_ids(items) }
 }
 
 impl MultiStore<Identifier> for Module {
@@ -403,6 +483,9 @@ impl fmt::Debug for Module {
         if !self.enum_lookup.is_empty() {
             write!(f, "enum_lookup: {:?}, ", self.enum_lookup)?;
         }
+        if !self.extension_lookup.is_empty() {
+            write!(f, "extension_lookup: {:?}, ", self.extension_lookup)?;
+        }
         if !self.function_lookup.is_empty() {
             write!(f, "function_lookup: {:?}, ", self.function_lookup)?;
         }
@@ -413,10 +496,14 @@ impl fmt::Debug for Module {
         if !self.enum_.is_empty() {
             write!(f, "enum_: {:?}, ", self.enum_)?;
         }
+        if !self.extension.is_empty() {
+            write!(f, "extension: {:?}, ", self.extension)?;
+        }
         if !self.function.is_empty() {
             write!(f, "function: {:?}, ", self.function)?;
             write!(f, "function_range: {:?}, ", self.function_range)?;
             write!(f, "function_body: {:?}, ", self.function_body)?;
+            write!(f, "function_extension: {:?}, ", self.function_extension)?;
         }
         if !self.record.is_empty() {
             write!(f, "record: {:?}, ", self.record)?;
@@ -428,6 +515,9 @@ impl fmt::Debug for Module {
 
         if !self.arguments.is_empty() {
             write!(f, "arguments: {:?}, ", self.arguments)?;
+        }
+        if !self.functions.is_empty() {
+            write!(f, "functions: {:?}, ", self.functions)?;
         }
         if !self.identifiers.is_empty() {
             write!(f, "identifiers: {:?}, ", self.identifiers)?;

@@ -11,7 +11,7 @@ use crate::model::tt;
 use crate::model::ast::*;
 
 use super::com::RawParser;
-use super::{expr, fun, typ};
+use super::{expr, ext, fun, typ};
 
 /// The Stysh parser.
 ///
@@ -43,6 +43,7 @@ impl Parser {
             while let Some(node) = raw.peek() {
                 match node.front().kind() {
                     tt::Kind::KeywordEnum => { typ::parse_enum(&mut raw); },
+                    tt::Kind::KeywordExt => { ext::parse_extension(&mut raw); },
                     tt::Kind::KeywordFun => { fun::parse_function(&mut raw); },
                     tt::Kind::KeywordRec => { typ::parse_record(&mut raw); },
                     tt::Kind::KeywordSet => { expr::parse_statement(&mut raw); },

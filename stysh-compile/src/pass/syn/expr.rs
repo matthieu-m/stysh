@@ -746,18 +746,18 @@ fn parse_constructor_impl<'a, 'tree, T: Copy>(
     where
         Tree: Store<T> + MultiStore<Id<T>>
 {
-    let arguments = if let Some(tt::Node::Braced(o, ns, c)) = raw.peek() {
+    let range = raw.tree().borrow().get_type_range(type_);
+
+    let (arguments, range) = if let Some(tt::Node::Braced(o, ns, c)) = raw.peek() {
         assert_eq!(o.kind(), tt::Kind::ParenthesisOpen);
 
         raw.pop_node();
         let tree = raw.tree();
-        raw.parse_tuple(tree, inner_parser, separator, ns, o, c)
+        let arguments = raw.parse_tuple(tree, inner_parser, separator, ns, o, c);
+        (arguments, range.extend(arguments.span()))
     } else {
-        Default::default()
+        (Default::default(), range)
     };
-
-    let range =
-        raw.tree().borrow().get_type_range(type_).extend(arguments.span());
 
     (Constructor { type_, arguments }, range)
 }

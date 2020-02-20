@@ -247,6 +247,28 @@ impl<K: fmt::Debug + TableIndex, V> Table<K, V> {
 
         self.values.push(value);
     }
+
+    /// Overrides an existing value.
+    ///
+    /// Returns the existing value.
+    ///
+    /// # Complexity
+    ///
+    /// O(1)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the key does not exist.
+    pub fn replace(&mut self, key: &K, value: V) -> V {
+        let index = key.index();
+
+        assert!(
+            index < self.len(),
+            "Cannot replace {:?} mapping to {:?} >= {:?}", key, index, self.len()
+        );
+
+        std::mem::replace(&mut self.values[index], value)
+    }
 }
 
 impl<K: fmt::Debug + TableIndex, V: Clone + Default> Table<K, V> {

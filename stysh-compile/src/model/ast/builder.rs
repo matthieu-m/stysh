@@ -160,6 +160,17 @@ pub struct EnumBuilder {
     commas: Vec<u32>,
 }
 
+/// ExtensionBuilder
+#[derive(Clone)]
+pub struct ExtensionBuilder {
+    module: RcModule,
+    name: TypeIdentifier,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
+}
+
 /// FunctionBuilder
 #[derive(Clone)]
 pub struct FunctionBuilder {
@@ -1022,6 +1033,16 @@ impl ItemFactory {
         EnumBuilder::named(self.module.clone(), self.resolver.clone(), name)
     }
 
+    /// Creates an ExtensionBuilder.
+    pub fn extension(&self, pos: u32, len: u32) -> ExtensionBuilder {
+        ExtensionBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
+    }
+
+    /// Creates an ExtensionBuilder, named.
+    pub fn extension_named(&self, name: TypeIdentifier) -> ExtensionBuilder {
+        ExtensionBuilder::named(self.module.clone(), name)
+    }
+
     /// Creates a FunctionBuilder.
     pub fn function(
         &self,
@@ -1214,6 +1235,101 @@ impl EnumBuilder {
         };
 
         self.module.borrow_mut().push_enum(enum_)
+    }
+}
+
+impl ExtensionBuilder {
+    /// Creates a new instance.
+    pub fn new(
+        module: RcModule,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
+    )
+        -> Self
+    {
+        let name = type_id(&resolver, pos, len);
+        Self::named(module, name)
+    }
+
+    /// Creates a new instance.
+    pub fn named(
+        module: RcModule,
+        name: TypeIdentifier,
+    )
+        -> Self
+    {
+        ExtensionBuilder {
+            module,
+            name,
+            keyword: U32_NONE,
+            open: U32_NONE,
+            close: U32_NONE,
+            functions: vec!(),
+        }
+    }
+
+    /// Sets the position of the :extension keyword.
+    pub fn keyword(&mut self, pos: u32) -> &mut Self {
+        self.keyword = pos;
+        self
+    }
+
+    /// Sets the position of the braces.
+    pub fn braces(&mut self, open: u32, close: u32) -> &mut Self {
+        self.open = open;
+        self.close = close;
+        self
+    }
+
+    /// Pushes a new function.
+    pub fn push_function(&mut self, fun: FunctionId) -> &mut Self {
+        self.functions.push(fun);
+        self
+    }
+
+    /// Creates an Enum.
+    pub fn build(&self) -> ExtensionId {
+        let mut functions = self.functions.clone();
+        functions.sort_unstable();
+
+        let keyword = if self.keyword == U32_NONE {
+            self.name.span().offset() as u32 - 5
+        } else {
+            self.keyword
+        };
+
+        let open = if self.open == U32_NONE {
+            self.name.span().end_offset() as u32 + 1
+        } else {
+            self.open
+        };
+
+        let close = if self.close == U32_NONE {
+            functions.last()
+                .map(|&fun| self.module.borrow().get_function_range(fun).end_offset() as u32 + 1)
+                .unwrap_or(open + 2)
+        } else {
+            self.close
+        };
+
+        let function_ids = self.module.borrow_mut().push_function_ids(&functions);
+
+        let ext = Extension {
+            name: self.name,
+            functions: function_ids,
+            keyword,
+            open,
+            close,
+        };
+
+        let id = self.module.borrow_mut().push_extension(ext);
+
+        for &fun in &functions {
+            self.module.borrow_mut().set_function_extension(fun, id);
+        }
+
+        id
     }
 }
 

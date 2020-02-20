@@ -355,6 +355,10 @@ pub mod tests {
             &self.expected_tree
         }
 
+        pub fn reset_expected_tree(&self) {
+            std::mem::take(&mut *self.expected_tree.borrow_mut());
+        }
+
         pub fn factory(&self) -> Factory {
             Factory::new(
                 self.expected_module.clone(),

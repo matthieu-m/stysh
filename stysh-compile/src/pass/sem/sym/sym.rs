@@ -269,7 +269,7 @@ impl<'a> SymbolMapper<'a> {
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, range),
             Tuple(t) => self.value_of_tuple(t),
-            Var(id) => self.value_of_variable(id),
+            Var(id, _) => self.value_of_variable(id),
         }
     }
 
@@ -369,7 +369,7 @@ impl<'a> SymbolMapper<'a> {
         let function = self.ast_tree.get_expression(fun.function);
         let function_range = self.ast_tree.get_expression_range(fun.function);
 
-        let candidate = if let ast::Expression::Var(id) = function {
+        let candidate = if let ast::Expression::Var(id, _) = function {
             self.scope.lookup_callable(id.into())
         } else {
             unimplemented!("value_of_function_call - {:?}", function)

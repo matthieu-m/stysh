@@ -113,43 +113,12 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
         while let Some(node) = self.raw.peek() {
             //  An expression.
             let (expr, range) = match node {
-                tt::Node::Run(tokens) => {
-                    let token = tokens[0];
-                    let kind = token.kind();
-
-                    match kind {
-                        K::KeywordIf => self.parse_if_else(),
-                        K::KeywordLoop => self.parse_loop(),
-                        K::KeywordNot => {
-                            self.raw.pop_tokens(1);
-                            yard.push_operator(
-                                Operator::Pre(PrefixOperator::Not),
-                                token.offset() as u32,
-                                Precedence(8)
-                            );
-                            continue;
-                        },
-                        K::LitBoolFalse | K::LitBoolTrue
-                            => self.parse_bool(kind),
-                        K::LitIntegral => self.parse_integral(),
-                        K::NameField => {
-                            let field = self.parse_field_identifier();
-                            yard.push_field(field);
-                            continue;
-                        },
-                        K::NameValue => {
-                            self.raw.pop_tokens(1);
-                            (Expression::Var(self.raw.resolve_variable(token)), token.span())
-                        },
-                        K::SignBind => break,
-                        _ => {
-                            let ty = typ::try_parse_type(&mut self.raw);
-                            if let Some(ty) = ty {
-                                self.parse_constructor(ty)
-                            } else {
-                                unimplemented!("Expected type, got {:?}\n{:?}", token, self.raw);
-                            }
-                        },
+                tt::Node::Run(_) => {
+                    let path = self.raw.parse_path(self.raw.tree());
+                    match self.parse_tokens(&mut yard, path) {
+                        LoopResult::Done(result) => result,
+                        LoopResult::Continue => continue,
+                        LoopResult::Break => break,
                     }
                 },
                 tt::Node::Braced(..) => self.parse_braced(node),
@@ -180,6 +149,62 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
 
         let (expr, range) = yard.pop_expression();
         self.raw.tree().borrow_mut().push_expression(expr, range)
+    }
+
+    fn parse_tokens(
+        &mut self,
+        yard: &mut ShuntingYard,
+        path: Path
+    )
+        -> LoopResult<(Expression, Range)>
+    {
+        use crate::model::tt::Kind as K;
+        use self::LoopResult::*;
+
+        let token = self.raw.peek_token().expect("Token");
+        let kind = token.kind();
+
+        match kind {
+            K::KeywordIf => Done(self.parse_if_else()),
+            K::KeywordLoop => Done(self.parse_loop()),
+            K::KeywordNot => {
+                self.raw.pop_tokens(1);
+                yard.push_operator(
+                    Operator::Pre(PrefixOperator::Not),
+                    token.offset() as u32,
+                    Precedence(8)
+                );
+                Continue
+            },
+            K::LitBoolFalse | K::LitBoolTrue => Done(self.parse_bool(kind)),
+            K::LitIntegral => Done(self.parse_integral()),
+            K::NameField => {
+                let field = self.parse_field_identifier();
+                yard.push_field(field);
+                Continue
+            },
+            K::NameValue => {
+                self.raw.pop_tokens(1);
+                let variable = self.raw.resolve_variable(token);
+                let range = if let Some(range) =
+                    path.range(&*self.raw.tree().borrow())
+                {
+                    range.extend(token.span())
+                } else {
+                    token.span()
+                };
+                Done((Expression::Var(variable, path), range))
+            },
+            K::SignBind => Break,
+            _ => {
+                let ty = typ::try_parse_type(&mut self.raw, path);
+                if let Some(ty) = ty {
+                    Done(self.parse_constructor(ty))
+                } else {
+                    unimplemented!("Expected type, got {:?}\n{:?}", token, self.raw);
+                }
+            },
+        }
     }
 
     fn parse_block(&mut self) -> Block {
@@ -588,7 +613,7 @@ impl<'a, 'tree> PatternParser<'a, 'tree> {
     }
 
     fn parse_type_name(&mut self) -> PatternId {
-        if let Some(ty) = typ::try_parse_type(&mut self.raw) {
+        if let Some(ty) = typ::try_parse_type(&mut self.raw, Path::empty()) {
             let sep = tt::Kind::SignColon;
             let (c, range) =
                 parse_constructor_impl(&mut self.raw, parse_pattern, sep, ty);
@@ -736,6 +761,12 @@ impl<'a, 'tree> StmtParser<'a, 'tree> {
 //
 //  Implementation Details (Tuple)
 //
+enum LoopResult<T> {
+    Done(T),
+    Continue,
+    Break,
+}
+
 fn parse_constructor_impl<'a, 'tree, T: Copy>(
     raw: &mut RawParser<'a, 'tree>,
     inner_parser: fn(&mut RawParser<'a, 'tree>) -> Id<T>,
@@ -861,6 +892,23 @@ mod tests {
         let (e, _, _, _, _, _) = env.factories();
         let (one, two) = (e.int(1, 6), e.int(2, 9));
         e.function_call(e.var(0, 5), 5, 10).push(one).push(two).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
+    fn basic_nested_function_call() {
+        let env = LocalEnv::new(b"Nested::basic(1, 2)");
+        let (e, _, _, _, _, _) = env.factories();
+        let (one, two) = (e.int(1, 14), e.int(2, 17));
+        e.function_call(
+            e.nested(8, 5).push(0, 6).build(),
+            13,
+            18
+        )
+            .push(one)
+            .push(two)
+            .build();
 
         assert_eq!(env.actual_expression(), env.expected_tree());
     }

@@ -30,9 +30,11 @@ pub fn parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> TypeId {
     parse_type_impl(raw, tree)
 }
 
-pub fn try_parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> Option<TypeId> {
+pub fn try_parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>, path: Path)
+    -> Option<TypeId>
+{
     let mut parser = TypeParser::new(*raw, raw.tree());
-    let t = parser.try_parse();
+    let t = parser.try_parse(path);
     *raw = parser.into_raw();
     t
 }
@@ -181,8 +183,8 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
 
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse(&mut self) -> TypeId {
-        if let Some(ty) = self.try_parse() {
+    fn parse(&mut self, path: Path) -> TypeId {
+        if let Some(ty) = self.try_parse(path) {
             return ty;
         }
 
@@ -195,7 +197,6 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
         self.store.borrow_mut().push(Type::Missing(range), range)
     }
 
-    //  fn(&mut Self) -> ast::Id<T>
     fn parse_tuple(&mut self) -> Tuple<Type> {
         if let Some(Node::Braced(o, ns, c)) = self.raw.peek() {
             self.raw.pop_node();
@@ -210,40 +211,26 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
         panic!("Unreachable: should only be called on Node::Braced");
     }
 
-    fn try_parse(&mut self) -> Option<TypeId> {
+    fn try_parse(&mut self, path: Path) -> Option<TypeId> {
         self.raw.peek().and_then(|node| {
             match node {
                 Node::Run(run) => {
-                    let mut components = vec!();
-                    let mut colons = vec!();
-
                     if run[0].kind() != Kind::NameType {
                         return None;
                     }
 
-                    let mut t =
-                        self.raw.pop_kind(Kind::NameType).expect("Type");
-                    let mut range = t.span();
+                    let typ = self.raw.pop_kind(Kind::NameType).expect("Type");
+                    let range = typ.span();
 
-                    while let Some(c) =
-                        self.raw.pop_kind(Kind::SignDoubleColon)
-                    {
-                        components.push(self.raw.resolve_identifier(t));
-                        colons.push(c.offset() as u32);
+                    let typ = self.raw.resolve_type(typ);
 
-                        t = self.raw.pop_kind(Kind::NameType).expect("Type");
-                        range = range.extend(t.span());
-                    }
-
-                    if components.is_empty() {
-                        Some((Type::Simple(self.raw.resolve_type(t)), range))
+                    if path.is_empty() {
+                        Some((Type::Simple(typ), range))
                     } else {
-                        let mut store = self.store.borrow_mut();
-                        let path = Path {
-                            components: store.push_slice(&components),
-                            colons: store.push_slice(&colons),
-                        };
-                        Some((Type::Nested(self.raw.resolve_type(t), path), range))
+                        let range = path.range(&*self.store.borrow())
+                            .map(|r| r.extend(range))
+                            .unwrap_or(range);
+                        Some((Type::Nested(typ, path), range))
                     }
                 },
                 Node::Braced(..) => {
@@ -256,13 +243,17 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
     }
 }
 
-fn parse_type_impl<'a, 'tree, S>(raw: &mut RawParser<'a, 'tree>, store: &cell::RefCell<S>)
+fn parse_type_impl<'a, 'tree, S>(
+    raw: &mut RawParser<'a, 'tree>,
+    store: &cell::RefCell<S>,
+)
     -> TypeId
     where
         S: Store<Type> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
 {
-    let mut parser  = TypeParser::new(*raw, store);
-    let t = parser.parse();
+    let path = raw.parse_path(store);
+    let mut parser = TypeParser::new(*raw, store);
+    let t = parser.parse(path);
     *raw = parser.into_raw();
     t
 }

@@ -23,6 +23,25 @@ pub struct RawParser<'a, 'tree> {
 //  High-level parsing functions.
 //
 impl<'a, 'tree> RawParser<'a, 'tree> {
+    /// Parses a path, possibly empty.
+    pub fn parse_path<S>(&mut self, store: &cell::RefCell<S>) -> ast::Path
+        where
+            S: MultiStore<ast::Identifier> + MultiStore<u32>,
+    {
+        let (components, colons) = match self.state.nodes.first().cloned() {
+            Some(tt::Node::Run(tokens)) => self.parse_path_impl(tokens),
+            _ => return ast::Path::empty(),
+        };
+
+        debug_assert!(components.len() == colons.len());
+
+        let components = store.borrow_mut().push_slice(&components);
+        let colons = store.borrow_mut().push_slice(&colons);
+
+        ast::Path { components, colons, }
+    }
+
+    /// Parses a tuple, whether expression, pattern, or type.
     pub fn parse_tuple<F, S, T: Copy>(
         &mut self,
         store: &cell::RefCell<S>,
@@ -209,13 +228,15 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
     pub fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
 
     pub fn peek_kind(&self) -> Option<tt::Kind> {
-        self.state.peek_token().map(|tok| tok.kind())
+        self.peek_token().map(|tok| tok.kind())
     }
+
+    pub fn peek_token(&self) -> Option<tt::Token> { self.state.peek_token() }
 
     pub fn pop_node(&mut self) { self.state.pop_node(); }
 
     pub fn pop_kind(&mut self, kind: tt::Kind) -> Option<tt::Token> {
-        if let Some(tok) = self.state.peek_token() {
+        if let Some(tok) = self.peek_token() {
             if tok.kind() == kind {
                 self.pop_tokens(1);
                 return Some(tok);
@@ -225,6 +246,37 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
     }
 
     pub fn pop_tokens(&mut self, nb: usize) { self.state.pop_tokens(nb); }
+}
+
+impl<'a, 'tree> RawParser<'a, 'tree> {
+    fn parse_path_impl(&mut self, mut tokens: &[tt::Token])
+        -> (Vec<ast::Identifier>, Vec<u32>)
+    {
+        use self::tt::Kind::*;
+
+        let mut components = vec!();
+        let mut colons = vec!();
+
+        while tokens.len() >= 2 {
+            let (i, c) = (tokens[0], tokens[1]);
+
+            if c.kind() != SignDoubleColon {
+                break;
+            }
+
+            if i.kind() != NameModule && i.kind() != NameType {
+                break;
+            }
+
+            components.push(ast::Identifier(self.intern_id_of(i), i.span()));
+            colons.push(c.offset() as u32);
+            tokens = &tokens[2..]; 
+        }
+
+        self.pop_tokens(colons.len() * 2);
+
+        (components, colons)
+    }
 }
 
 impl<'a, 'tree> fmt::Debug for RawParser<'a, 'tree>  {

@@ -36,7 +36,7 @@ pub enum Expression {
     /// A tuple.
     Tuple(Tuple<Expression>),
     /// A variable identifier.
-    Var(VariableIdentifier),
+    Var(VariableIdentifier, Path),
 }
 
 /// A Binary Operator such as `+` or `*`.
@@ -304,7 +304,7 @@ impl convert::From<Tuple<Expression>> for Expression {
 
 impl convert::From<VariableIdentifier> for Expression {
     fn from(v: VariableIdentifier) -> Expression {
-        Expression::Var(v)
+        Expression::Var(v, Path::empty())
     }
 }
 

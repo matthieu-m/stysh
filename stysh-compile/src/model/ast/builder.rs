@@ -134,6 +134,13 @@ pub struct MethodCallBuilder {
     arguments: TupleBuilder<Tree, Expression>,
 }
 
+/// NestedVarBuilder
+#[derive(Clone)]
+pub struct NestedVarBuilder {
+    name: VariableIdentifier,
+    path: PathBuilder<Tree>,
+}
+
 /// PreOpBuilder
 #[derive(Clone)]
 pub struct PreOpBuilder {
@@ -271,9 +278,15 @@ pub struct TypeFactory<S> {
 /// NestedTypeBuilder
 #[derive(Clone)]
 pub struct NestedTypeBuilder<S> {
+    name: TypeIdentifier,
+    path: PathBuilder<S>,
+}
+
+/// PathBuilder
+#[derive(Clone)]
+pub struct PathBuilder<S> {
     store: rc::Rc<cell::RefCell<S>>,
     resolver: Resolver,
-    name: TypeIdentifier,
     components: Vec<Identifier>,
     colons: Vec<u32>,
 }
@@ -427,6 +440,11 @@ impl ExprFactory {
         MethodCallBuilder::new(self.tree.clone(), self.resolver.clone(), receiver, open, close)
     }
 
+    /// Creates a nested Var Expression.
+    pub fn nested(&self, pos: u32, len: u32) -> NestedVarBuilder {
+        NestedVarBuilder::new(self.tree.clone(), self.resolver.clone(), pos, len)
+    }
+
     /// Creates a PreOpBuilder, defaults to Not.
     pub fn pre_op(&self, expr: ExpressionId) -> PreOpBuilder {
         PreOpBuilder::new(self.tree.clone(), expr)
@@ -440,7 +458,8 @@ impl ExprFactory {
     /// Creates a Var Expression.
     pub fn var(&self, pos: u32, len: u32) -> ExpressionId {
         let name = var_id(&self.resolver, pos, len);
-        self.tree.borrow_mut().push_expression(Expression::Var(name), range(pos, len))
+        let expr = Expression::Var(name, Path::empty());
+        self.tree.borrow_mut().push_expression(expr, range(pos, len))
     }
 }
 
@@ -661,11 +680,7 @@ impl FunctionCallBuilder {
         let mut arguments = TupleBuilder::new(tree.clone(), resolver);
         arguments.parens(open, close);
 
-        FunctionCallBuilder {
-            tree,
-            callee,
-            arguments,
-        }
+        FunctionCallBuilder { tree, callee, arguments, }
     }
 
     /// Appends an argument.
@@ -688,8 +703,7 @@ impl FunctionCallBuilder {
         };
         let range = {
             let callee = self.tree.borrow().get_expression_range(self.callee);
-            let arguments = expr.arguments.span();
-            callee.extend(arguments)
+            callee.extend(expr.arguments.span())
         };
         self.tree.borrow_mut().push_expression(expr.into(), range)
     }
@@ -969,6 +983,61 @@ impl MethodCallBuilder {
             receiver.extend(arguments)
         };
         self.tree.borrow_mut().push_expression(expr.into(), range)
+    }
+}
+
+impl NestedVarBuilder {
+    /// Creates an instance.
+    pub fn new(
+        store: RcTree,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
+    )
+        -> Self
+    {
+        let name = var_id(&resolver, pos, len);
+        Self::named(store, resolver, name)
+    }
+
+    /// Creates an instance, named.
+    pub fn named(
+        store: RcTree,
+        resolver: Resolver,
+        name: VariableIdentifier,
+    )
+        -> Self
+    {
+        let path = PathBuilder::new(store, resolver);
+        NestedVarBuilder { name, path, }
+    }
+
+    /// Appends a path component.
+    pub fn push(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.path.push(pos, len);
+        self
+    }
+
+    /// Appends a path component.
+    pub fn push_named(&mut self, name: Identifier) -> &mut Self {
+        self.path.push_named(name);
+        self
+    }
+
+    /// Overrides the position of the last inserted colon.
+    pub fn colon(&mut self, pos: u32) -> &mut Self {
+        self.path.colon(pos);
+        self
+    }
+
+    /// Creates a Nested Variable.
+    pub fn build(&self) -> ExpressionId {
+        let path = self.path.build();
+        let range = path.range(&*self.path.store.borrow())
+            .map(|r| r.extend(self.name.1))
+            .unwrap_or(self.name.1);
+        self.path.store.borrow_mut()
+            .push_expression(Expression::Var(self.name, path), range)
     }
 }
 
@@ -2092,13 +2161,55 @@ impl<S> NestedTypeBuilder<S> {
     )
         -> Self
     {
+        let path = PathBuilder::new(store, resolver);
         NestedTypeBuilder {
-            store,
-            resolver,
             name,
-            components: vec!(),
-            colons: vec!(),
+            path,
         }
+    }
+
+    /// Appends a path component.
+    pub fn push(&mut self, pos: u32, len: u32) -> &mut Self {
+        self.path.push(pos, len);
+        self
+    }
+
+    /// Appends a path component.
+    pub fn push_named(&mut self, name: Identifier) -> &mut Self {
+        self.path.push_named(name);
+        self
+    }
+
+    /// Overrides the position of the last inserted colon.
+    pub fn colon(&mut self, pos: u32) -> &mut Self {
+        self.path.colon(pos);
+        self
+    }
+}
+
+impl<S> NestedTypeBuilder<S>
+    where
+        S: Store<Type> + MultiStore<Identifier> + MultiStore<u32>
+{
+    /// Creates a Nested Type.
+    pub fn build(&self) -> TypeId {
+        let path = self.path.build();
+        let range = path.range(&*self.path.store.borrow())
+            .map(|r| r.extend(self.name.1))
+            .unwrap_or(self.name.1);
+        self.path.store.borrow_mut().push(Type::Nested(self.name, path), range)
+    }
+}
+
+impl<S> PathBuilder<S> {
+    /// Creates an instance.
+    pub fn new(
+        store: rc::Rc<cell::RefCell<S>>,
+        resolver: Resolver,
+    )
+        -> Self
+    {
+        PathBuilder { store, resolver, components: vec!(), colons: vec!(), }
     }
 
     /// Appends a path component.
@@ -2124,21 +2235,17 @@ impl<S> NestedTypeBuilder<S> {
     }
 }
 
-impl<S> NestedTypeBuilder<S>
+impl<S> PathBuilder<S>
     where
         S: Store<Type> + MultiStore<Identifier> + MultiStore<u32>
 {
     /// Creates a Nested Type.
-    pub fn build(&self) -> TypeId {
+    pub fn build(&self) -> Path {
         let mut store = self.store.borrow_mut();
         let components = store.push_slice(&self.components);
         let colons = store.push_slice(&self.colons);
 
-        let path = Path { components, colons, };
-        let range = self.components.first()
-            .map(|r| r.1.extend(self.name.1))
-            .unwrap_or(self.name.1);
-        store.push(Type::Nested(self.name, path), range)
+        Path { components, colons, }
     }
 }
 

@@ -36,13 +36,13 @@ pub struct Repository {
     enum_: JaggedArray<Enum>,
 
     //
-    //  Records
+    //  Extensions
     //
 
-    /// Record canonical name to RecordId.
-    record_lookup: JaggedHashMap<ItemIdentifier, RecordId>,
-    /// Definition of a given Record.
-    record: JaggedArray<Record>,
+    /// Extension canonical name to ExtensionId.
+    extension_lookup: JaggedHashMap<ItemIdentifier, ExtensionId>,
+    /// Definition of a given Extension.
+    extension: JaggedArray<Extension>,
 
     //
     //  Functions
@@ -52,6 +52,15 @@ pub struct Repository {
     function_lookup: JaggedHashMap<ItemIdentifier, FunctionId>,
     /// Signature of a given Function.
     function: JaggedArray<FunctionSignature>,
+
+    //
+    //  Records
+    //
+
+    /// Record canonical name to RecordId.
+    record_lookup: JaggedHashMap<ItemIdentifier, RecordId>,
+    /// Definition of a given Record.
+    record: JaggedArray<Record>,
 
     //
     //  Components
@@ -80,11 +89,14 @@ impl Repository {
             enum_lookup: JaggedHashMap::new(5),
             enum_: JaggedArray::new(5),
 
-            record_lookup: JaggedHashMap::new(5),
-            record: JaggedArray::new(5),
+            extension_lookup: JaggedHashMap::new(5),
+            extension: JaggedArray::new(5),
 
             function_lookup: JaggedHashMap::new(5),
             function: JaggedArray::new(5),
+
+            record_lookup: JaggedHashMap::new(5),
+            record: JaggedArray::new(5),
 
             names: JaggedMultiArray::new(5),
             path_components: JaggedMultiArray::new(5),
@@ -111,6 +123,10 @@ impl Repository {
             self.insert_enum(enum_, module, &mapper);
         }
 
+        for extension in module.extensions() {
+            self.insert_extension(extension, module, &mapper);
+        }
+
         for function in module.functions() {
             self.insert_function(function, module, &mapper);
         }
@@ -121,10 +137,12 @@ impl Repository {
         RepositorySnapshot {
             enum_lookup: self.enum_lookup.snapshot(),
             enum_: self.enum_.snapshot(),
-            record_lookup: self.record_lookup.snapshot(),
-            record: self.record.snapshot(),
+            extension_lookup: self.extension_lookup.snapshot(),
+            extension: self.extension.snapshot(),
             function_lookup: self.function_lookup.snapshot(),
             function: self.function.snapshot(),
+            record_lookup: self.record_lookup.snapshot(),
+            record: self.record.snapshot(),
             names: self.names.snapshot(),
             path_components: self.path_components.snapshot(),
             record_ids: self.record_ids.snapshot(),
@@ -161,7 +179,11 @@ impl Repository {
     //  the potential for recursive definition, such as Alias or Trait.
     fn create_id_mapper(&self, _module: &Module) -> IdMapper {
         //  FIXME(matthieum): Actually compute the first unknown...
-        IdMapper::new(self.enum_.len() as i64, self.record.len() as i64)
+        IdMapper::new(
+            self.enum_.len() as i64,
+            self.extension.len() as i64,
+            self.record.len() as i64,
+        )
     }
 
     fn insert_enum(
@@ -194,27 +216,29 @@ impl Repository {
         self.enum_lookup.insert(name, id);
     }
 
-    fn insert_record(
+    fn insert_extension(
         &mut self,
-        r: RecordId,
+        extension: ExtensionId,
         module: &Module,
         mapper: &IdMapper,
     )
     {
-        debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(self.extension_lookup.len() == self.extension.len());
 
-        let id = mapper.map_record(r);
+        let id = mapper.map_extension(extension);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.record.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.extension.len() as u32 + 1);
 
-        let record = module.get_record(r);
-        let name = record.name;
-        let range = record.range;
-        let enum_ = record.enum_.map(|e| mapper.map_enum(e));
-        let definition = self.insert_tuple(record.definition, module, mapper);
+        let ext = module.get_extension(extension);
 
-        self.record.push(Record { name, range, enum_, definition, });
-        self.record_lookup.insert(name, id);
+        let name = ext.name;
+        let range = ext.range;
+        let extended = self.insert_type_impl(ext.extended, module, mapper);
+
+        let ext = Extension { name, range, extended, };
+
+        self.extension.push(ext);
+        self.extension_lookup.insert(name, id);
     }
 
     fn insert_function(
@@ -230,14 +254,39 @@ impl Repository {
 
         let name = signature.name;
         let range = signature.range;
+        let extension = signature.extension.map(|e| mapper.map_extension(e));
         let arguments = self.insert_tuple(signature.arguments, module, mapper);
         let result = self.insert_type(signature.result, module, mapper);
 
         let id = FunctionId::new_repository(self.function.len() as u32);
-        let signature = FunctionSignature { name, range, arguments, result, };
+        let signature = FunctionSignature { name, extension, range, arguments, result, };
 
         self.function.push(signature);
         self.function_lookup.insert(name, id);
+    }
+
+    fn insert_record(
+        &mut self,
+        r: RecordId,
+        module: &Module,
+        mapper: &IdMapper,
+    )
+    {
+        debug_assert!(self.record.len() == self.record_lookup.len());
+
+        let id = mapper.map_record(r);
+        debug_assert!(id.is_repository());
+        debug_assert!(id.get_repository().unwrap() == self.record.len() as u32 + 1);
+
+        let record = module.get_record(r);
+
+        let name = record.name;
+        let range = record.range;
+        let enum_ = record.enum_.map(|e| mapper.map_enum(e));
+        let definition = self.insert_tuple(record.definition, module, mapper);
+
+        self.record.push(Record { name, range, enum_, definition, });
+        self.record_lookup.insert(name, id);
     }
 
     fn insert_path_components(
@@ -286,34 +335,46 @@ impl Repository {
     {
         use self::Type::*;
 
-        match module.get_type(ty) {
-            Builtin(b) => TypeId::from(b),
+        let ty = match module.get_type(ty) {
+            Builtin(b) => return TypeId::from(b),
+            ty => ty,
+        };
+
+        let ty = self.insert_type_impl(ty, module, mapper);
+
+        let index = self.type_.len();
+        self.type_.push(ty);
+        TypeId::new_repository(index as u32)
+    }
+
+    fn insert_type_impl(&mut self, type_: Type, module: &Module, mapper: &IdMapper)
+        -> Type
+    {
+        use self::Type::*;
+
+        match type_ {
+            Builtin(b) => Builtin(b),
             Enum(e, p) => {
                 let e = mapper.map_enum(e);
                 let p = self.insert_path_components(p, module);
-                self.insert_type_impl(Enum(e, p))
+                Enum(e, p)
             },
             Rec(r, p) => {
                 let r = mapper.map_record(r);
                 let p = self.insert_path_components(p, module);
-                self.insert_type_impl(Rec(r, p))
+                Rec(r, p)
             },
             Tuple(tuple) => {
                 let tuple = self.insert_tuple(tuple, module, mapper);
-                self.insert_type_impl(Tuple(tuple))
+                Tuple(tuple)
             },
             Unresolved(name, path) =>
                 unreachable!("Cannot insert Unresolved({:?}, {:?})",
                     name, module.get_path_components(path)),
         }
     }
-
-    fn insert_type_impl(&mut self, type_: Type) -> TypeId {
-        let index = self.type_.len();
-        self.type_.push(type_);
-        TypeId::new_repository(index as u32)
-    }
 }
+
 
 /// RepositorySnapshot.
 ///
@@ -323,17 +384,21 @@ impl Repository {
 /// Multiple snapshots, each from a different time, can coexist.
 #[derive(Clone, Debug, Default)]
 pub struct RepositorySnapshot {
-    // Enums
+    //  Enums
     enum_lookup: JaggedHashMapSnapshot<ItemIdentifier, EnumId>,
     enum_: JaggedArraySnapshot<Enum>,
 
-    //  Records
-    record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
-    record: JaggedArraySnapshot<Record>,
+    //  Extensions
+    extension_lookup: JaggedHashMapSnapshot<ItemIdentifier, ExtensionId>,
+    extension: JaggedArraySnapshot<Extension>,
 
     //  Functions
     function_lookup: JaggedHashMapSnapshot<ItemIdentifier, FunctionId>,
     function: JaggedArraySnapshot<FunctionSignature>,
+
+    //  Records
+    record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
+    record: JaggedArraySnapshot<Record>,
 
     //  Components
     names: JaggedMultiArraySnapshot<ValueIdentifier>,
@@ -348,12 +413,16 @@ impl Registry for RepositorySnapshot {
         *self.enum_.at(index_of(id))
     }
 
-    fn get_record(&self, id: RecordId) -> Record {
-        *self.record.at(index_of(id))
+    fn get_extension(&self, id: ExtensionId) -> Extension {
+        *self.extension.at(index_of(id))
     }
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         *self.function.at(index_of(id))
+    }
+
+    fn get_record(&self, id: RecordId) -> Record {
+        *self.record.at(index_of(id))
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
@@ -382,6 +451,7 @@ impl Registry for RepositorySnapshot {
 fn index_of<T: ItemId>(id: T) -> usize {
     id.get_repository().expect("repository") as usize
 }
+
 
 //
 //  Private Types
@@ -479,18 +549,25 @@ impl<T> JaggedMultiArraySnapshot<T> {
 //  A mapper between module and repository ID, for recursive types.
 struct IdMapper {
     enum_offset: i64,
+    extension_offset: i64,
     record_offset: i64,
 }
 
 impl IdMapper {
-    fn new(enum_offset: i64, record_offset: i64) -> IdMapper {
-        IdMapper { enum_offset, record_offset, }
+    fn new(enum_offset: i64, extension_offset: i64, record_offset: i64) -> IdMapper {
+        IdMapper { enum_offset, extension_offset, record_offset, }
     }
 
     fn map_enum(&self, id: EnumId) -> EnumId {
         debug_assert!(id.is_module());
         let local = id.get_module().expect("module") as i64;
         EnumId::new_repository((local + self.enum_offset) as u32)
+    }
+
+    fn map_extension(&self, id: ExtensionId) -> ExtensionId {
+        debug_assert!(id.is_module());
+        let local = id.get_module().expect("module") as i64;
+        ExtensionId::new_repository((local + self.extension_offset) as u32)
     }
 
     fn map_record(&self, id: RecordId) -> RecordId {

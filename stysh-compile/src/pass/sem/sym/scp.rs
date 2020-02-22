@@ -1,7 +1,7 @@
 //! Lexical scopes for name resolution
 
 use std::collections::HashMap;
-use std::fmt;
+use std::{cell, fmt};
 
 use crate::basic::mem;
 
@@ -30,7 +30,7 @@ pub trait Scope: fmt::Debug {
 }
 
 /// CallableCandidate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum CallableCandidate {
     /// A built-in function.
     Builtin(BuiltinFunction),
@@ -52,6 +52,56 @@ pub struct BuiltinScope;
 impl BuiltinScope {
     /// Creates an instance of BuiltinScope.
     pub fn new() -> BuiltinScope { BuiltinScope }
+}
+
+/// A Type Scope.
+pub struct TypeScope<'a> {
+    parent: Option<&'a dyn Scope>,
+    module: &'a cell::RefCell<Module>,
+    type_: Type,
+}
+
+impl<'a> TypeScope<'a> {
+    /// Creates an instance of TypeScope.
+    pub fn new(
+        parent: &'a dyn Scope,
+        module: &'a cell::RefCell<Module>,
+        type_: Type
+    )
+        ->  Self
+    {
+        TypeScope { parent: Some(parent), module, type_, }
+    }
+
+    /// Creates a stand-alone instance of TypeScope.
+    pub fn stand_alone(module: &'a cell::RefCell<Module>, type_: Type) -> Self {
+        TypeScope { parent: None, module, type_, }
+    }
+
+    /// Returns the matching callables within type.
+    pub fn lookup_associated_callables(&self, name: ValueIdentifier) -> CallableCandidate {
+        let module = self.module.borrow();
+
+        let mut associated = vec!();
+        for &id in &module.functions() {
+            let fun = module.get_function(id);
+            if fun.name.id() != name.id() {
+                continue;
+            }
+            if let Some(e) = fun.extension {
+                let ext = module.get_extension(e);
+                if ext.extended == self.type_ {
+                    associated.push(CallableCandidate::Function(id));
+                }
+            }
+        }
+
+        match associated.len() {
+            0 => self.unresolved_function(name),
+            1 => associated[0].clone(),
+            _ => CallableCandidate::Unresolved(associated),
+        }
+    }
 }
 
 /// A Function Prototype Scope.
@@ -155,6 +205,28 @@ impl Scope for BuiltinScope {
     }
 }
 
+impl<'a> Scope for TypeScope<'a> {
+    fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
+        self.parent.and_then(|parent| parent.lookup_binding(name))
+    }
+
+    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
+        let associated = self.lookup_associated_callables(name);
+
+        if let Some(parent) = self.parent {
+            let parent = parent.lookup_callable(name);
+            merge(associated, parent)
+        } else {
+            associated
+        }
+    }
+
+    fn lookup_type(&self, name: ItemIdentifier) -> Type {
+        self.parent.map(|parent| parent.lookup_type(name))
+            .unwrap_or(self.unresolved_type(name))
+    }
+}
+
 impl<'a> Scope for FunctionScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
         self.arguments
@@ -176,38 +248,22 @@ impl<'a> Scope for BlockScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
         self.values
             .get(&name.id())
-            .cloned()
+            .copied()
             .or_else(|| self.parent.lookup_binding(name))
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
-        use self::CallableCandidate::*;
-
-        let mut collection = vec!();
-
-        match self.parent.lookup_callable(name) {
-            Unknown(_) => (),
-            Builtin(fun) => collection.push(Builtin(fun)),
-            Function(fun) => collection.push(Function(fun)),
-            Unresolved(callables) => collection.extend(callables),
-        }
+        let parent = self.parent.lookup_callable(name);
 
         if let Some(callable) = self.functions.get(&name.id()).cloned() {
-            if collection.is_empty() {
-                return callable;
-            }
-            collection.push(callable);
-        }
-
-        match collection.len() {
-            0 => Unknown(name),
-            1 => collection[0].clone(),
-            _ => Unresolved(collection)
+            merge(callable, parent)
+        } else {
+            parent
         }
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
-        if let Some(type_) = self.types.get(&name.id()).cloned() {
+        if let Some(type_) = self.types.get(&name.id()).copied() {
             return type_;
         }
 
@@ -219,6 +275,47 @@ impl<'a> Scope for BlockScope<'a> {
 //  Implementation Details
 //
 type IdMap<V> = HashMap<mem::InternId, V>;
+
+fn merge(immediate: CallableCandidate, parent: CallableCandidate)
+    -> CallableCandidate
+{
+    use self::CallableCandidate::*;
+
+    match (immediate, parent) {
+        //  No merge actually required.
+        (Unknown(_), parent) => parent,
+        (immediate, Unknown(_)) => immediate,
+        //  Vec merge required.
+        (Unresolved(mut immediate), Unresolved(parent)) => {
+            immediate.extend(parent.into_iter());
+            Unresolved(immediate)
+        },
+        (Unresolved(mut immediate), parent) => {
+            immediate.push(parent);
+            Unresolved(immediate)
+        },
+        (immediate, Unresolved(mut parent)) => {
+            parent.insert(0, immediate);
+            Unresolved(parent)
+        },
+        //  Vec creation required.
+        (immediate, parent) => Unresolved(vec!(immediate, parent)),
+    }
+}
+
+//
+//  Trait Implementations
+//
+impl<'a> fmt::Debug for TypeScope<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "TypeScope {{ parent: {:?}, type: {:?} }}",
+            self.parent,
+            self.type_,
+        )
+    }
+}
 
 impl<'a> fmt::Debug for FunctionScope<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -311,9 +408,12 @@ pub mod mocks {
 //
 #[cfg(test)]
 mod tests {
-    use crate::basic::{com, mem};
+    use std::cell;
 
-    use super::{ValueIdentifier, Scope, BuiltinScope, FunctionScope};
+    use crate::basic::{com, mem};
+    use crate::model::hir::*;
+
+    use super::{CallableCandidate, Scope, BuiltinScope, FunctionScope, TypeScope};
 
     #[test]
     fn function_no_arguments() {
@@ -357,6 +457,57 @@ mod tests {
             scope.lookup_binding(var_id(b, 38, 1)),
             Some(var_id(b, 17, 1))
         );
+    }
+
+    #[test]
+    fn associated_function_lookup() {
+        //  :rec Simple;
+        //
+        //  :ext Simple {
+        //      :fun foo() { bar(); }
+        //      :fun bar() { baz(); }
+        //  }
+        let interner = mem::Interner::new();
+        let bar = var_id(interner.insert(b"bar"), 45, 3);
+        let baz = var_id(interner.insert(b"baz"), 71, 3);
+
+        let (module, rec, result) = {
+            let mut module = Module::new(Default::default());
+
+            let name = item_id(interner.insert(b"Simple"), 19, 6);
+            let range = Default::default();
+
+            let rec = item_id(interner.insert(b"Simple"), 5, 6);
+            let extended = Type::Rec(module.push_record_name(rec), Default::default());
+
+            let ext = module.push_extension_name(name);
+
+            module.set_extension(ext, Extension { name, range, extended, });
+
+            let bar = item_id(bar.id(), 63, 3);
+            let fun = module.push_function_name(bar);
+            let signature = FunctionSignature {
+                name: bar,
+                range: Default::default(),
+                extension: Some(ext),
+                arguments: Tuple::default(),
+                result: TypeId::void(),
+            };
+
+            module.set_function(fun, signature);
+
+            (cell::RefCell::new(module), extended, fun)
+        };
+
+        let builtin = BuiltinScope::new();
+        let scope = TypeScope::new(&builtin, &module, rec);
+
+        assert_eq!(scope.lookup_callable(baz), CallableCandidate::Unknown(baz));
+        assert_eq!(scope.lookup_callable(bar), CallableCandidate::Function(result));
+    }
+
+    fn item_id(id: mem::InternId, pos: usize, len: usize) -> ItemIdentifier {
+        ItemIdentifier(id, com::Range::new(pos, len))
     }
 
     fn var_id(id: mem::InternId, pos: usize, len: usize) -> ValueIdentifier {

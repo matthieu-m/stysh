@@ -15,12 +15,12 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_enum(&self, id: EnumId) -> Enum;
 
-    /// Returns the definition of the record associated to the ID.
+    /// Returns the definition of the extension associated to the ID.
     ///
     /// #   Panics
     ///
     /// Panics if the ID is incorrect.
-    fn get_record(&self, id: RecordId) -> Record;
+    fn get_extension(&self, id: ExtensionId) -> Extension;
 
     /// Returns the signature of the function associated to the ID.
     ///
@@ -28,6 +28,13 @@ pub trait Registry: fmt::Debug {
     ///
     /// Panics if the ID is incorrect.
     fn get_function(&self, id: FunctionId) -> FunctionSignature;
+
+    /// Returns the definition of the record associated to the ID.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_record(&self, id: RecordId) -> Record;
 
     /// Returns the names associated to the ID.
     ///

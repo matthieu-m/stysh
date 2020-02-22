@@ -8,6 +8,8 @@ use crate::model::hir::*;
 
 /// The ID of an Enum.
 pub type EnumId = Id<Enum>;
+/// The ID of an Extension.
+pub type ExtensionId = Id<Extension>;
 /// The ID of a Function.
 pub type FunctionId = Id<FunctionSignature>;
 /// The ID of a Path.
@@ -54,6 +56,8 @@ pub trait ItemId {
 pub enum Item {
     /// An enum definition.
     Enum(EnumId),
+    /// An extension definition.
+    Ext(ExtensionId),
     /// A function definition.
     Fun(FunctionId),
     /// A record definition.
@@ -86,17 +90,30 @@ pub struct Enum {
     pub variants: Id<[RecordId]>,
 }
 
+/// An extension definition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Extension {
+    /// The extension identifier.
+    pub name: ItemIdentifier,
+    /// The extension range.
+    pub range: Range,
+    /// The extended type.
+    pub extended: Type,
+}
+
 /// A function signature.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct FunctionSignature {
     /// The function identifier.
     pub name: ItemIdentifier,
+    /// The function prototype range.
+    pub range: Range,
+    /// The extension, if any.
+    pub extension: Option<ExtensionId>,
     /// The function arguments.
     pub arguments: Tuple<TypeId>,
     /// The return type of the function.
     pub result: TypeId,
-    /// The function prototype range.
-    pub range: Range,
 }
 
 /// A PathComponent.
@@ -271,6 +288,10 @@ impl ItemId for TypeId {
 //  Default Implementations
 //
 
+impl Default for Type {
+    fn default() -> Self { Type::Unresolved(Default::default(), Default::default()) }
+}
+
 impl Default for PathComponent {
     fn default() -> Self { PathComponent::Unresolved(Default::default()) }
 }
@@ -281,6 +302,10 @@ impl Default for PathComponent {
 
 impl convert::From<EnumId> for Item {
     fn from(e: EnumId) -> Self { Item::Enum(e) }
+}
+
+impl convert::From<ExtensionId> for Item {
+    fn from(e: ExtensionId) -> Self { Item::Ext(e) }
 }
 
 impl convert::From<FunctionId> for Item {

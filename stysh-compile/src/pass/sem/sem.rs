@@ -46,7 +46,7 @@ impl<'a> GraphBuilder<'a> {
 
         match item {
             Enum(e) => self.enum_name(e),
-            Ext(_) => todo!(),
+            Ext(e) => self.extension_name(e),
             Fun(f) => self.function_name(f),
             Rec(r) => self.record_name(r),
         }
@@ -60,7 +60,7 @@ impl<'a> GraphBuilder<'a> {
 
         match item {
             Enum(i) => self.enum_item(i),
-            Ext(_) => todo!(),
+            Ext(e) => self.extension_item(e),
             Fun(f) => self.fun_item(f),
             Rec(r) => self.rec_item(r),
         }
@@ -94,7 +94,7 @@ impl<'a> GraphBuilder<'a> {
         let signature = self.hir_module.borrow().get_function(id);
         let body = cell::RefCell::new(hir::Tree::default());
 
-        {
+        self.within_extension(signature.extension, |scope| {
             use std::ops::Deref;
 
             let module = self.hir_module.borrow();
@@ -118,14 +118,14 @@ impl<'a> GraphBuilder<'a> {
             let ast_tree = self.ast_module.get_function_body(f);
             let ast_arguments = self.ast_module.get_arguments(function.arguments);
 
-            let scope = self.function_scope(self.scope, ast_arguments);
+            let scope = self.function_scope(scope, ast_arguments);
             let expr = self.symbol_mapper(&scope, &registry, ast_tree, &body)
                 .value_of(ast_tree.get_root_function().expect("Function Root").1);
 
             body.borrow_mut().set_root(expr);
 
             self.resolve(&body);
-        }
+        });
 
         body.into_inner()
     }
@@ -138,19 +138,39 @@ impl<'a> GraphBuilder<'a> {
     fn enum_name(&mut self, e: ast::EnumId) -> hir::Item {
         let e = self.ast_module.get_enum(e);
         let id = self.hir_module.borrow_mut().push_enum_name(e.name.into());
+
+        let ast_variants = self.ast_module.get_inner_records(e.variants);
+
+        for ev in ast_variants {
+            use self::ast::InnerRecord::*;
+
+            match *ev {
+                Unit(name) => {
+                    self.hir_module.borrow_mut().push_record_name(name.into());
+                },
+                Missing(_) | Tuple(..) | Unexpected(_) => (),
+            }
+        }
+
         hir::Item::Enum(id)
     }
 
-    fn record_name(&mut self, r: ast::RecordId) -> hir::Item {
-        let r = self.ast_module.get_record(r);
-        let id = self.hir_module.borrow_mut().push_record_name(r.name().into());
-        hir::Item::Rec(id)
+    fn extension_name(&mut self, e: ast::ExtensionId) -> hir::Item {
+        let e = self.ast_module.get_extension(e);
+        let id = self.hir_module.borrow_mut().push_extension_name(e.name.into());
+        hir::Item::Ext(id)
     }
 
     fn function_name(&mut self, f: ast::FunctionId) -> hir::Item {
         let f = self.ast_module.get_function(f);
         let id = self.hir_module.borrow_mut().push_function_name(f.name.into());
         hir::Item::Fun(id)
+    }
+
+    fn record_name(&mut self, r: ast::RecordId) -> hir::Item {
+        let r = self.ast_module.get_record(r);
+        let id = self.hir_module.borrow_mut().push_record_name(r.name().into());
+        hir::Item::Rec(id)
     }
 
     fn enum_item(&mut self, e: ast::EnumId) -> hir::Item {
@@ -168,15 +188,18 @@ impl<'a> GraphBuilder<'a> {
                 Tuple(..) => unimplemented!("InnerRecord::Tuple"),
                 Unit(name) => {
                     let name = name.into();
+                    let r = self.hir_module.borrow().lookup_record(name)
+                        .expect("Record to be registered");
+
                     let range = ev.span();
                     let enum_ = Some(id);
-                    let record = hir::Record { name, range, enum_, definition: hir::Tuple::unit() };
+                    let definition = hir::Tuple::unit();
 
-                    let mut module = self.hir_module.borrow_mut();
-                    let id = module.push_record_name(name);
-                    module.set_record(id, record);
+                    let record = hir::Record { name, range, enum_, definition, };
 
-                    variants.push(id);
+                    self.hir_module.borrow_mut().set_record(r, record);
+
+                    variants.push(r);
                 },
                 Missing(_) | Unexpected(_) => (),
             }
@@ -186,17 +209,46 @@ impl<'a> GraphBuilder<'a> {
         let range = Range::new(e.keyword as usize, 5).extend(e.name.span());
         let variants = self.hir_module.borrow_mut().push_record_ids(variants);
 
-        let enum_ = hir::Enum { name, range, variants };
+        let enum_ = hir::Enum { name, range, variants, };
+
         self.hir_module.borrow_mut().set_enum(id, enum_);
 
         hir::Item::Enum(id)
     }
 
-    fn fun_item(&mut self, fun: ast::FunctionId) -> hir::Item {
-        let fun = self.ast_module.get_function(fun);
+    fn extension_item(&mut self, e: ast::ExtensionId) -> hir::Item {
+        let ext = self.ast_module.get_extension(e);
+        let id = self.hir_module.borrow().lookup_extension(ext.name.into())
+            .expect("Extension to be registered");
+
+        let name = ext.name.into();
+        let range = ext.span();
+        let extended = self.scope.lookup_type(name);
+
+        let ext = hir::Extension { name, range, extended, };
+        self.hir_module.borrow_mut().set_extension(id, ext);
+
+        hir::Item::Ext(id)
+    }
+
+    fn fun_item(&mut self, f: ast::FunctionId) -> hir::Item {
+        let fun = self.ast_module.get_function(f);
+        let id = self.hir_module.borrow().lookup_function(fun.name.into())
+            .expect("Function to be registered");
+
         let name = fun.name.into();
 
-        let arguments = {
+        let range = Range::new(
+            fun.keyword as usize,
+            self.ast_module.get_type_range(fun.result).end_offset() - (fun.keyword as usize)
+        );
+
+        let extension = self.ast_module.get_function_extension(f).and_then(|ext| {
+            let ext = self.ast_module.get_extension(ext);
+            self.hir_module.borrow().lookup_extension(ext.name.into())
+        });
+
+        let arguments = self.within_extension(extension, |scope| {
             let ast_arguments = self.ast_module.get_arguments(fun.arguments);
 
             let mut fields = Vec::with_capacity(ast_arguments.len());
@@ -204,7 +256,7 @@ impl<'a> GraphBuilder<'a> {
 
             for a in ast_arguments {
                 names.push(hir::ValueIdentifier(a.name.id(), a.name.span()));
-                fields.push(self.type_mapper(self.scope, self.ast_module, self.hir_module)
+                fields.push(self.type_mapper(scope, self.ast_module, self.hir_module)
                         .type_of(a.type_));
             }
 
@@ -212,20 +264,15 @@ impl<'a> GraphBuilder<'a> {
             let fields = self.hir_module.borrow_mut().push_type_ids(fields);
 
             hir::Tuple { fields, names, }
-        };
+        });
 
-        let result = self.type_mapper(self.scope, self.ast_module, self.hir_module)
-            .type_of(fun.result);
+        let result = self.within_extension(extension, |scope| {
+            self.type_mapper(scope, self.ast_module, self.hir_module)
+                .type_of(fun.result)
+        });
 
-        let range = Range::new(
-            fun.keyword as usize,
-            self.ast_module.get_type_range(fun.result).end_offset() - (fun.keyword as usize)
-        );
+        let signature = hir::FunctionSignature { name, range, extension, arguments, result, };
 
-        let signature = hir::FunctionSignature { name, arguments, result, range, };
-
-        let id = self.hir_module.borrow().lookup_function(name)
-            .expect("Function to be registered");
         self.hir_module.borrow_mut().set_function(id, signature);
 
         hir::Item::Fun(id)
@@ -250,9 +297,23 @@ impl<'a> GraphBuilder<'a> {
         };
 
         let record = hir::Record { name, range, enum_, definition, };
+
         self.hir_module.borrow_mut().set_record(id, record);
 
         hir::Item::Rec(id)
+    }
+
+    fn within_extension<F, R>(&self, ext: Option<hir::ExtensionId>, fun: F) -> R
+        where
+            F: FnOnce(&dyn scp::Scope) -> R
+    {
+        if let Some(ext) = ext {
+            let extended = self.hir_module.borrow().get_extension(ext).extended;
+            let scope = self.type_scope(self.scope, extended);
+            fun(&scope)
+        } else {
+            fun(self.scope)
+        }
     }
 
     fn resolve(&self, tree: &cell::RefCell<hir::Tree>) {
@@ -290,6 +351,16 @@ impl<'a> GraphBuilder<'a> {
             //  No progress made, no point in continuing.
             if self.context.fetched() == 0 && self.context.unified() == 0 { break; }
         }
+    }
+
+    fn type_scope<'b>(
+        &'b self,
+        parent: &'b dyn scp::Scope,
+        type_: hir::Type,
+    )
+        -> scp::TypeScope<'b>
+    {
+        scp::TypeScope::new(parent, &self.hir_module, type_)
     }
 
     fn function_scope<'b>(

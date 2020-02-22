@@ -19,7 +19,7 @@
 //! Note:   this layout is inspired by the realization that ECS are a great fit
 //!         for Rust.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::basic::com::{Range, Store, MultiStore};
 use crate::basic::sea::{MultiTable, Table};
@@ -38,27 +38,36 @@ pub struct Module {
     //
 
     /// Enum canonical name to EnumId.
-    enum_lookup: HashMap<ItemIdentifier, EnumId>,
+    enum_lookup: BTreeMap<ItemIdentifier, EnumId>,
     /// Definition of a given Enum.
     enum_: Table<EnumId, Enum>,
 
     //
-    //  Records
+    //  Extensions
     //
 
-    /// Record canonical name to RecordId.
-    record_lookup: HashMap<ItemIdentifier, RecordId>,
-    /// Definition of a given Record.
-    record: Table<RecordId, Record>,
+    /// Extension canonical name to ExtensionId.
+    extension_lookup: BTreeMap<ItemIdentifier, ExtensionId>,
+    /// Definition of a given Extension.
+    extension: Table<ExtensionId, Extension>,
 
     //
     //  Functions
     //
 
     /// Function canonical name to FunctionId.
-    function_lookup: HashMap<ItemIdentifier, FunctionId>,
+    function_lookup: BTreeMap<ItemIdentifier, FunctionId>,
     /// Signature of a given Function.
     function: Table<FunctionId, FunctionSignature>,
+
+    //
+    //  Records
+    //
+
+    /// Record canonical name to RecordId.
+    record_lookup: BTreeMap<ItemIdentifier, RecordId>,
+    /// Definition of a given Record.
+    record: Table<RecordId, Record>,
 
     //
     //  Components
@@ -92,14 +101,12 @@ impl Module {
 
     /// Returns the list of EnumId stored within.
     pub fn enums(&self) -> Vec<EnumId> {
-        let mut result: Vec<_> = self.enum_lookup.values().cloned().collect();
-        result.sort();
-        result
+        self.enum_lookup.values().copied().collect()
     }
 
     /// Returns the EnumId corresponding to the ItemIdentifier, if any.
     pub fn lookup_enum(&self, name: ItemIdentifier) -> Option<EnumId> {
-        self.enum_lookup.get(&name).cloned()
+        self.enum_lookup.get(&name).copied()
     }
 
     /// Inserts an Enum name.
@@ -131,46 +138,44 @@ impl Module {
 
 
     //
-    //  Records
+    //  Extensions
     //
 
-    /// Returns the list of RecordId stored within.
-    pub fn records(&self) -> Vec<RecordId> {
-        let mut result: Vec<_> = self.record_lookup.values().cloned().collect();
-        result.sort();
-        result
+    /// Returns the list of ExtensionId stored within.
+    pub fn extensions(&self) -> Vec<ExtensionId> {
+        self.extension_lookup.values().copied().collect()
     }
 
-    /// Returns the RecordId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_record(&self, name: ItemIdentifier) -> Option<RecordId> {
-        self.record_lookup.get(&name).cloned()
+    /// Returns the ExtensionId corresponding to the ItemIdentifier, if any.
+    pub fn lookup_extension(&self, name: ItemIdentifier) -> Option<ExtensionId> {
+        self.extension_lookup.get(&name).copied()
     }
 
-    /// Inserts a Record name.
+    /// Inserts an Extension name.
     ///
-    /// Returns the RecordId created for it.
-    pub fn push_record_name(&mut self, name: ItemIdentifier) -> RecordId {
-        debug_assert!(self.record.len() == self.record_lookup.len());
-        debug_assert!(!self.record_lookup.contains_key(&name));
+    /// Returns the ExtensionId created for it.
+    pub fn push_extension_name(&mut self, name: ItemIdentifier) -> ExtensionId {
+        debug_assert!(self.extension.len() == self.extension_lookup.len());
+        debug_assert!(!self.extension_lookup.contains_key(&name));
 
-        let id = RecordId::new_module(self.record.len() as u32);
+        let id = ExtensionId::new_module(self.extension.len() as u32);
         let local_id = Self::localize(id);
 
-        self.record.push(&local_id, Default::default());
-        self.record_lookup.insert(name, id);
+        self.extension.push(&local_id, Default::default());
+        self.extension_lookup.insert(name, id);
 
         id
     }
 
-    /// Sets a Record.
+    /// Sets an Extension.
     ///
     /// Overrides any existing definition for this ID.
-    pub fn set_record(&mut self, id: RecordId, record: Record) {
+    pub fn set_extension(&mut self, id: ExtensionId, ext: Extension) {
         debug_assert!(id.is_module());
-        debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(self.extension.len() == self.extension_lookup.len());
 
         let id = Self::localize(id);
-        *self.record.at_mut(&id) = record;
+        *self.extension.at_mut(&id) = ext;
     }
 
 
@@ -180,14 +185,12 @@ impl Module {
 
     /// Returns the list of FunctionId stored within.
     pub fn functions(&self) -> Vec<FunctionId> {
-        let mut result: Vec<_> = self.function_lookup.values().cloned().collect();
-        result.sort();
-        result
+        self.function_lookup.values().copied().collect()
     }
 
     /// Returns the FunctionId corresponding to the ItemIdentifier, if any.
     pub fn lookup_function(&self, name: ItemIdentifier) -> Option<FunctionId> {
-        self.function_lookup.get(&name).cloned()
+        self.function_lookup.get(&name).copied()
     }
 
     /// Inserts a Function name.
@@ -215,6 +218,48 @@ impl Module {
 
         let id = Self::localize(id);
         *self.function.at_mut(&id) = function;
+    }
+
+
+    //
+    //  Records
+    //
+
+    /// Returns the list of RecordId stored within.
+    pub fn records(&self) -> Vec<RecordId> {
+        self.record_lookup.values().copied().collect()
+    }
+
+    /// Returns the RecordId corresponding to the ItemIdentifier, if any.
+    pub fn lookup_record(&self, name: ItemIdentifier) -> Option<RecordId> {
+        self.record_lookup.get(&name).copied()
+    }
+
+    /// Inserts a Record name.
+    ///
+    /// Returns the RecordId created for it.
+    pub fn push_record_name(&mut self, name: ItemIdentifier) -> RecordId {
+        debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(!self.record_lookup.contains_key(&name));
+
+        let id = RecordId::new_module(self.record.len() as u32);
+        let local_id = Self::localize(id);
+
+        self.record.push(&local_id, Default::default());
+        self.record_lookup.insert(name, id);
+
+        id
+    }
+
+    /// Sets a Record.
+    ///
+    /// Overrides any existing definition for this ID.
+    pub fn set_record(&mut self, id: RecordId, record: Record) {
+        debug_assert!(id.is_module());
+        debug_assert!(self.record.len() == self.record_lookup.len());
+
+        let id = Self::localize(id);
+        *self.record.at_mut(&id) = record;
     }
 
 
@@ -326,14 +371,19 @@ impl Registry for Module {
         *self.enum_.at(&id)
     }
 
-    fn get_record(&self, id: RecordId) -> Record {
+    fn get_extension(&self, id: ExtensionId) -> Extension {
         let id = Self::localize(id);
-        *self.record.at(&id)
+        *self.extension.at(&id)
     }
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         let id = Self::localize(id);
         *self.function.at(&id)
+    }
+
+    fn get_record(&self, id: RecordId) -> Record {
+        let id = Self::localize(id);
+        *self.record.at(&id)
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

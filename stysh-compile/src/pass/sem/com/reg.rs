@@ -31,13 +31,13 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
-    fn get_record(&self, id: RecordId) -> Record {
+    fn get_extension(&self, id: ExtensionId) -> Extension {
         debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
 
         if id.is_module() {
-            self.module.get_record(id)
+            self.module.get_extension(id)
         } else {
-            self.repository.get_record(id)
+            self.repository.get_extension(id)
         }
     }
 
@@ -48,6 +48,16 @@ impl<'a> Registry for Reg<'a> {
             self.module.get_function(id)
         } else {
             self.repository.get_function(id)
+        }
+    }
+
+    fn get_record(&self, id: RecordId) -> Record {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_record(id)
+        } else {
+            self.repository.get_record(id)
         }
     }
 
@@ -133,11 +143,15 @@ impl<'a> RegRef<'a> {
 impl<'a> Registry for RegRef<'a> {
     fn get_enum(&self, id: EnumId) -> Enum { self.registry.get_enum(id) }
 
-    fn get_record(&self, id: RecordId) -> Record { self.registry.get_record(id) }
+    fn get_extension(&self, id: ExtensionId) -> Extension {
+        self.registry.get_extension(id)
+    }
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         self.registry.get_function(id)
     }
+
+    fn get_record(&self, id: RecordId) -> Record { self.registry.get_record(id) }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         if id == Id::empty() {

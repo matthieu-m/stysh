@@ -66,10 +66,19 @@ pub struct EnumBuilder {
 }
 
 #[derive(Clone, Debug)]
+pub struct ExtensionBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
+    extended: Type,
+}
+
+#[derive(Clone, Debug)]
 pub struct FunctionSignatureBuilder {
     module: RcModule,
     name: ItemIdentifier,
     range: Range,
+    extension: Option<ExtensionId>,
     arguments: TupleBuilder<Module, TypeId>,
     result: TypeId,
 }
@@ -93,6 +102,13 @@ impl ItemFactory {
             e.range(name.span().offset() - 6, name.span().length() + 6);
         }
         e
+    }
+
+    /// Creates an ExtensionBuilder.
+    pub fn ext(&self, name: ItemIdentifier, extended: Type)
+        ->  ExtensionBuilder
+    {
+        ExtensionBuilder::new(self.0.clone(), name, extended)
     }
 
     /// Creates a FunctionSignatureBuilder.
@@ -164,11 +180,55 @@ impl EnumBuilder {
         };
 
         let mut module = self.module.borrow_mut();
-        let variants = module.push_record_ids(self.variants.iter().cloned());
+        let variants = module.push_record_ids(self.variants.iter().copied());
 
         let enum_ = Enum { name, range, variants, };
 
         module.set_enum(id, enum_);
+        id
+    }
+}
+
+impl ExtensionBuilder {
+    /// Creates an instance.
+    pub fn new(
+        module: RcModule,
+        name: ItemIdentifier,
+        extended: Type
+    )
+        -> Self
+    {
+        ExtensionBuilder {
+            module,
+            name,
+            range: Default::default(),
+            extended,
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Creates an Extension.
+    pub fn build(&self) -> ExtensionId {
+        let extension = Extension {
+            name: self.name,
+            range: self.range,
+            extended: self.extended,
+        };
+
+        let id = self.module.borrow().lookup_extension(self.name);
+        let id = if let Some(id) = id {
+            id
+        } else {
+            self.module.borrow_mut().push_extension_name(self.name)
+        };
+
+        self.module.borrow_mut().set_extension(id, extension);
+
         id
     }
 }
@@ -185,7 +245,8 @@ impl FunctionSignatureBuilder {
         FunctionSignatureBuilder {
             module: module.clone(),
             name,
-            range: range(0, 0),
+            range: Default::default(),
+            extension: None,
             arguments: TupleBuilder::new(module),
             result,
         }
@@ -194,6 +255,12 @@ impl FunctionSignatureBuilder {
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
         self.range = range(pos, len);
+        self
+    }
+
+    /// Sets the extension.
+    pub fn extension(&mut self, ext: ExtensionId) -> &mut Self {
+        self.extension = Some(ext);
         self
     }
 
@@ -211,6 +278,7 @@ impl FunctionSignatureBuilder {
         let signature = FunctionSignature {
             name: self.name,
             range: self.range,
+            extension: self.extension,
             arguments,
             result: self.result,
         };
@@ -282,7 +350,7 @@ impl RecordBuilder {
             range = name.1;
         }
 
-        let record = Record { name, range, enum_, definition };
+        let record = Record { name, range, enum_, definition, };
 
         let mut module = module.borrow_mut();
         module.set_record(id, record);
@@ -1080,7 +1148,7 @@ impl BlockBuilder {
         let range = self.compute_range();
 
         let stmts = self.tree.borrow_mut()
-            .push_statements(self.statements.iter().cloned());
+            .push_statements(self.statements.iter().copied());
         let expr = Expression::Block(stmts, self.expr.clone());
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
@@ -1092,7 +1160,7 @@ impl BlockBuilder {
         let range = self.compute_range();
 
         let stmts = self.tree.borrow_mut()
-            .push_statements(self.statements.iter().cloned());
+            .push_statements(self.statements.iter().copied());
         let expr = Expression::Block(stmts, self.expr.clone());
 
         self.tree.borrow_mut().push_expression(typ, expr, range)
@@ -1254,7 +1322,7 @@ impl CallBuilder {
             self.callable.clone()
         } else {
             let unresolved = self.tree.borrow_mut()
-                .push_callables(self.unresolved.iter().cloned());
+                .push_callables(self.unresolved.iter().copied());
             Callable::Unresolved(unresolved)
         };
 
@@ -1523,7 +1591,7 @@ impl LoopBuilder {
         let range = self.compute_range();
 
         let statements = self.tree.borrow_mut()
-            .push_statements(self.statements.iter().cloned());
+            .push_statements(self.statements.iter().copied());
         let expr = Expression::Loop(statements);
 
         self.tree.borrow_mut().push_expression(typ, expr, range)

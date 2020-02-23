@@ -1,7 +1,7 @@
 //! Lexical scopes for name resolution
 
 use std::collections::HashMap;
-use std::{cell, fmt};
+use std::fmt;
 
 use crate::basic::mem;
 
@@ -57,7 +57,7 @@ impl BuiltinScope {
 /// A Type Scope.
 pub struct TypeScope<'a> {
     parent: Option<&'a dyn Scope>,
-    module: &'a cell::RefCell<Module>,
+    registry: &'a dyn Registry,
     type_: Type,
 }
 
@@ -65,31 +65,29 @@ impl<'a> TypeScope<'a> {
     /// Creates an instance of TypeScope.
     pub fn new(
         parent: &'a dyn Scope,
-        module: &'a cell::RefCell<Module>,
+        registry: &'a dyn Registry,
         type_: Type
     )
         ->  Self
     {
-        TypeScope { parent: Some(parent), module, type_, }
+        TypeScope { parent: Some(parent), registry, type_, }
     }
 
     /// Creates a stand-alone instance of TypeScope.
-    pub fn stand_alone(module: &'a cell::RefCell<Module>, type_: Type) -> Self {
-        TypeScope { parent: None, module, type_, }
+    pub fn stand_alone(registry: &'a dyn Registry, type_: Type) -> Self {
+        TypeScope { parent: None, registry, type_, }
     }
 
     /// Returns the matching callables within type.
     pub fn lookup_associated_callables(&self, name: ValueIdentifier) -> CallableCandidate {
-        let module = self.module.borrow();
-
         let mut associated = vec!();
-        for &id in &module.functions() {
-            let fun = module.get_function(id);
+        for id in self.registry.functions() {
+            let fun = self.registry.get_function(id);
             if fun.name.id() != name.id() {
                 continue;
             }
             if let Some(e) = fun.extension {
-                let ext = module.get_extension(e);
+                let ext = self.registry.get_extension(e);
                 if ext.extended == self.type_ {
                     associated.push(CallableCandidate::Function(id));
                 }
@@ -408,8 +406,6 @@ pub mod mocks {
 //
 #[cfg(test)]
 mod tests {
-    use std::cell;
-
     use crate::basic::{com, mem};
     use crate::model::hir::*;
 
@@ -471,7 +467,7 @@ mod tests {
         let bar = var_id(interner.insert(b"bar"), 45, 3);
         let baz = var_id(interner.insert(b"baz"), 71, 3);
 
-        let (module, rec, result) = {
+        let (module, extended, result) = {
             let mut module = Module::new(Default::default());
 
             let name = item_id(interner.insert(b"Simple"), 19, 6);
@@ -496,11 +492,11 @@ mod tests {
 
             module.set_function(fun, signature);
 
-            (cell::RefCell::new(module), extended, fun)
+            (module, extended, fun)
         };
 
         let builtin = BuiltinScope::new();
-        let scope = TypeScope::new(&builtin, &module, rec);
+        let scope = TypeScope::new(&builtin, &module, extended);
 
         assert_eq!(scope.lookup_callable(baz), CallableCandidate::Unknown(baz));
         assert_eq!(scope.lookup_callable(bar), CallableCandidate::Function(result));

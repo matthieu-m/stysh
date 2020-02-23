@@ -8,12 +8,18 @@ use crate::model::hir::*;
 
 /// Registry.
 pub trait Registry: fmt::Debug {
+    /// Returns the list of known enum IDs.
+    fn enums(&self) -> Vec<EnumId>;
+
     /// Returns the definition of the enum associated to the ID.
     ///
     /// #   Panics
     ///
     /// Panics if the ID is incorrect.
     fn get_enum(&self, id: EnumId) -> Enum;
+
+    /// Returns the list of known extension IDs.
+    fn extensions(&self) -> Vec<ExtensionId>;
 
     /// Returns the definition of the extension associated to the ID.
     ///
@@ -22,12 +28,18 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_extension(&self, id: ExtensionId) -> Extension;
 
+    /// Returns the list of known function IDs.
+    fn functions(&self) -> Vec<FunctionId>;
+
     /// Returns the signature of the function associated to the ID.
     ///
     /// #   Panics
     ///
     /// Panics if the ID is incorrect.
     fn get_function(&self, id: FunctionId) -> FunctionSignature;
+
+    /// Returns the list of known record IDs.
+    fn records(&self) -> Vec<RecordId>;
 
     /// Returns the definition of the record associated to the ID.
     ///

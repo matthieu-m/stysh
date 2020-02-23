@@ -21,6 +21,12 @@ impl<'a> Reg<'a> {
 }
 
 impl<'a> Registry for Reg<'a> {
+    fn enums(&self) -> Vec<EnumId> {
+        let mut result = self.module.enums();
+        result.extend(&self.repository.enums());
+        result
+    }
+
     fn get_enum(&self, id: EnumId) -> Enum {
         debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
 
@@ -29,6 +35,12 @@ impl<'a> Registry for Reg<'a> {
         } else {
             self.repository.get_enum(id)
         }
+    }
+
+    fn extensions(&self) -> Vec<ExtensionId> {
+        let mut result = self.module.extensions();
+        result.extend(&self.repository.extensions());
+        result
     }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
@@ -41,6 +53,12 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn functions(&self) -> Vec<FunctionId> {
+        let mut result = self.module.functions();
+        result.extend(&self.repository.functions());
+        result
+    }
+
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
 
@@ -49,6 +67,12 @@ impl<'a> Registry for Reg<'a> {
         } else {
             self.repository.get_function(id)
         }
+    }
+
+    fn records(&self) -> Vec<RecordId> {
+        let mut result = self.module.records();
+        result.extend(&self.repository.records());
+        result
     }
 
     fn get_record(&self, id: RecordId) -> Record {
@@ -141,15 +165,23 @@ impl<'a> RegRef<'a> {
 }
 
 impl<'a> Registry for RegRef<'a> {
+    fn enums(&self) -> Vec<EnumId> { self.registry.enums() }
+
     fn get_enum(&self, id: EnumId) -> Enum { self.registry.get_enum(id) }
+
+    fn extensions(&self) -> Vec<ExtensionId> { self.registry.extensions() }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
         self.registry.get_extension(id)
     }
 
+    fn functions(&self) -> Vec<FunctionId> { self.registry.functions() }
+
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         self.registry.get_function(id)
     }
+
+    fn records(&self) -> Vec<RecordId> { self.registry.records() }
 
     fn get_record(&self, id: RecordId) -> Record { self.registry.get_record(id) }
 

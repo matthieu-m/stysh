@@ -409,16 +409,32 @@ pub struct RepositorySnapshot {
 }
 
 impl Registry for RepositorySnapshot {
+    fn enums(&self) -> Vec<EnumId> {
+        ids_of(self.enum_.len())
+    }
+
     fn get_enum(&self, id: EnumId) -> Enum {
         *self.enum_.at(index_of(id))
+    }
+
+    fn extensions(&self) -> Vec<ExtensionId> {
+        ids_of(self.extension.len())
     }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
         *self.extension.at(index_of(id))
     }
 
+    fn functions(&self) -> Vec<FunctionId> {
+        ids_of(self.function.len())
+    }
+
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         *self.function.at(index_of(id))
+    }
+
+    fn records(&self) -> Vec<RecordId> {
+        ids_of(self.record.len())
     }
 
     fn get_record(&self, id: RecordId) -> Record {
@@ -446,6 +462,10 @@ impl Registry for RepositorySnapshot {
     fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
         self.type_ids.get_slice(index_of(id))
     }
+}
+
+fn ids_of<T: ItemId>(len: usize) -> Vec<T> {
+    (0..(len as u32)).into_iter().map(T::new_repository).collect()
 }
 
 fn index_of<T: ItemId>(id: T) -> usize {

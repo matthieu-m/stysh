@@ -99,11 +99,6 @@ impl Module {
     //  Enum
     //
 
-    /// Returns the list of EnumId stored within.
-    pub fn enums(&self) -> Vec<EnumId> {
-        self.enum_lookup.values().copied().collect()
-    }
-
     /// Returns the EnumId corresponding to the ItemIdentifier, if any.
     pub fn lookup_enum(&self, name: ItemIdentifier) -> Option<EnumId> {
         self.enum_lookup.get(&name).copied()
@@ -140,11 +135,6 @@ impl Module {
     //
     //  Extensions
     //
-
-    /// Returns the list of ExtensionId stored within.
-    pub fn extensions(&self) -> Vec<ExtensionId> {
-        self.extension_lookup.values().copied().collect()
-    }
 
     /// Returns the ExtensionId corresponding to the ItemIdentifier, if any.
     pub fn lookup_extension(&self, name: ItemIdentifier) -> Option<ExtensionId> {
@@ -183,11 +173,6 @@ impl Module {
     //  Functions
     //
 
-    /// Returns the list of FunctionId stored within.
-    pub fn functions(&self) -> Vec<FunctionId> {
-        self.function_lookup.values().copied().collect()
-    }
-
     /// Returns the FunctionId corresponding to the ItemIdentifier, if any.
     pub fn lookup_function(&self, name: ItemIdentifier) -> Option<FunctionId> {
         self.function_lookup.get(&name).copied()
@@ -224,11 +209,6 @@ impl Module {
     //
     //  Records
     //
-
-    /// Returns the list of RecordId stored within.
-    pub fn records(&self) -> Vec<RecordId> {
-        self.record_lookup.values().copied().collect()
-    }
 
     /// Returns the RecordId corresponding to the ItemIdentifier, if any.
     pub fn lookup_record(&self, name: ItemIdentifier) -> Option<RecordId> {
@@ -366,9 +346,17 @@ impl Module {
 }
 
 impl Registry for Module {
+    fn enums(&self) -> Vec<EnumId> {
+        self.enum_lookup.values().copied().collect()
+    }
+
     fn get_enum(&self, id: EnumId) -> Enum {
         let id = Self::localize(id);
         *self.enum_.at(&id)
+    }
+
+    fn extensions(&self) -> Vec<ExtensionId> {
+        self.extension_lookup.values().copied().collect()
     }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
@@ -376,9 +364,17 @@ impl Registry for Module {
         *self.extension.at(&id)
     }
 
+    fn functions(&self) -> Vec<FunctionId> {
+        self.function_lookup.values().copied().collect()
+    }
+
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         let id = Self::localize(id);
         *self.function.at(&id)
+    }
+
+    fn records(&self) -> Vec<RecordId> {
+        self.record_lookup.values().copied().collect()
     }
 
     fn get_record(&self, id: RecordId) -> Record {

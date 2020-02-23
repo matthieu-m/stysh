@@ -308,8 +308,9 @@ impl<'a> GraphBuilder<'a> {
             F: FnOnce(&dyn scp::Scope) -> R
     {
         if let Some(ext) = ext {
-            let extended = self.hir_module.borrow().get_extension(ext).extended;
-            let scope = self.type_scope(self.scope, extended);
+            let module = self.hir_module.borrow();
+            let extended = module.get_extension(ext).extended;
+            let scope = scp::TypeScope::new(self.scope, &*module, extended);
             fun(&scope)
         } else {
             fun(self.scope)
@@ -351,16 +352,6 @@ impl<'a> GraphBuilder<'a> {
             //  No progress made, no point in continuing.
             if self.context.fetched() == 0 && self.context.unified() == 0 { break; }
         }
-    }
-
-    fn type_scope<'b>(
-        &'b self,
-        parent: &'b dyn scp::Scope,
-        type_: hir::Type,
-    )
-        -> scp::TypeScope<'b>
-    {
-        scp::TypeScope::new(parent, &self.hir_module, type_)
     }
 
     fn function_scope<'b>(

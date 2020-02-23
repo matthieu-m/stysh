@@ -14,7 +14,7 @@ use crate::model::{ast, hir};
 use self::hir::Registry;
 
 use super::{Context, Relation};
-use super::scp::{BlockScope, CallableCandidate, Scope};
+use super::scp::{BlockScope, CallableCandidate, Scope, TypeScope};
 
 /// The Symbol Mapper.
 ///
@@ -216,24 +216,7 @@ impl<'a> SymbolMapper<'a> {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::Type
     {
-        use self::hir::Type::*;
-
-        let components = self.ast_tree.get_identifiers(p.components);
-
-        let mut path = Vec::with_capacity(components.len());
-        for &c in components {
-            let range = c.span();
-            let component = match self.scope.lookup_type(c.into()) {
-                Enum(id, _) => hir::PathComponent::Enum(id, range),
-                Rec(id, _) => hir::PathComponent::Rec(id, range),
-                Unresolved(name, _) => hir::PathComponent::Unresolved(name),
-                Builtin(_) | Tuple(_) => hir::PathComponent::default(),
-            };
-            path.push(component);
-        }
-
-        let path = self.tree_mut().push_path(path);
-
+        let path = self.resolve_path(p);
         hir::Type::Unresolved(t.into(), path)
     }
 
@@ -269,7 +252,7 @@ impl<'a> SymbolMapper<'a> {
             PreOp(op, _, e)
                 => self.value_of_prefix_operator(op, e, range),
             Tuple(t) => self.value_of_tuple(t),
-            Var(id, _) => self.value_of_variable(id),
+            Var(id, path) => self.value_of_variable(id, path),
         }
     }
 
@@ -369,8 +352,13 @@ impl<'a> SymbolMapper<'a> {
         let function = self.ast_tree.get_expression(fun.function);
         let function_range = self.ast_tree.get_expression_range(fun.function);
 
-        let candidate = if let ast::Expression::Var(id, _) = function {
-            self.scope.lookup_callable(id.into())
+        let candidate = if let ast::Expression::Var(id, path) = function {
+            if let Some(typ) = self.resolve_type(path) {
+                let scope = TypeScope::new(self.scope, self.registry, typ);
+                scope.lookup_associated_callables(id.into())
+            } else {
+                self.scope.lookup_callable(id.into())
+            }
         } else {
             unimplemented!("value_of_function_call - {:?}", function)
         };
@@ -581,9 +569,11 @@ impl<'a> SymbolMapper<'a> {
         result
     }
 
-    fn value_of_variable(&self, var: ast::VariableIdentifier)
+    fn value_of_variable(&self, var: ast::VariableIdentifier, path: ast::Path)
         -> hir::ExpressionId
     {
+        assert!(path.is_empty(), "TODO");
+
         let typ = hir::Type::unresolved();
         let expr =
             self.scope
@@ -638,6 +628,43 @@ impl<'a> SymbolMapper<'a> {
                 hir::Callable::Unresolved(callables)
             },
         }
+    }
+
+    fn resolve_path(&self, path: ast::Path) -> hir::PathId {
+        let path = self.resolve_path_impl(path);
+        self.tree_mut().push_path(path)
+    }
+
+    fn resolve_type(&self, path: ast::Path) -> Option<hir::Type> {
+        use self::hir::PathComponent as C;
+        use self::hir::Type as T;
+
+        self.resolve_path_impl(path).last().copied()
+            .map(|c| match c {
+                C::Enum(id, _) => T::Enum(id, Default::default()),
+                C::Rec(id, _) => T::Rec(id, Default::default()),
+                _ => unimplemented!("resolve_type - {:?}", c),
+            })
+    }
+
+    fn resolve_path_impl(&self, path: ast::Path) -> Vec<hir::PathComponent> {
+        use self::hir::Type::*;
+
+        let components = self.ast_tree.get_identifiers(path.components);
+
+        let mut path = Vec::with_capacity(components.len());
+        for &c in components {
+            let range = c.span();
+            let component = match self.scope.lookup_type(c.into()) {
+                Enum(id, _) => hir::PathComponent::Enum(id, range),
+                Rec(id, _) => hir::PathComponent::Rec(id, range),
+                Unresolved(name, _) => hir::PathComponent::Unresolved(name),
+                Builtin(_) | Tuple(_) => hir::PathComponent::default(),
+            };
+            path.push(component);
+        }
+
+        path
     }
 
     fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
@@ -831,6 +858,48 @@ mod tests {
                 .push(v.int(1, 6))
                 .push(v.int(2, 9))
                 .range(0, 11)
+                .build()
+        };
+
+        assert_eq!(env.value_of(ast), env.expression(hir));
+    }
+
+    #[test]
+    fn value_call_nested_basic() {
+        let mut env = Env::new(b"Nested::basic(1, 2)");
+
+        let ast = {
+            let e = env.ast().expr();
+            let (one, two) = (e.int(1, 14), e.int(2, 17));
+            e.function_call(
+                e.nested(8, 5).push(0, 6).build(),
+                13,
+                18
+            )
+                .push(one)
+                .push(two)
+                .build()
+        };
+
+        let hir = {
+            let f = env.hir();
+            let (i, td, v) = (f.item(), f.type_module(), f.value());
+
+            let n = env.item_id(0, 6);
+            let nested = env.insert_record(i.unit(n), &[0]);
+            let nested = i.ext(n, hir::Type::Rec(nested, Default::default())).build();
+
+            let basic = env.item_id(8, 5);
+            let basic = env.insert_function(
+                i.fun(basic, td.int()).extension(nested).build(),
+                &[8]
+            );
+
+            v.call()
+                .function(basic)
+                .push(v.int(1, 14))
+                .push(v.int(2, 17))
+                .range(0, 19)
                 .build()
         };
 

@@ -70,11 +70,13 @@ impl<'a> TypeScope<'a> {
     )
         ->  Self
     {
+        debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
         TypeScope { parent: Some(parent), registry, type_, }
     }
 
     /// Creates a stand-alone instance of TypeScope.
     pub fn stand_alone(registry: &'a dyn Registry, type_: Type) -> Self {
+        debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
         TypeScope { parent: None, registry, type_, }
     }
 
@@ -88,7 +90,7 @@ impl<'a> TypeScope<'a> {
             }
             if let Some(e) = fun.extension {
                 let ext = self.registry.get_extension(e);
-                if ext.extended == self.type_ {
+                if Self::are_compatible(ext.extended, self.type_) {
                     associated.push(CallableCandidate::Function(id));
                 }
             }
@@ -98,6 +100,21 @@ impl<'a> TypeScope<'a> {
             0 => self.unresolved_function(name),
             1 => associated[0].clone(),
             _ => CallableCandidate::Unresolved(associated),
+        }
+    }
+
+    fn is_defined(typ: Type) -> bool {
+        match typ {
+            Type::Enum(..) | Type::Rec(..) => true,
+            _ => false,
+        }
+    }
+
+    fn are_compatible(left: Type, right: Type) -> bool {
+        match (left, right) {
+            (Type::Enum(l, ..), Type::Enum(r, ..)) => l == r,
+            (Type::Rec(l, ..), Type::Rec(r, ..)) => l == r,
+            _ => false,
         }
     }
 }
@@ -169,6 +186,14 @@ impl<'a> BlockScope<'a> {
 
         let fields = tree.get_patterns(tuple.fields);
         for p in fields { self.add_pattern(*p, tree); }
+    }
+
+    /// Adds a new record to the scope.
+    pub fn add_record(&mut self, name: ItemIdentifier, id: RecordId) {
+        self.types.insert(
+            name.id(),
+            Type::Rec(id, PathId::empty()),
+        );
     }
 
     /// Adds a new value identifier to the scope.
@@ -283,6 +308,7 @@ fn merge(immediate: CallableCandidate, parent: CallableCandidate)
         //  No merge actually required.
         (Unknown(_), parent) => parent,
         (immediate, Unknown(_)) => immediate,
+
         //  Vec merge required.
         (Unresolved(mut immediate), Unresolved(parent)) => {
             immediate.extend(parent.into_iter());
@@ -296,6 +322,7 @@ fn merge(immediate: CallableCandidate, parent: CallableCandidate)
             parent.insert(0, immediate);
             Unresolved(parent)
         },
+
         //  Vec creation required.
         (immediate, parent) => Unresolved(vec!(immediate, parent)),
     }

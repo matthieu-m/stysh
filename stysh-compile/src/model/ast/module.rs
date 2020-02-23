@@ -117,6 +117,11 @@ impl Module {
     /// Returns the number of enums.
     pub fn len_enums(&self) -> usize { self.enum_lookup.len() }
 
+    /// Returns the enum IDs.
+    pub fn enums(&self) -> Vec<EnumId> {
+        (0..(self.len_enums() as u32)).into_iter().map(EnumId::new).collect()
+    }
+
     /// Looks up an enum ID by identifier.
     pub fn get_enum_id(&self, id: TypeIdentifier) -> Option<EnumId> {
         self.enum_lookup.get(&id).copied()
@@ -150,6 +155,11 @@ impl Module {
     /// Returns the number of extensions.
     pub fn len_extensions(&self) -> usize { self.extension_lookup.len() }
 
+    /// Returns the extension IDs.
+    pub fn extensions(&self) -> Vec<ExtensionId> {
+        (0..(self.len_extensions() as u32)).into_iter().map(ExtensionId::new).collect()
+    }
+
     /// Looks up an extension ID by identifier.
     pub fn get_extension_id(&self, id: TypeIdentifier) -> Option<ExtensionId> {
         self.extension_lookup.get(&id).copied()
@@ -182,6 +192,11 @@ impl Module {
 
     /// Returns the number of functions.
     pub fn len_functions(&self) -> usize { self.function_lookup.len() }
+
+    /// Returns the function IDs.
+    pub fn functions(&self) -> Vec<FunctionId> {
+        (0..(self.len_functions() as u32)).into_iter().map(FunctionId::new).collect()
+    }
 
     /// Looks up an function ID by identifier.
     pub fn get_function_id(&self, id: VariableIdentifier) -> Option<FunctionId> {
@@ -256,6 +271,11 @@ impl Module {
 
     /// Returns the number of records.
     pub fn len_records(&self) -> usize { self.record_lookup.len() }
+
+    /// Returns the record IDs.
+    pub fn records(&self) -> Vec<RecordId> {
+        (0..(self.len_records() as u32)).into_iter().map(RecordId::new).collect()
+    }
 
     /// Looks up an record ID by identifier.
     pub fn get_record_id(&self, id: TypeIdentifier) -> Option<RecordId> {

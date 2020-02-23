@@ -46,6 +46,7 @@ impl<'a, 'tree> ExtensionParser<'a, 'tree> {
         let mut function_ids = vec!();
         let (open, close) = match self.raw.peek() {
             Some(Node::Braced(o, ns, c)) => {
+                self.raw.pop_node();
                 let mut raw = self.raw.spawn(ns);
 
                 while let Some(node) = raw.peek() {

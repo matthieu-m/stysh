@@ -308,9 +308,8 @@ impl<'a> GraphBuilder<'a> {
             F: FnOnce(&dyn scp::Scope) -> R
     {
         if let Some(ext) = ext {
-            let module = self.hir_module.borrow();
-            let extended = module.get_extension(ext).extended;
-            let scope = scp::TypeScope::new(self.scope, &*module, extended);
+            let extended = self.hir_module.borrow().get_extension(ext).extended;
+            let scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
             fun(&scope)
         } else {
             fun(self.scope)

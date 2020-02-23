@@ -668,6 +668,7 @@ impl<'a> SymbolMapper<'a> {
     }
 
     fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
+        self.context.link_gvns(&[gvn]);
         for &e in self.tree().get_expressions(exprs) {
             self.context.link_gvns(&[gvn, e.into()]);
         }

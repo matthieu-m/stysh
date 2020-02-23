@@ -22,7 +22,7 @@ fn fibonacci_recursive() {
             "
         ),
         int::Value::Int(21)
-    )
+    );
 }
 
 #[test]
@@ -45,5 +45,25 @@ fn fibonnacci_iterative() {
             "
         ),
         int::Value::Int(21)
-    )
+    );
+}
+
+#[test]
+fn peano() {
+    assert_eq!(
+        utils::interpret(
+            b"
+            :rec Peano;
+
+            :ext Peano {
+                :fun zero() -> Int { 0 }
+                :fun one() -> Int { 1 }
+                :fun two() -> Int { one() + one() }
+            }
+
+            Peano::two()
+            "
+        ),
+        int::Value::Int(2)
+    );
 }

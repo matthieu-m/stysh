@@ -35,34 +35,21 @@ fn interpret_impl<'a>(
     -> int::Value
 {
     let (ast_module, tree) = create_ast(raw, interner);
-
-    //  Create names
     let hir_module = cell::RefCell::new(hir::Module::default());
 
-    for i in 0..(ast_module.len_functions() as u32) {
-        let id = ast::FunctionId::new(i);
-        let item = create_name(ast::Item::Fun(id), &ast_module, &tree, scope, &hir_module);
-
-        if let hir::Item::Fun(hir_id) = item {
-            let fun = ast_module.get_function(id);
-            scope.add_function(fun.name.into(), hir_id);
-        }
-    }
+    //  Create names
+    create_names(&ast_module, &tree, scope, &hir_module);
 
     //  Create items
-    for i in 0..(ast_module.len_functions() as u32) {
-        let item = ast::Item::Fun(ast::FunctionId::new(i));
-        create_item(item, &ast_module, &tree, scope, &hir_module);
-    }
+    create_items(&ast_module, &tree, scope, &hir_module);
 
     //  Create CFGs for functions.
-    for i in 0..(ast_module.len_functions() as u32) {
+    for id in ast_module.functions() {
         use self::hir::ItemId;
 
-        let id = ast::FunctionId::new(i);
         let body = create_function(id, &ast_module, &tree, scope, &hir_module);
 
-        let fun = hir::FunctionId::new_module(i);
+        let fun = hir::FunctionId::new_module(id.value());
         let cfg = create_cfg_from_function(&hir_module.borrow(), &body, fun);
         cfg_registry.insert(cfg.source(), cfg);
     }
@@ -91,6 +78,50 @@ fn create_ast(
     Parser::new().parse(raw, interner)
 }
 
+fn create_names<'a>(
+    ast_module: &ast::Module,
+    tree: &ast::Tree,
+    scope: &mut scp::BlockScope<'a>,
+    hir_module: &cell::RefCell<hir::Module>,
+)
+{
+    for id in ast_module.enums() {
+        let item = create_name(ast::Item::Enum(id), ast_module, tree, scope, hir_module);
+
+        if let hir::Item::Enum(hir_id) = item {
+            let e = ast_module.get_enum(id);
+            scope.add_enum(e.name.into(), hir_id);
+        }
+    }
+
+    for id in ast_module.records() {
+        let item = create_name(ast::Item::Rec(id), ast_module, tree, scope, hir_module);
+
+        if let hir::Item::Rec(hir_id) = item {
+            let e = ast_module.get_record(id);
+            scope.add_record(e.name().into(), hir_id);
+        }
+    }
+
+    for id in ast_module.extensions() {
+        create_name(ast::Item::Ext(id), ast_module, tree, scope, hir_module);
+    }
+
+    for id in ast_module.functions() {
+        let item = create_name(ast::Item::Fun(id), ast_module, tree, scope, hir_module);
+
+        //  Do not register extension items, they are not at global scope.
+        if let Some(_) = ast_module.get_function_extension(id) {
+            continue;
+        }
+
+        if let hir::Item::Fun(hir_id) = item {
+            let fun = ast_module.get_function(id);
+            scope.add_function(fun.name.into(), hir_id);
+        }
+    }
+}
+
 fn create_name(
     item: ast::Item,
     ast_module: &ast::Module,
@@ -107,6 +138,30 @@ fn create_name(
     let context = Context::default();
     GraphBuilder::new(scope, &repository, &context, ast_module, tree, &hir_module)
         .name(item)
+}
+
+fn create_items(
+    ast_module: &ast::Module,
+    tree: &ast::Tree,
+    scope: &dyn scp::Scope,
+    hir_module: &cell::RefCell<hir::Module>,
+)
+{
+    for id in ast_module.enums() {
+        create_item(ast::Item::Enum(id), ast_module, tree, scope, hir_module);
+    }
+
+    for id in ast_module.records() {
+        create_item(ast::Item::Rec(id), ast_module, tree, scope, hir_module);
+    }
+
+    for id in ast_module.extensions() {
+        create_item(ast::Item::Ext(id), ast_module, tree, scope, hir_module);
+    }
+
+    for id in ast_module.functions() {
+        create_item(ast::Item::Fun(id), ast_module, tree, scope, hir_module);
+    }
 }
 
 fn create_item(

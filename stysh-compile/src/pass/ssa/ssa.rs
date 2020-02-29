@@ -49,7 +49,7 @@ impl<'a> GraphBuilder<'a> {
     {
         let expr = tree.get_root().expect("Expression Id");
         let patterns = tree.get_function_arguments().expect("Function Arguments");
-        let patterns = tree.get_patterns(patterns.fields);
+        let patterns = tree.get_pattern_ids(patterns.fields);
         let mut arguments = Vec::with_capacity(patterns.len());
 
         for &p in patterns {
@@ -268,7 +268,7 @@ impl<'a> GraphBuilderImpl<'a> {
         //  expressions.
         use self::hir::BuiltinFunction::{And, Or};
 
-        let arguments = self.tree.get_expressions(args.fields);
+        let arguments = self.tree.get_expression_ids(args.fields);
         debug_assert!(arguments.len() == 2, "Too many arguments: {:?}", arguments);
 
         let r = self.get_expression_range(arguments[0]);
@@ -515,7 +515,7 @@ impl<'a> GraphBuilderImpl<'a> {
                 return current;
             },
             Constructor(tup) | Tuple(tup) => (
-                self.tree.get_patterns(tup.fields),
+                self.tree.get_pattern_ids(tup.fields),
                 self.fields_of(type_),
             ),
         };
@@ -654,7 +654,7 @@ impl<'a> GraphBuilderImpl<'a> {
         -> ProtoBlock
     {
         let id = current.last_value();
-        let fields = self.tree.get_expressions(tuple.fields);
+        let fields = self.tree.get_expression_ids(tuple.fields);
 
         for (index, &field) in fields.iter().enumerate() {
             let gvn: hir::Gvn = field.into();
@@ -706,7 +706,7 @@ impl<'a> GraphBuilderImpl<'a> {
             current = self.convert_expression(current, e).expect("!Void");
         }
 
-        let expressions = self.tree.get_expressions(expressions);
+        let expressions = self.tree.get_expression_ids(expressions);
         for &e in expressions {
             current = self.convert_expression(current, e).expect("!Void");
         }

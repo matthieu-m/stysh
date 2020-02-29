@@ -45,6 +45,26 @@ pub enum CallableCandidate {
     Unresolved(Vec<CallableCandidate>),
 }
 
+impl CallableCandidate {
+    /// Convert a CallableCandidate into a hir::Callable.
+    pub fn into_callable(&self, tree: &mut Tree) -> Callable {
+        use self::CallableCandidate as C;
+
+        match self {
+            C::Builtin(f) => Callable::Builtin(*f),
+            C::Function(f) => Callable::Function(*f),
+            C::Unknown(name) => Callable::Unknown(*name),
+            C::Unresolved(candidates) => {
+                let callables: Vec<_> = candidates.iter()
+                    .map(|c| c.into_callable(tree))
+                    .collect();
+                let callables = tree.push_callables(callables);
+                Callable::Unresolved(callables)
+            },
+        }
+    }
+}
+
 /// A Builtin Scope.
 #[derive(Debug)]
 pub struct BuiltinScope;
@@ -184,7 +204,7 @@ impl<'a> BlockScope<'a> {
             Pattern::Constructor(tuple) | Pattern::Tuple(tuple) => tuple,
         };
 
-        let fields = tree.get_patterns(tuple.fields);
+        let fields = tree.get_pattern_ids(tuple.fields);
         for p in fields { self.add_pattern(*p, tree); }
     }
 

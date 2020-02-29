@@ -75,17 +75,17 @@ pub struct Tree {
     /// Unresolved callables.
     callables: KeyedMulti<Callable>,
     /// Expressions of calls, constructors and tuples.
-    expressions: KeyedMulti<ExpressionId>,
+    expression_ids: KeyedMulti<ExpressionId>,
     /// Names of constructors, records and tuples.
     names: KeyedMulti<ValueIdentifier>,
     /// Path components.
     paths: KeyedMulti<PathComponent>,
     /// Patterns of constructors and tuples.
-    patterns: KeyedMulti<PatternId>,
+    pattern_ids: KeyedMulti<PatternId>,
     /// Statements of blocks and loops.
     stmts: KeyedMulti<Statement>,
     /// Types of enums and tuples.
-    types: KeyedMulti<TypeId>,
+    type_ids: KeyedMulti<TypeId>,
 }
 
 
@@ -140,8 +140,8 @@ impl Tree {
             fields.push(pattern);
         }
 
-        let fields = self.push_patterns(fields);
-        let names = self.push_names(names.iter().cloned());
+        let fields = self.push_pattern_ids(fields);
+        let names = self.push_names(names.iter().copied());
         let arguments = Tuple { fields, names, };
 
         self.function = Some((fun, arguments));
@@ -189,6 +189,12 @@ impl Tree {
 
     /// Returns the number of expressions.
     pub fn len_expressions(&self) -> usize { self.expression.len() }
+
+    /// Returns the expression IDs.
+    pub fn get_expressions(&self) -> impl Iterator<Item = ExpressionId> {
+        (0..self.expression.len()).into_iter()
+            .map(|i| ExpressionId::new(i as u32))
+    }
 
     /// Returns the range associated to an expression.
     pub fn get_expression_range(&self, id: ExpressionId) -> Range {
@@ -246,6 +252,12 @@ impl Tree {
 
     /// Returns the number of patterns.
     pub fn len_patterns(&self) -> usize { self.pattern.len() }
+
+    /// Returns the pattern IDs.
+    pub fn get_patterns(&self) -> impl Iterator<Item = PatternId> {
+        (0..self.pattern.len()).into_iter()
+            .map(|i| PatternId::new(i as u32))
+    }
 
     /// Returns the range associated to a pattern.
     pub fn get_pattern_range(&self, id: PatternId) -> Range {
@@ -362,18 +374,18 @@ impl Tree {
 
 
     /// Returns the expressions associated to the id.
-    pub fn get_expressions(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
-        if id.is_empty() { &[] } else { self.expressions.get(&id) }
+    pub fn get_expression_ids(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
+        if id.is_empty() { &[] } else { self.expression_ids.get(&id) }
     }
 
     /// Inserts a new array of expressions.
     ///
     /// Returns the id created for it.
-    pub fn push_expressions<I>(&mut self, expressions: I) -> Id<[ExpressionId]>
+    pub fn push_expression_ids<I>(&mut self, expressions: I) -> Id<[ExpressionId]>
         where
             I: IntoIterator<Item = ExpressionId>,
     {
-        self.expressions.create(expressions).unwrap_or(Id::empty())
+        self.expression_ids.create(expressions).unwrap_or(Id::empty())
     }
 
 
@@ -416,18 +428,18 @@ impl Tree {
 
 
     /// Returns the patterns associated to the id.
-    pub fn get_patterns(&self, id: Id<[PatternId]>) -> &[PatternId] {
-        if id.is_empty() { &[] } else { self.patterns.get(&id) }
+    pub fn get_pattern_ids(&self, id: Id<[PatternId]>) -> &[PatternId] {
+        if id.is_empty() { &[] } else { self.pattern_ids.get(&id) }
     }
 
     /// Inserts a new array of patterns.
     ///
     /// Returns the id created for it.
-    pub fn push_patterns<I>(&mut self, patterns: I) -> Id<[PatternId]>
+    pub fn push_pattern_ids<I>(&mut self, patterns: I) -> Id<[PatternId]>
         where
             I: IntoIterator<Item = PatternId>,
     {
-        self.patterns.create(patterns).unwrap_or(Id::empty())
+        self.pattern_ids.create(patterns).unwrap_or(Id::empty())
     }
 
 
@@ -448,11 +460,11 @@ impl Tree {
 
 
     /// Returns the number of type ids.
-    pub fn len_type_ids(&self) -> usize { self.types.len() }
+    pub fn len_type_ids(&self) -> usize { self.type_ids.len() }
 
     /// Returns the type ids associated to the id.
     pub fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        if id.is_empty() { &[] } else { self.types.get(&id) }
+        if id.is_empty() { &[] } else { self.type_ids.get(&id) }
     }
 
     /// Inserts a new array of type ids.
@@ -462,7 +474,7 @@ impl Tree {
         where
             I: IntoIterator<Item = TypeId>,
     {
-        self.types.create(types).unwrap_or(Id::empty())
+        self.type_ids.create(types).unwrap_or(Id::empty())
     }
 
     /// Inserts a new array of types.
@@ -473,7 +485,7 @@ impl Tree {
             I: IntoIterator<Item = Type>,
     {
         let tys = &mut self.tys;
-        self.types
+        self.type_ids
             .create(
                 types.into_iter()
                     .map(|t| Self::push_type_impl(tys, t))
@@ -582,17 +594,17 @@ impl MultiStore<Callable> for Tree {
     }
 
     fn push_slice(&mut self, items: &[Callable]) -> Id<[Callable]> {
-        self.push_callables(items.iter().cloned())
+        self.push_callables(items.iter().copied())
     }
 }
 
 impl MultiStore<ExpressionId> for Tree {
     fn get_slice(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] {
-        self.get_expressions(id)
+        self.get_expression_ids(id)
     }
 
     fn push_slice(&mut self, items: &[ExpressionId]) -> Id<[ExpressionId]> {
-        self.push_expressions(items.iter().cloned())
+        self.push_expression_ids(items.iter().copied())
     }
 }
 
@@ -602,7 +614,7 @@ impl MultiStore<ValueIdentifier> for Tree {
     }
 
     fn push_slice(&mut self, items: &[ValueIdentifier]) -> Id<[ValueIdentifier]> {
-        self.push_names(items.iter().cloned())
+        self.push_names(items.iter().copied())
     }
 }
 
@@ -612,17 +624,17 @@ impl MultiStore<PathComponent> for Tree {
     }
 
     fn push_slice(&mut self, items: &[PathComponent]) -> Id<[PathComponent]> {
-        self.push_path(items.iter().cloned())
+        self.push_path(items.iter().copied())
     }
 }
 
 impl MultiStore<PatternId> for Tree {
     fn get_slice(&self, id: Id<[PatternId]>) -> &[PatternId] {
-        self.get_patterns(id)
+        self.get_pattern_ids(id)
     }
 
     fn push_slice(&mut self, items: &[PatternId]) -> Id<[PatternId]> {
-        self.push_patterns(items.iter().cloned())
+        self.push_pattern_ids(items.iter().copied())
     }
 }
 
@@ -632,7 +644,7 @@ impl MultiStore<Statement> for Tree {
     }
 
     fn push_slice(&mut self, items: &[Statement]) -> Id<[Statement]> {
-        self.push_statements(items.iter().cloned())
+        self.push_statements(items.iter().copied())
     }
 }
 
@@ -642,7 +654,7 @@ impl MultiStore<TypeId> for Tree {
     }
 
     fn push_slice(&mut self, items: &[TypeId]) -> Id<[TypeId]> {
-        self.push_type_ids(items.iter().cloned())
+        self.push_type_ids(items.iter().copied())
     }
 }
 
@@ -685,7 +697,7 @@ pub mod samples {
         let one = tree.push_expression(Type::int(), Expression::int(1), range(0, 1));
         let two = tree.push_expression(Type::int(), Expression::int(2), range(4, 1));
 
-        let args = tree.push_expressions([one, two].iter().cloned());
+        let args = tree.push_expression_ids([one, two].iter().copied());
         let args = Tuple::unnamed(args);
 
         let op = Callable::Builtin(BuiltinFunction::Add);
@@ -728,7 +740,7 @@ pub mod tests {
             )
         );
         assert_eq!(
-            tree.get_expressions(Id::new(0)),
+            tree.get_expression_ids(Id::new(0)),
             &[one, two]
         );
     }

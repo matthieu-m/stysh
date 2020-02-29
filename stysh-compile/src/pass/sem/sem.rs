@@ -106,7 +106,7 @@ impl<'a> GraphBuilder<'a> {
                 let body = body.borrow();
                 let arguments = body.get_function_arguments().expect("Arguments");
     
-                let patterns = body.get_patterns(arguments.fields);
+                let patterns = body.get_pattern_ids(arguments.fields);
                 let names = body.get_names(arguments.names);
                 debug_assert!(patterns.len() == names.len());
     
@@ -325,14 +325,13 @@ impl<'a> GraphBuilder<'a> {
         {
             let tree = tree.borrow();
 
-            for p in 0..(tree.len_patterns() as u32) {
-                let id = hir::PatternId::new(p);
+            for id in tree.get_patterns() {
+                self.context.link_gvns(&[id.into()]);
                 self.context.push_unfetched(id.into());
                 self.context.push_diverging(id.into());
             }
 
-            for e in 0..(tree.len_expressions() as u32) {
-                let id = hir::ExpressionId::new(e);
+            for id in tree.get_expressions() {
                 self.context.push_unfetched(id.into());
                 self.context.push_diverging(id.into());
             }

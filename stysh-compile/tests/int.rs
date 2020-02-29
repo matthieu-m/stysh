@@ -49,7 +49,7 @@ fn fibonnacci_iterative() {
 }
 
 #[test]
-fn peano() {
+fn peano_function() {
     assert_eq!(
         utils::interpret(
             b"
@@ -62,6 +62,26 @@ fn peano() {
             }
 
             Peano::two()
+            "
+        ),
+        int::Value::Int(2)
+    );
+}
+
+#[test]
+fn peano_method() {
+    assert_eq!(
+        utils::interpret(
+            b"
+            :rec Peano;
+
+            :ext Peano {
+                :fun zero(self: Peano) -> Int { 0 }
+                :fun one(self: Peano) -> Int { 1 }
+                :fun two(self: Peano) -> Int { self.one() + self.one() }
+            }
+
+            Peano().two()
             "
         ),
         int::Value::Int(2)

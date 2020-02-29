@@ -14,7 +14,7 @@ use crate::model::{ast, hir};
 use self::hir::Registry;
 
 use super::{Context, Relation};
-use super::scp::{BlockScope, CallableCandidate, Scope, TypeScope};
+use super::scp::{BlockScope, Scope, TypeScope};
 
 /// The Symbol Mapper.
 ///
@@ -87,7 +87,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_patterns(p.iter().cloned()),
+            |p| self.tree_mut().push_pattern_ids(p.iter().copied()),
         );
         let pattern = hir::Pattern::Constructor(tuple);
 
@@ -111,11 +111,11 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_patterns(p.iter().cloned()),
+            |p| self.tree_mut().push_pattern_ids(p.iter().copied()),
         );
         let typ = self.tuple_type_of(
             pat.names,
-            |tree| tree.get_patterns(pat.fields),
+            |tree| tree.get_pattern_ids(pat.fields),
             |p| self.tree().get_pattern_type_id(p),
         );
 
@@ -229,7 +229,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_type_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |t| self.tree_mut().push_type(self.type_of(t)),
-            |t| self.tree_mut().push_type_ids(t.iter().cloned()),
+            |t| self.tree_mut().push_type_ids(t.iter().copied()),
         ))
     }
 
@@ -271,7 +271,8 @@ impl<'a> SymbolMapper<'a> {
         let right = self.value_of_expr(right);
 
         let arguments = hir::Tuple {
-            fields: self.tree_mut().push_expressions([left, right].iter().cloned()),
+            fields: self.tree_mut()
+                .push_expression_ids([left, right].iter().copied()),
             names: hir::Id::empty(),
         };
 
@@ -337,7 +338,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expressions(e.iter().cloned()),
+            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
         );
 
         let typ = self.type_of(c.type_);
@@ -363,13 +364,13 @@ impl<'a> SymbolMapper<'a> {
             unimplemented!("value_of_function_call - {:?}", function)
         };
 
-        let callable = self.convert_callable(&candidate);
+        let callable = candidate.into_callable(&mut *self.tree_mut());
 
         let arguments = self.tuple_of(
             self.ast_tree.get_expression_ids(fun.arguments.fields),
             self.ast_tree.get_identifiers(fun.arguments.names),
             |a| self.value_of(a),
-            |e| self.tree_mut().push_expressions(e.iter().cloned()),
+            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
         );
 
         let typ = hir::Type::unresolved();
@@ -493,19 +494,17 @@ impl<'a> SymbolMapper<'a> {
         let receiver = self.value_of(met.receiver);
         let receiver_range = self.ast_tree.get_expression_range(met.receiver);
 
-        let candidate = if let ast::FieldIdentifier::Name(id) = met.method {
-            self.scope.lookup_callable(id.into())
+        let callable = if let ast::FieldIdentifier::Name(id) = met.method {
+            hir::Callable::Unknown(id.into())
         } else {
             unimplemented!("value_of_method_call - {:?}", met.method)
         };
-
-        let callable = self.convert_callable(&candidate);
 
         let arguments = self.tuple_of(
             self.ast_tree.get_expression_ids(met.arguments.fields),
             self.ast_tree.get_identifiers(met.arguments.names),
             |a| self.value_of(a),
-            |e| self.tree_mut().push_expressions(e.iter().cloned()),
+            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
         );
 
         let typ = hir::Type::unresolved();
@@ -513,7 +512,10 @@ impl<'a> SymbolMapper<'a> {
         let range = receiver_range.extend(met.arguments.span());
 
         let result = self.tree_mut().push_expression(typ, expr, range);
+
+        self.context.link_gvns(&[result.into(), receiver.into()]);
         self.link_expressions(result.into(), arguments.fields);
+
         result
     }
 
@@ -529,7 +531,7 @@ impl<'a> SymbolMapper<'a> {
 
         let arg = self.value_of_expr(expr);
         let arguments = hir::Tuple {
-            fields: self.tree_mut().push_expressions([arg].iter().cloned()),
+            fields: self.tree_mut().push_expression_ids([arg].iter().copied()),
             names: hir::Id::empty(),
         };
 
@@ -552,11 +554,11 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expressions(e.iter().cloned()),
+            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
         );
         let typ = self.tuple_type_of(
             expr.names,
-            |tree| tree.get_expressions(expr.fields),
+            |tree| tree.get_expression_ids(expr.fields),
             |e| self.tree().get_expression_type_id(e),
         );
 
@@ -613,23 +615,6 @@ impl<'a> SymbolMapper<'a> {
 
     fn tree_mut(&self) -> cell::RefMut<'a, hir::Tree> { self.tree.borrow_mut() }
 
-    fn convert_callable(&self, candidate: &CallableCandidate) -> hir::Callable {
-        use self::CallableCandidate as C;
-
-        match candidate {
-            C::Builtin(f) => hir::Callable::Builtin(*f),
-            C::Function(f) => hir::Callable::Function(*f),
-            C::Unknown(name) => hir::Callable::Unknown(*name),
-            C::Unresolved(candidates) => {
-                let callables: Vec<_> = candidates.iter()
-                    .map(|c| self.convert_callable(c))
-                    .collect();
-                let callables = self.tree_mut().push_callables(callables);
-                hir::Callable::Unresolved(callables)
-            },
-        }
-    }
-
     fn resolve_path(&self, path: ast::Path) -> hir::PathId {
         let path = self.resolve_path_impl(path);
         self.tree_mut().push_path(path)
@@ -669,13 +654,13 @@ impl<'a> SymbolMapper<'a> {
 
     fn link_expressions(&self, gvn: hir::Gvn, exprs: hir::Id<[hir::ExpressionId]>) {
         self.context.link_gvns(&[gvn]);
-        for &e in self.tree().get_expressions(exprs) {
+        for &e in self.tree().get_expression_ids(exprs) {
             self.context.link_gvns(&[gvn, e.into()]);
         }
     }
 
     fn link_patterns(&self, gvn: hir::Gvn, patterns: hir::Id<[hir::PatternId]>) {
-        for &p in self.tree().get_patterns(patterns) {
+        for &p in self.tree().get_pattern_ids(patterns) {
             self.context.link_gvns(&[gvn, p.into()]);
         }
     }

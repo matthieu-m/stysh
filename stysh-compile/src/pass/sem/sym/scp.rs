@@ -79,6 +79,7 @@ pub struct TypeScope<'a> {
     parent: Option<&'a dyn Scope>,
     registry: &'a dyn Registry,
     type_: Type,
+    self_: bool,
 }
 
 impl<'a> TypeScope<'a> {
@@ -91,14 +92,19 @@ impl<'a> TypeScope<'a> {
         ->  Self
     {
         debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
-        TypeScope { parent: Some(parent), registry, type_, }
+        TypeScope { parent: Some(parent), registry, type_, self_: false,  }
     }
 
     /// Creates a stand-alone instance of TypeScope.
     pub fn stand_alone(registry: &'a dyn Registry, type_: Type) -> Self {
         debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
-        TypeScope { parent: None, registry, type_, }
+        TypeScope { parent: None, registry, type_, self_: false, }
     }
+
+    /// Enables "Self" reserved identifier.
+    ///
+    /// Note: to be used within type definitions' scopes, but not paths.
+    pub fn enable_self(&mut self) { self.self_ = true }
 
     /// Returns the matching callables within type.
     pub fn lookup_associated_callables(&self, name: ValueIdentifier) -> CallableCandidate {
@@ -265,6 +271,10 @@ impl<'a> Scope for TypeScope<'a> {
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
+        if self.self_ && name.id() == mem::InternId::self_type() {
+            return self.type_;
+        }
+
         self.parent.map(|parent| parent.lookup_type(name))
             .unwrap_or(self.unresolved_type(name))
     }
@@ -503,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn associated_function_lookup() {
+    fn type_associated_function_lookup() {
         //  :rec Simple;
         //
         //  :ext Simple {
@@ -547,6 +557,35 @@ mod tests {
 
         assert_eq!(scope.lookup_callable(baz), CallableCandidate::Unknown(baz));
         assert_eq!(scope.lookup_callable(bar), CallableCandidate::Function(result));
+    }
+
+    #[test]
+    fn type_injected_self_lookup() {
+        //  :rec Simple;
+        //
+        //  :ext Simple {
+        //      :fun new() -> Self { 0 }
+        //  }
+        let interner = mem::Interner::new();
+        let self_ = item_id(interner.insert(b"Self"), 46, 4);
+
+        let (module, extended) = {
+            let mut module = Module::new(Default::default());
+
+            let rec = item_id(interner.insert(b"Simple"), 5, 6);
+            let extended = Type::Rec(module.push_record_name(rec), Default::default());
+
+            (module, extended)
+        };
+
+        let builtin = BuiltinScope::new();
+        let mut scope = TypeScope::new(&builtin, &module, extended);
+
+        assert_eq!(scope.lookup_type(self_), Type::Unresolved(self_, Id::empty()));
+
+        scope.enable_self();
+
+        assert_eq!(scope.lookup_type(self_), extended);
     }
 
     fn item_id(id: mem::InternId, pos: usize, len: usize) -> ItemIdentifier {

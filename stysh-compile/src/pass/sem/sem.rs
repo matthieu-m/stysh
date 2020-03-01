@@ -178,30 +178,20 @@ impl<'a> GraphBuilder<'a> {
         let id = self.hir_module.borrow().lookup_enum(e.name.into())
             .expect("Enum to be registered");
 
+        let scope = {
+            let self_ = hir::Type::Enum(id, hir::Id::empty());
+            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, self_);
+            scope.enable_self();
+            scope
+        };
+
         let ast_variants = self.ast_module.get_inner_records(e.variants);
         let mut variants = Vec::with_capacity(ast_variants.len());
 
         for ev in ast_variants {
-            use self::ast::InnerRecord::*;
-
-            match *ev {
-                Tuple(..) => unimplemented!("InnerRecord::Tuple"),
-                Unit(name) => {
-                    let name = name.into();
-                    let r = self.hir_module.borrow().lookup_record(name)
-                        .expect("Record to be registered");
-
-                    let range = ev.span();
-                    let enum_ = Some(id);
-                    let definition = hir::Tuple::unit();
-
-                    let record = hir::Record { name, range, enum_, definition, };
-
-                    self.hir_module.borrow_mut().set_record(r, record);
-
-                    variants.push(r);
-                },
-                Missing(_) | Unexpected(_) => (),
+            if let Some(name) = ev.name() {
+                let v = self.rec_item_impl(&scope, *ev, name, ev.span(), Some(id));
+                variants.push(v);
             }
         }
 
@@ -281,26 +271,49 @@ impl<'a> GraphBuilder<'a> {
     fn rec_item(&mut self, r: ast::RecordId)
         -> hir::Item
     {
-        use self::ast::InnerRecord::*;
-
         let r = self.ast_module.get_record(r);
         let id = self.hir_module.borrow().lookup_record(r.name().into())
             .expect("Record to be registered");
 
-        let name = r.name().into();
-        let range = r.span();
-        let enum_ = None;
-        let definition = match r.inner {
+        let scope = {
+            let self_ = hir::Type::Rec(id, hir::Id::empty());
+            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, self_);
+            scope.enable_self();
+            scope
+        };
+
+        self.rec_item_impl(&scope, r.inner, r.name(), r.span(), None);
+
+        hir::Item::Rec(id)
+    }
+
+    fn rec_item_impl(
+        &mut self,
+        scope: &dyn scp::Scope,
+        record: ast::InnerRecord,
+        name: ast::TypeIdentifier,
+        range: Range,
+        enum_: Option<hir::EnumId>,
+    )
+        -> hir::RecordId
+    {
+        use self::ast::InnerRecord::*;
+
+        let name = name.into();
+        let id = self.hir_module.borrow().lookup_record(name)
+            .expect("Record to be registered");
+
+        let definition = match record {
             Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
-            Tuple(_, tup) => self.type_mapper(self.scope, self.ast_module, self.hir_module)
-                .tuple_of(tup),
+            Tuple(_, tup) => 
+                self.type_mapper(scope, self.ast_module, self.hir_module)
+                    .tuple_of(tup),
         };
 
         let record = hir::Record { name, range, enum_, definition, };
-
         self.hir_module.borrow_mut().set_record(id, record);
 
-        hir::Item::Rec(id)
+        id
     }
 
     fn within_extension<F, R>(&self, ext: Option<hir::ExtensionId>, fun: F) -> R
@@ -309,7 +322,8 @@ impl<'a> GraphBuilder<'a> {
     {
         if let Some(ext) = ext {
             let extended = self.hir_module.borrow().get_extension(ext).extended;
-            let scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+            scope.enable_self();
             fun(&scope)
         } else {
             fun(self.scope)

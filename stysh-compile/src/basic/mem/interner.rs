@@ -45,20 +45,26 @@ pub struct InternerSnapshot {
 //
 
 impl InternId {
+    /// self
+    pub fn self_value() -> Self { InternId::from_builtin(0) }
+
+    /// Self
+    pub fn self_type() -> Self { InternId::from_builtin(1) }
+
     /// Bool
-    pub fn bool_() -> Self { InternId::from_builtin(0) }
+    pub fn bool_() -> Self { InternId::from_builtin(2) }
 
     /// True
-    pub fn true_() -> Self { InternId::from_builtin(1) }
+    pub fn true_() -> Self { InternId::from_builtin(3) }
 
     /// False
-    pub fn false_() -> Self { InternId::from_builtin(2) }
+    pub fn false_() -> Self { InternId::from_builtin(4) }
 
     /// Int
-    pub fn int() -> Self { InternId::from_builtin(3) }
+    pub fn int() -> Self { InternId::from_builtin(5) }
 
     /// String
-    pub fn string() -> Self { InternId::from_builtin(4) }
+    pub fn string() -> Self { InternId::from_builtin(6) }
 }
 
 impl Interner {
@@ -149,7 +155,7 @@ impl InternerSnapshot {
     pub fn lookup(&self, string: &[u8]) -> Option<InternId> {
         magic_id_of(string)
             .or_else(|| builtin_id_of(string))
-            .or_else(|| self.reverse.get(string).cloned())
+            .or_else(|| self.reverse.get(string).copied())
     }
 }
 
@@ -162,7 +168,8 @@ const ASCII: &'static [u8] =
       @ABCDEFGHIJKLMNOPQRSTUVWXYZ[.]^_\
       `abcdefghijklmnopqrstuvwxyz{|}~.";
 
-const BUILTIN: [&[u8]; 5] = [b"Bool", b"True", b"False", b"Int", b"String"];
+const BUILTIN: [&[u8]; 7] =
+    [b"self", b"Self", b"Bool", b"True", b"False", b"Int", b"String"];
 
 impl InternId {
     fn from_magic(magic: usize) -> Self {
@@ -330,6 +337,8 @@ mod tests {
     fn intern_builtin() {
         let interner = Interner::default();
 
+        assert_interned(&interner, InternId::self_value().0, b"self");
+        assert_interned(&interner, InternId::self_type().0, b"Self");
         assert_interned(&interner, InternId::bool_().0, b"Bool");
         assert_interned(&interner, InternId::true_().0, b"True");
         assert_interned(&interner, InternId::false_().0, b"False");

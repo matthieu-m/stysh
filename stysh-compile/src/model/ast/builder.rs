@@ -3,6 +3,7 @@
 use std::{self, cell, rc};
 
 use crate::basic::com::{self, Span, Store, MultiStore};
+use crate::basic::mem;
 
 use crate::model::tt;
 use crate::model::ast::*;
@@ -2120,6 +2121,12 @@ impl<S> TypeFactory<S>
     /// Creates a NestedTypeBuilder.
     pub fn nested(&self, pos: u32, len: u32) -> NestedTypeBuilder<S> {
         NestedTypeBuilder::new(self.store.clone(), self.resolver.clone(), pos, len)
+    }
+
+    /// Creates a materialized Self Type.
+    pub fn self_(&self, pos: u32, len: u32) -> TypeId {
+        let name = TypeIdentifier(mem::InternId::self_type(), range(pos, len));
+        self.simple_named(name)
     }
 
     /// Creates a Simple Type.

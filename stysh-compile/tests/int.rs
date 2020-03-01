@@ -77,8 +77,8 @@ fn peano_method() {
 
             :ext Peano {
                 :fun new() -> Self { Self() }
-                :fun zero(self: Peano) -> Int { 0 }
-                :fun one(self: Peano) -> Int { 1 }
+                :fun zero(self) -> Int { 0 }
+                :fun one(self: Self) -> Int { 1 }
                 :fun two(self: Peano) -> Int { self.one() + self.one() }
             }
 

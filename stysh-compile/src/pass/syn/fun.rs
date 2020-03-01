@@ -4,6 +4,8 @@
 
 use std::cell;
 
+use crate::basic::com::Span;
+use crate::basic::mem;
 use crate::model::ast::*;
 use crate::model::tt;
 
@@ -120,23 +122,28 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
 
         while raw.peek().is_some() {
             let name = raw.pop_kind(NameValue).expect("Name");
+            let name = self.raw.resolve_variable(name);
 
             let colon = raw.pop_kind(SignColon)
                 .map(|t| t.offset() as u32).unwrap_or(0);
 
-            let type_ = typ::parse_type(&mut raw);
+            let type_ =
+                if name.id() == mem::InternId::self_value() &&
+                   colon == 0 &&
+                   buffer.is_empty()
+                {
+                    self.materialize_self(name)
+                } else {
+                    typ::parse_type(&mut raw)
+                };
+
             let type_range = self.raw.tree().borrow().get_type_range(type_);
 
             let comma = raw.pop_kind(SignComma)
                 .map(|t| t.offset() as u32)
                 .unwrap_or(type_range.end_offset() as u32 - 1);
 
-            buffer.push(Argument {
-                name: self.raw.resolve_variable(name),
-                type_: type_,
-                colon: colon,
-                comma: comma,
-            });
+            buffer.push(Argument { name, type_, colon, comma, });
         }
 
         self.raw.tree().borrow_mut().push_arguments(&buffer)
@@ -144,6 +151,14 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
 
     fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
         self.raw.pop_kind(kind)
+    }
+
+    fn materialize_self(&self, name: VariableIdentifier) -> TypeId {
+        debug_assert!(name.id() == mem::InternId::self_value());
+
+        let range = name.span();
+        let self_ = Type::Simple(TypeIdentifier(mem::InternId::self_type(), range));
+        self.raw.tree().borrow_mut().push_type(self_, range)
     }
 }
 
@@ -184,6 +199,41 @@ mod tests {
         )
             .push(9, 1, a_type)
             .push(17, 1, b_type)
+            .build();
+
+        assert_eq!(env.actual_function(), env.expected_module());
+    }
+
+    #[test]
+    fn self_typed() {
+        let env = LocalEnv::new(b":fun id(self: Int) -> Int { self }");
+        let (e, i, _, _, _, t) = env.factories();
+        let self_type = t.simple(14, 3);
+        i.function(
+            5,
+            2,
+            t.simple(22, 3),
+            e.block(e.var(28, 4)).build(),
+        )
+            .push(8, 4, self_type)
+            .build();
+
+        assert_eq!(env.actual_function(), env.expected_module());
+    }
+
+    #[test]
+    fn self_untyped() {
+        let env = LocalEnv::new(b":fun id(self) -> Int { self }");
+        let (e, i, _, _, _, t) = env.factories();
+        let self_type = t.self_(8, 4);
+        i.function(
+            5,
+            2,
+            t.simple(17, 3),
+            e.block(e.var(23, 4)).build(),
+        )
+            .push(8, 4, self_type)
+            .colon(0)
             .build();
 
         assert_eq!(env.actual_function(), env.expected_module());

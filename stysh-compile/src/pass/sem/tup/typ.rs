@@ -67,7 +67,7 @@ impl<'a> TypeUnifier<'a> {
         let registry = self.registry();
 
         match registry.get_type(ty) {
-            Builtin(_) | Enum(..) | Rec(..) => true,
+            Builtin(_) | Enum(..) | Int(..) | Rec(..) => true,
             Tuple(tup) =>
                 registry.get_type_ids(tup.fields)
                     .iter()
@@ -94,7 +94,7 @@ impl<'a> TypeUnifier<'a> {
         match self.registry().get_type(other) {
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::Identical),
-            Builtin(_) | Enum(..) | Rec(..) | Unresolved(..) =>
+            Builtin(_) | Enum(..) | Int(..) | Rec(..) | Unresolved(..) =>
                 self.resolve(ty, other),
         }
     }
@@ -111,7 +111,7 @@ impl<'a> TypeUnifier<'a> {
                 self.unify_as_sub_type_of_enum(ty, name, path),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SubTypeOf),
-            Rec(..) | Unresolved(..) =>
+            Int(..) | Rec(..) | Unresolved(..) =>
                 self.resolve(ty, other),
         }
     }
@@ -126,7 +126,7 @@ impl<'a> TypeUnifier<'a> {
                 self.resolve(ty, other),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SuperTypeOf),
-            Enum(..) | Rec(..) | Unresolved(..) =>
+            Enum(..) | Int(..) | Rec(..) | Unresolved(..) =>
                 self.resolve(ty, other),
         }
     }
@@ -166,7 +166,7 @@ impl<'a> TypeUnifier<'a> {
                 self.unify_tuples(current, other, relate),
             Unresolved(name, ..) =>
                 self.resolve_unresolved(name, Type::Tuple(other)),
-            Builtin(..) | Enum(..) | Rec(..) =>
+            Builtin(..) | Enum(..) | Int(..) | Rec(..) =>
                 None,
         }
     }

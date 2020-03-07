@@ -130,7 +130,7 @@ impl<'a> FieldFetcher<'a> {
         let typ = self.core.tree().get_expression_type(receiver);
 
         match typ {
-            Builtin(..) | Enum(..) | Rec(..)
+            Builtin(..) | Enum(..) | Int(..) | Rec(..)
                 => self.fetch_method_impl(e, name, typ, receiver, arguments),
             Tuple(..)
                 => unimplemented!("fetch_method of Tuple"),

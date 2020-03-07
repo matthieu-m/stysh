@@ -78,9 +78,16 @@ pub struct FunctionSignatureBuilder {
     module: RcModule,
     name: ItemIdentifier,
     range: Range,
-    extension: Option<ExtensionId>,
+    scope: Scope,
     arguments: TupleBuilder<Module, TypeId>,
     result: TypeId,
+}
+
+#[derive(Clone, Debug)]
+pub struct InterfaceBuilder {
+    module: RcModule,
+    name: ItemIdentifier,
+    range: Range,
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +127,11 @@ impl ItemFactory {
         -> FunctionSignatureBuilder
     {
         FunctionSignatureBuilder::new(self.0.clone(), name, result)
+    }
+
+    /// Creates an InterfaceBuilder.
+    pub fn int(&self, name: ItemIdentifier) ->  InterfaceBuilder {
+        InterfaceBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a RecordBuilder.
@@ -194,7 +206,7 @@ impl ExtensionBuilder {
     pub fn new(
         module: RcModule,
         name: ItemIdentifier,
-        extended: Type
+        extended: Type,
     )
         -> Self
     {
@@ -246,7 +258,7 @@ impl FunctionSignatureBuilder {
             module: module.clone(),
             name,
             range: Default::default(),
-            extension: None,
+            scope: Default::default(),
             arguments: TupleBuilder::new(module),
             result,
         }
@@ -260,7 +272,13 @@ impl FunctionSignatureBuilder {
 
     /// Sets the extension.
     pub fn extension(&mut self, ext: ExtensionId) -> &mut Self {
-        self.extension = Some(ext);
+        self.scope = Scope::Ext(ext);
+        self
+    }
+
+    /// Sets the interface.
+    pub fn interface(&mut self, int: InterfaceId) -> &mut Self {
+        self.scope = Scope::Int(int);
         self
     }
 
@@ -278,7 +296,7 @@ impl FunctionSignatureBuilder {
         let signature = FunctionSignature {
             name: self.name,
             range: self.range,
-            extension: self.extension,
+            scope: self.scope,
             arguments,
             result: self.result,
         };
@@ -293,6 +311,47 @@ impl FunctionSignatureBuilder {
         self.module.borrow_mut().set_function(id, signature);
 
         signature
+    }
+}
+
+impl InterfaceBuilder {
+    /// Creates an instance.
+    pub fn new(
+        module: RcModule,
+        name: ItemIdentifier,
+    )
+        -> Self
+    {
+        InterfaceBuilder {
+            module,
+            name,
+            range: Default::default(),
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Creates an Interface.
+    pub fn build(&self) -> InterfaceId {
+        let interface = Interface {
+            name: self.name,
+            range: self.range,
+        };
+
+        let id = self.module.borrow().lookup_interface(self.name);
+        let id = if let Some(id) = id {
+            id
+        } else {
+            self.module.borrow_mut().push_interface_name(self.name)
+        };
+
+        self.module.borrow_mut().set_interface(id, interface);
+
+        id
     }
 }
 
@@ -542,6 +601,12 @@ pub struct TypeEnumBuilder<S> {
 }
 
 #[derive(Clone, Debug)]
+pub struct TypeInterfaceBuilder<S> {
+    name: InterfaceId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
 pub struct TypeRecordBuilder<S> {
     name: RecordId,
     path: PathBuilder<S>,
@@ -580,6 +645,11 @@ impl<S> TypeFactory<S> {
     /// Creates a TypeEnumBuilder.
     pub fn enum_(&self, name: EnumId) -> TypeEnumBuilder<S> {
         TypeEnumBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a TypeInterfaceBuilder.
+    pub fn interface(&self, name: InterfaceId) -> TypeInterfaceBuilder<S> {
+        TypeInterfaceBuilder::new(self.0.clone(), name)
     }
 
     /// Creates a TypeRecordBuilder.
@@ -636,6 +706,30 @@ impl<S> TypeEnumBuilder<S> {
             S: MultiStore<PathComponent>
     {
         Type::Enum(self.name, self.path.build())
+    }
+}
+
+impl<S> TypeInterfaceBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
+        TypeInterfaceBuilder {
+            name,
+            path: PathBuilder::new(store),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.path.push(item);
+        self
+    }
+
+    /// Builds a Type::Int.
+    pub fn build(&self) -> Type
+        where
+            S: MultiStore<PathComponent>
+    {
+        Type::Int(self.name, self.path.build())
     }
 }
 
@@ -727,6 +821,11 @@ pub struct TypeIdEnumBuilder<S>{
 }
 
 #[derive(Clone, Debug)]
+pub struct TypeIdInterfaceBuilder<S>{
+    builder: TypeInterfaceBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
 pub struct TypeIdRecordBuilder<S> {
     builder: TypeRecordBuilder<S>,
 }
@@ -786,6 +885,11 @@ impl<S> TypeIdFactory<S> {
         TypeIdEnumBuilder::new(self.0.clone(), name)
     }
 
+    /// Creates a TypeIdInterfaceBuilder.
+    pub fn interface(&self, name: InterfaceId) -> TypeIdInterfaceBuilder<S> {
+        TypeIdInterfaceBuilder::new(self.0.clone(), name)
+    }
+
     /// Creates a TypeIdRecordBuilder.
     pub fn record(&self, name: RecordId) -> TypeIdRecordBuilder<S> {
         TypeIdRecordBuilder::new(self.0.clone(), name)
@@ -827,6 +931,28 @@ impl<S> TypeIdEnumBuilder<S> {
     }
 
     /// Builds a Type::Enum.
+    pub fn build(&self) -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<PathComponent>,
+    {
+        let ty = self.builder.build();
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
+    }
+}
+
+impl<S> TypeIdInterfaceBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
+        TypeIdInterfaceBuilder { builder: TypeInterfaceBuilder::new(store, name) }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.builder.push_component(item);
+        self
+    }
+
+    /// Builds a Type::Int.
     pub fn build(&self) -> TypeId
         where
             S: Store<Type, TypeId> + MultiStore<PathComponent>,

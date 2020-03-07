@@ -47,6 +47,11 @@ fn interpret_impl<'a>(
     for id in ast_module.functions() {
         use self::hir::ItemId;
 
+        //  Interface functions are declarations only.
+        if ast_module.get_function_body(id).is_none() {
+            continue;
+        }
+
         let body = create_function(id, &ast_module, &tree, scope, &hir_module);
 
         let fun = hir::FunctionId::new_module(id.value());
@@ -110,14 +115,12 @@ fn create_names<'a>(
     for id in ast_module.functions() {
         let item = create_name(ast::Item::Fun(id), ast_module, tree, scope, hir_module);
 
-        //  Do not register extension items, they are not at global scope.
-        if let Some(_) = ast_module.get_function_extension(id) {
-            continue;
-        }
-
-        if let hir::Item::Fun(hir_id) = item {
-            let fun = ast_module.get_function(id);
-            scope.add_function(fun.name.into(), hir_id);
+        //  Only register global scope functions.
+        if let ast::Scope::Module = ast_module.get_function_scope(id) {
+            if let hir::Item::Fun(hir_id) = item {
+                let fun = ast_module.get_function(id);
+                scope.add_function(fun.name.into(), hir_id);
+            }
         }
     }
 }

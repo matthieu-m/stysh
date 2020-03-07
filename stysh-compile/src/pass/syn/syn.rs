@@ -11,7 +11,7 @@ use crate::model::tt;
 use crate::model::ast::*;
 
 use super::com::RawParser;
-use super::{expr, ext, fun, typ};
+use super::{expr, ext, fun, int, typ};
 
 /// The Stysh parser.
 ///
@@ -45,6 +45,7 @@ impl Parser {
                     tt::Kind::KeywordEnum => { typ::parse_enum(&mut raw); },
                     tt::Kind::KeywordExt => { ext::parse_extension(&mut raw); },
                     tt::Kind::KeywordFun => { fun::parse_function(&mut raw); },
+                    tt::Kind::KeywordInt => { int::parse_interface(&mut raw); },
                     tt::Kind::KeywordRec => { typ::parse_record(&mut raw); },
                     tt::Kind::KeywordSet => { expr::parse_statement(&mut raw); },
                     tt::Kind::KeywordVar => { expr::parse_statement(&mut raw); },

@@ -467,6 +467,7 @@ impl<'a> BlockDisplayer<'a> {
         match type_ {
             Builtin(b) => write!(f, "{}", b),
             Enum(id, _) => write!(f, "<{}>", self.registry.get_enum(id).name.1),
+            Int(id, _) => write!(f, "<{}>", self.registry.get_interface(id).name.1),
             Rec(id, _) => write!(f, "<{}>", self.registry.get_record(id).name.1),
             Tuple(tup) => self.display_tuple_types(tup.fields, f),
             Unresolved(..) => unimplemented!("Unresolved Type!"),

@@ -61,6 +61,15 @@ pub struct Module {
     function: Table<FunctionId, FunctionSignature>,
 
     //
+    //  Interfaces.
+    //
+
+    /// Interface canonical name to InterfaceId.
+    interface_lookup: BTreeMap<ItemIdentifier, InterfaceId>,
+    /// Definition of a given Interface.
+    interface: Table<InterfaceId, Interface>,
+
+    //
     //  Records
     //
 
@@ -203,6 +212,43 @@ impl Module {
 
         let id = Self::localize(id);
         *self.function.at_mut(&id) = function;
+    }
+
+
+    //
+    //  Interfaces
+    //
+
+    /// Returns the InterfaceId corresponding to the ItemIdentifier, if any.
+    pub fn lookup_interface(&self, name: ItemIdentifier) -> Option<InterfaceId> {
+        self.interface_lookup.get(&name).copied()
+    }
+
+    /// Inserts an Interface name.
+    ///
+    /// Returns the InterfaceId created for it.
+    pub fn push_interface_name(&mut self, name: ItemIdentifier) -> InterfaceId {
+        debug_assert!(self.interface.len() == self.interface_lookup.len());
+        debug_assert!(!self.interface_lookup.contains_key(&name));
+
+        let id = InterfaceId::new_module(self.interface.len() as u32);
+        let local_id = Self::localize(id);
+
+        self.interface.push(&local_id, Default::default());
+        self.interface_lookup.insert(name, id);
+
+        id
+    }
+
+    /// Sets an Interface.
+    ///
+    /// Overrides any existing definition for this ID.
+    pub fn set_interface(&mut self, id: InterfaceId, int: Interface) {
+        debug_assert!(id.is_module());
+        debug_assert!(self.interface.len() == self.interface_lookup.len());
+
+        let id = Self::localize(id);
+        *self.interface.at_mut(&id) = int;
     }
 
 
@@ -371,6 +417,15 @@ impl Registry for Module {
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         let id = Self::localize(id);
         *self.function.at(&id)
+    }
+
+    fn interfaces(&self) -> Vec<InterfaceId> {
+        self.interface_lookup.values().copied().collect()
+    }
+
+    fn get_interface(&self, id: InterfaceId) -> Interface {
+        let id = Self::localize(id);
+        *self.interface.at(&id)
     }
 
     fn records(&self) -> Vec<RecordId> {

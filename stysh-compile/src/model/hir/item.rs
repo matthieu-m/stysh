@@ -12,6 +12,8 @@ pub type EnumId = Id<Enum>;
 pub type ExtensionId = Id<Extension>;
 /// The ID of a Function.
 pub type FunctionId = Id<FunctionSignature>;
+/// The ID of an Interface.
+pub type InterfaceId = Id<Interface>;
 /// The ID of a Path.
 pub type PathId = Id<[PathComponent]>;
 /// The ID of a Record.
@@ -60,6 +62,8 @@ pub enum Item {
     Ext(ExtensionId),
     /// A function definition.
     Fun(FunctionId),
+    /// An interface definition.
+    Int(InterfaceId),
     /// A record definition.
     Rec(RecordId),
 }
@@ -71,6 +75,8 @@ pub enum Type {
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
     Enum(EnumId, PathId),
+    /// An interface type, possibly nested.
+    Int(InterfaceId, PathId),
     /// A record type, possibly nested.
     Rec(RecordId, PathId),
     /// A tuple type.
@@ -108,12 +114,21 @@ pub struct FunctionSignature {
     pub name: ItemIdentifier,
     /// The function prototype range.
     pub range: Range,
-    /// The extension, if any.
-    pub extension: Option<ExtensionId>,
+    /// The scope.
+    pub scope: Scope,
     /// The function arguments.
     pub arguments: Tuple<TypeId>,
     /// The return type of the function.
     pub result: TypeId,
+}
+
+/// An interface definition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Interface {
+    /// The interface identifier.
+    pub name: ItemIdentifier,
+    /// The interface range.
+    pub range: Range,
 }
 
 /// A PathComponent.
@@ -121,6 +136,8 @@ pub struct FunctionSignature {
 pub enum PathComponent {
     /// An Enum.
     Enum(EnumId, Range),
+    /// An Interface.
+    Int(InterfaceId, Range),
     /// A Record.
     Rec(RecordId, Range),
     /// An Unresolved component.
@@ -139,6 +156,17 @@ pub struct Record {
     pub enum_: Option<EnumId>,
     /// The definition.
     pub definition: Tuple<TypeId>,
+}
+
+/// A scope.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Scope {
+    /// Module scope.
+    Module,
+    /// Extension scope.
+    Ext(ExtensionId),
+    /// Interface scope.
+    Int(InterfaceId),
 }
 
 
@@ -173,6 +201,7 @@ impl Type {
 
         match self {
             Enum(id, _) => Enum(id, path),
+            Int(id, _) => Int(id, path),
             Rec(id, _) => Rec(id, path),
             Unresolved(name, _) => Unresolved(name, path),
             _ => panic!("{:?} has no path!", self),
@@ -296,6 +325,10 @@ impl Default for PathComponent {
     fn default() -> Self { PathComponent::Unresolved(Default::default()) }
 }
 
+impl Default for Scope {
+    fn default() -> Self { Scope::Module }
+}
+
 //
 //  From Implementations
 //
@@ -310,6 +343,10 @@ impl convert::From<ExtensionId> for Item {
 
 impl convert::From<FunctionId> for Item {
     fn from(f: FunctionId) -> Self { Item::Fun(f) }
+}
+
+impl convert::From<InterfaceId> for Item {
+    fn from(i: InterfaceId) -> Self { Item::Int(i) }
 }
 
 impl convert::From<RecordId> for Item {

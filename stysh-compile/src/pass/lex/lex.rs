@@ -273,6 +273,7 @@ impl<'a, 'b, 'g, 'local> LexerImpl<'a, 'b, 'g, 'local> {
             b":ext" => Kind::KeywordExt,
             b":fun" => Kind::KeywordFun,
             b":if" => Kind::KeywordIf,
+            b":int" => Kind::KeywordInt,
             b":loop" => Kind::KeywordLoop,
             b":not" => Kind::KeywordNot,
             b":or" => Kind::KeywordOr,

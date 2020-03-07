@@ -12,14 +12,29 @@ use crate::model::tt;
 use super::com::RawParser;
 use super::{expr, typ};
 
-pub struct FunParser<'a, 'tree> {
-    raw: RawParser<'a, 'tree>
-}
-
 pub fn parse_function<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> FunctionId {
+    let mut signature = {
+        let mut parser = FunParser::new(*raw);
+        let signature = parser.parse_signature();
+        *raw = parser.into_raw();
+        signature
+    };
+
+    if let Some(s) = raw.pop_kind(tt::Kind::SignSemiColon) {
+        signature.semi_colon = s.offset() as u32;
+    }
+
+    let id = raw.module().borrow_mut().push_function_signature(signature);
+
+    if signature.semi_colon != 0 {
+        return id;
+    }
+
     let previous_tree: &'tree cell::RefCell<Tree> = raw.tree();
 
     let tree = cell::RefCell::default();
+    raw.module().borrow().prepare_function_body(id, &mut *tree.borrow_mut());
+
     {
         let mut inner_raw = raw.rescope(&tree);
         let mut parser = FunParser::new(inner_raw);
@@ -30,17 +45,23 @@ pub fn parse_function<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> FunctionId {
         *raw = inner_raw.rescope(previous_tree);
     }
 
-    raw.module().borrow_mut().push_function(tree.into_inner())
+    raw.module().borrow_mut().set_function_body(id, tree.into_inner());
+
+    id
+}
+
+struct FunParser<'a, 'tree> {
+    raw: RawParser<'a, 'tree>
 }
 
 impl<'a, 'tree> FunParser<'a, 'tree> {
-    pub fn new(raw: RawParser<'a, 'tree>) -> FunParser<'a, 'tree> {
+    fn new(raw: RawParser<'a, 'tree>) -> FunParser<'a, 'tree> {
         FunParser { raw: raw }
     }
 
-    pub fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
+    fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    pub fn parse(&mut self) {
+    fn parse_signature(&mut self) -> Function {
         use self::tt::Kind::*;
 
         let (keyword, name) = {
@@ -73,6 +94,12 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
                 unimplemented!()
             };
 
+        let semi_colon = 0;
+
+        Function { name, arguments, result, keyword, open, close, arrow, semi_colon }
+    }
+
+    fn parse(&mut self) {
         let body = expr::parse_expression(&mut self.raw);
 
         let body = if let Expression::Block(_) =
@@ -92,17 +119,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
             self.raw.tree().borrow_mut().push_expression(block.into(), range)
         };
 
-        let fun = Function {
-            name,
-            arguments,
-            result,
-            keyword,
-            open,
-            close,
-            arrow,
-        };
-
-        self.raw.tree().borrow_mut().set_root(Root::Function(fun, body));
+        self.raw.tree().borrow_mut().set_root_body(body);
     }
 }
 
@@ -137,7 +154,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
                     typ::parse_type(&mut raw)
                 };
 
-            let type_range = self.raw.tree().borrow().get_type_range(type_);
+            let type_range = self.raw.module().borrow().get_type_range(type_);
 
             let comma = raw.pop_kind(SignComma)
                 .map(|t| t.offset() as u32)
@@ -146,7 +163,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
             buffer.push(Argument { name, type_, colon, comma, });
         }
 
-        self.raw.tree().borrow_mut().push_arguments(&buffer)
+        self.raw.module().borrow_mut().push_arguments(&buffer)
     }
 
     fn pop_token(&mut self, kind: tt::Kind) -> Option<tt::Token> {
@@ -158,7 +175,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
 
         let range = name.span();
         let self_ = Type::Simple(TypeIdentifier(mem::InternId::self_type(), range));
-        self.raw.tree().borrow_mut().push_type(self_, range)
+        self.raw.module().borrow_mut().push_type(self_, range)
     }
 }
 
@@ -173,15 +190,30 @@ mod tests {
     use super::super::com::tests::Env;
 
     #[test]
-    fn basic_argument_less() {
-        let env = LocalEnv::new(b":fun add() -> Int { 1 + 2 }");
-        let (e, i, _, _, _, t) = env.factories();
+    fn basic_declaration() {
+        let env = LocalEnv::new(b":fun add() -> Int;");
+        let (_, i, _, _, t, _) = env.factories();
         i.function(
             5,
             3,
             t.simple(14, 3),
-            e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build(),
+        )
+            .semi_colon(17)
+            .build();
+
+        assert_eq!(env.actual_function(), env.expected_module());
+    }
+
+    #[test]
+    fn basic_argument_less() {
+        let env = LocalEnv::new(b":fun add() -> Int { 1 + 2 }");
+        let (e, i, _, _, t, _) = env.factories();
+        let fun = i.function(
+            5,
+            3,
+            t.simple(14, 3),
         ).build();
+        e.block(e.bin_op(e.int(1, 20), e.int(2, 24)).build()).build_body(fun);
 
         assert_eq!(env.actual_function(), env.expected_module());
     }
@@ -189,17 +221,17 @@ mod tests {
     #[test]
     fn basic_add() {
         let env = LocalEnv::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
-        let (e, i, _, _, _, t) = env.factories();
+        let (e, i, _, _, t, _) = env.factories();
         let (a_type, b_type) = (t.simple(12, 3), t.simple(20, 3));
-        i.function(
+        let fun = i.function(
             5,
             3,
             t.simple(28, 3),
-            e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build(),
         )
             .push(9, 1, a_type)
             .push(17, 1, b_type)
             .build();
+        e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build_body(fun);
 
         assert_eq!(env.actual_function(), env.expected_module());
     }
@@ -207,16 +239,16 @@ mod tests {
     #[test]
     fn self_typed() {
         let env = LocalEnv::new(b":fun id(self: Int) -> Int { self }");
-        let (e, i, _, _, _, t) = env.factories();
+        let (e, i, _, _, t, _) = env.factories();
         let self_type = t.simple(14, 3);
-        i.function(
+        let fun = i.function(
             5,
             2,
             t.simple(22, 3),
-            e.block(e.var(28, 4)).build(),
         )
             .push(8, 4, self_type)
             .build();
+        e.block(e.var(28, 4)).build_body(fun);
 
         assert_eq!(env.actual_function(), env.expected_module());
     }
@@ -224,17 +256,17 @@ mod tests {
     #[test]
     fn self_untyped() {
         let env = LocalEnv::new(b":fun id(self) -> Int { self }");
-        let (e, i, _, _, _, t) = env.factories();
+        let (e, i, _, _, t, _) = env.factories();
         let self_type = t.self_(8, 4);
-        i.function(
+        let fun = i.function(
             5,
             2,
             t.simple(17, 3),
-            e.block(e.var(23, 4)).build(),
         )
             .push(8, 4, self_type)
             .colon(0)
             .build();
+        e.block(e.var(23, 4)).build_body(fun);
 
         assert_eq!(env.actual_function(), env.expected_module());
     }

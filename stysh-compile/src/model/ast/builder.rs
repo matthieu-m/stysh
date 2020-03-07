@@ -30,6 +30,7 @@ pub struct Factory {
 /// ExprFactory
 #[derive(Clone)]
 pub struct ExprFactory {
+    module: RcModule,
     tree: RcTree,
     resolver: Resolver,
 }
@@ -72,6 +73,7 @@ pub struct BinOpBuilder {
 /// BlockBuilder
 #[derive(Clone)]
 pub struct BlockBuilder {
+    module: RcModule,
     tree: RcTree,
     statements: Vec<StatementId>,
     expr: Option<ExpressionId>,
@@ -187,12 +189,23 @@ pub struct FunctionBuilder {
     resolver: Resolver,
     name: VariableIdentifier,
     result: TypeId,
-    body: ExpressionId,
     keyword: u32,
     open: u32,
     close: u32,
     arrow: u32,
+    semi_colon: u32,
     arguments: Vec<Argument>,
+}
+
+/// InterfaceBuilder
+#[derive(Clone)]
+pub struct InterfaceBuilder {
+    module: RcModule,
+    name: TypeIdentifier,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
 }
 
 /// RecordBuilder
@@ -303,7 +316,7 @@ impl Factory {
 
     /// Creates a ExprFactory.
     pub fn expr(&self) -> ExprFactory {
-        ExprFactory::new(self.tree.clone(), self.resolver.clone())
+        ExprFactory::new(self.module.clone(), self.tree.clone(), self.resolver.clone())
     }
 
     /// Creates an ItemFactory.
@@ -350,8 +363,8 @@ impl Factory {
 //
 impl ExprFactory {
     /// Creates a new instance.
-    pub fn new(tree: RcTree, resolver: Resolver) -> ExprFactory {
-        ExprFactory { tree, resolver }
+    pub fn new(module: RcModule, tree: RcTree, resolver: Resolver) -> ExprFactory {
+        ExprFactory { module, tree, resolver }
     }
 
     /// Creates a BinOpBuilder, defaults to Plus.
@@ -363,12 +376,12 @@ impl ExprFactory {
 
     /// Creates a BlockBuilder.
     pub fn block(&self, expr: ExpressionId) -> BlockBuilder {
-        BlockBuilder::new(self.tree.clone(), expr)
+        BlockBuilder::new(self.module.clone(), self.tree.clone(), expr)
     }
 
     /// Creates an expression-less BlockBuilder.
     pub fn block_expression_less(&self) -> BlockBuilder {
-        BlockBuilder::expression_less(self.tree.clone())
+        BlockBuilder::expression_less(self.module.clone(), self.tree.clone())
     }
 
     /// Creates a ConstructorBuilder.
@@ -551,8 +564,9 @@ impl BinOpBuilder {
 
 impl BlockBuilder {
     /// Creates a new instance, defaults the range.
-    pub fn new(tree: RcTree, expr: ExpressionId) -> Self {
+    pub fn new(module: RcModule, tree: RcTree, expr: ExpressionId) -> Self {
         BlockBuilder {
+            module,
             tree,
             statements: vec!(),
             expr: Some(expr),
@@ -562,8 +576,9 @@ impl BlockBuilder {
     }
 
     /// Creates a new instance, defaults the range.
-    pub fn expression_less(tree: RcTree) -> Self {
+    pub fn expression_less(module: RcModule, tree: RcTree) -> Self {
         BlockBuilder {
+            module,
             tree,
             statements: vec!(),
             expr: None,
@@ -614,6 +629,13 @@ impl BlockBuilder {
 
         let expr = Block { statements, expression: self.expr, open, close, };
         tree.push_expression(expr.into(), range(open, close + 1 - open))
+    }
+
+    /// Creates a Block as a body of the Tree function.
+    pub fn build_body(&self, fun: FunctionId) {
+        let body = self.build();
+        self.tree.borrow_mut().set_root_body(body);
+        self.module.borrow_mut().set_function_body(fun, self.tree.borrow().clone());
     }
 }
 
@@ -1119,11 +1141,10 @@ impl ItemFactory {
         pos: u32,
         len: u32,
         result: TypeId,
-        body: ExpressionId,
     )
         ->  FunctionBuilder
     {
-        FunctionBuilder::new(self.module.clone(), self.tree.clone(), self.resolver.clone(), pos, len, result, body)
+        FunctionBuilder::new(self.module.clone(), self.tree.clone(), self.resolver.clone(), pos, len, result)
     }
 
     /// Creates a FunctionBuilder, named.
@@ -1131,11 +1152,20 @@ impl ItemFactory {
         &self,
         name: VariableIdentifier,
         result: TypeId,
-        body: ExpressionId,
     )
         ->  FunctionBuilder
     {
-        FunctionBuilder::named(self.module.clone(), self.tree.clone(), self.resolver.clone(), name, result, body)
+        FunctionBuilder::named(self.module.clone(), self.tree.clone(), self.resolver.clone(), name, result)
+    }
+
+    /// Creates an InterfaceBuilder.
+    pub fn interface(&self, pos: u32, len: u32) -> InterfaceBuilder {
+        InterfaceBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
+    }
+
+    /// Creates an InterfaceBuilder, named.
+    pub fn interface_named(&self, name: TypeIdentifier) -> InterfaceBuilder {
+        InterfaceBuilder::named(self.module.clone(), name)
     }
 
     /// Creates a wrapped RecordBuilder.
@@ -1339,7 +1369,7 @@ impl ExtensionBuilder {
         }
     }
 
-    /// Sets the position of the :extension keyword.
+    /// Sets the position of the :ext keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
         self
@@ -1358,7 +1388,7 @@ impl ExtensionBuilder {
         self
     }
 
-    /// Creates an Enum.
+    /// Creates an Extension.
     pub fn build(&self) -> ExtensionId {
         let mut functions = self.functions.clone();
         functions.sort_unstable();
@@ -1396,7 +1426,7 @@ impl ExtensionBuilder {
         let id = self.module.borrow_mut().push_extension(ext);
 
         for &fun in &functions {
-            self.module.borrow_mut().set_function_extension(fun, id);
+            self.module.borrow_mut().set_function_scope(fun, Scope::Ext(id));
         }
 
         id
@@ -1412,12 +1442,11 @@ impl FunctionBuilder {
         pos: u32,
         len: u32,
         result: TypeId,
-        body: ExpressionId,
     )
         -> Self
     {
         let name = var_id(&resolver, pos, len);
-        Self::named(module, tree, resolver, name, result, body)
+        Self::named(module, tree, resolver, name, result)
     }
 
     /// Creates a new instance, named.
@@ -1427,7 +1456,6 @@ impl FunctionBuilder {
         resolver: Resolver,
         name: VariableIdentifier,
         result: TypeId,
-        body: ExpressionId,
     )
         -> Self
     {
@@ -1437,11 +1465,11 @@ impl FunctionBuilder {
             resolver,
             name,
             result,
-            body,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
             arrow: U32_NONE,
+            semi_colon: 0,
             arguments: vec!(),
         }
     }
@@ -1479,6 +1507,12 @@ impl FunctionBuilder {
         self
     }
 
+    /// Sets the position of the semi-colon.
+    pub fn semi_colon(&mut self, pos: u32) -> &mut Self {
+        self.semi_colon = pos;
+        self
+    }
+
     /// Overrides the position of the colon in the last inserted argument.
     pub fn colon(&mut self, pos: u32) -> &mut Self {
         if let Some(a) = self.arguments.last_mut() {
@@ -1506,7 +1540,7 @@ impl FunctionBuilder {
 
             if a.comma == U32_NONE {
                 let offset = if i + 1 == self.arguments.len() { 1 } else { 0 };
-                let type_range = self.tree.borrow().get_type_range(a.type_);
+                let type_range = self.module.borrow().get_type_range(a.type_);
                 a.comma = type_range.end_offset() as u32 - offset;
             }
         }
@@ -1533,21 +1567,121 @@ impl FunctionBuilder {
 
         let arrow = if self.arrow == U32_NONE { close + 2 } else { self.arrow };
 
-        let arguments = self.tree.borrow_mut().push_arguments(&arguments);
+        let arguments = self.module.borrow_mut().push_arguments(&arguments);
 
         let fun = Function {
             name: self.name,
             result: self.result,
+            arguments,
             keyword,
             open,
             close,
             arrow,
-            arguments,
+            semi_colon: self.semi_colon,
         };
 
-        self.tree.borrow_mut().set_root(Root::Function(fun, self.body));
+        let id = self.module.borrow_mut().push_function_signature(fun);
 
-        self.module.borrow_mut().push_function(self.tree.borrow().clone())
+        if self.semi_colon == 0 {
+            self.module.borrow().prepare_function_body(id, &mut *self.tree.borrow_mut());
+        }
+
+        id
+    }
+}
+
+impl InterfaceBuilder {
+    /// Creates a new instance.
+    pub fn new(
+        module: RcModule,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
+    )
+        -> Self
+    {
+        let name = type_id(&resolver, pos, len);
+        Self::named(module, name)
+    }
+
+    /// Creates a new instance.
+    pub fn named(
+        module: RcModule,
+        name: TypeIdentifier,
+    )
+        -> Self
+    {
+        InterfaceBuilder {
+            module,
+            name,
+            keyword: U32_NONE,
+            open: U32_NONE,
+            close: U32_NONE,
+            functions: vec!(),
+        }
+    }
+
+    /// Sets the position of the :int keyword.
+    pub fn keyword(&mut self, pos: u32) -> &mut Self {
+        self.keyword = pos;
+        self
+    }
+
+    /// Sets the position of the braces.
+    pub fn braces(&mut self, open: u32, close: u32) -> &mut Self {
+        self.open = open;
+        self.close = close;
+        self
+    }
+
+    /// Pushes a new function.
+    pub fn push_function(&mut self, fun: FunctionId) -> &mut Self {
+        self.functions.push(fun);
+        self
+    }
+
+    /// Creates an Interface.
+    pub fn build(&self) -> InterfaceId {
+        let mut functions = self.functions.clone();
+        functions.sort_unstable();
+
+        let keyword = if self.keyword == U32_NONE {
+            self.name.span().offset() as u32 - 5
+        } else {
+            self.keyword
+        };
+
+        let open = if self.open == U32_NONE {
+            self.name.span().end_offset() as u32 + 1
+        } else {
+            self.open
+        };
+
+        let close = if self.close == U32_NONE {
+            functions.last()
+                .map(|&fun| self.module.borrow().get_function_range(fun).end_offset() as u32 + 1)
+                .unwrap_or(open + 2)
+        } else {
+            self.close
+        };
+
+        let function_ids = self.module.borrow_mut().push_function_ids(&functions);
+
+        let int = Interface {
+            name: self.name,
+            functions: function_ids,
+            keyword,
+            open,
+            close,
+        };
+
+        let id = self.module.borrow_mut().push_interface(int);
+
+        for &fun in &functions {
+            self.module.borrow_mut().set_function_scope(fun, Scope::Int(id));
+        }
+
+        id
     }
 }
 

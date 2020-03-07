@@ -237,8 +237,8 @@ impl<'a> GraphBuilderImpl<'a> {
 
         let callable = match callable {
             hir::Callable::Builtin(b) => sir::Callable::Builtin(b),
-            hir::Callable::Function(f) | hir::Callable::Method(f) =>
-                sir::Callable::Function(f),
+            hir::Callable::Function(f) => sir::Callable::Function(f),
+            hir::Callable::Method(_) => todo!("Dynamic look-up"),
             _ => unreachable!("Incomplete HIR: {:?}", callable),
         };
 
@@ -1373,7 +1373,8 @@ mod tests {
             v.block(
                 v.call()
                     .range(34, 8)
-                    .method(v.int_ref(a, 34).pattern(0).build(), add)
+                    .function(add)
+                    .receiver(v.int_ref(a, 34).pattern(0).build())
                     .push(v.int_ref(b, 40).pattern(1).build())
                     .build()
             ).build_with_type();

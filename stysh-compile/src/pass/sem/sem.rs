@@ -48,6 +48,7 @@ impl<'a> GraphBuilder<'a> {
             Enum(e) => self.enum_name(e),
             Ext(e) => self.extension_name(e),
             Fun(f) => self.function_name(f),
+            Int(i) => self.interface_name(i),
             Rec(r) => self.record_name(r),
         }
     }
@@ -62,6 +63,7 @@ impl<'a> GraphBuilder<'a> {
             Enum(i) => self.enum_item(i),
             Ext(e) => self.extension_item(e),
             Fun(f) => self.fun_item(f),
+            Int(i) => self.interface_item(i),
             Rec(r) => self.rec_item(r),
         }
     }
@@ -94,7 +96,7 @@ impl<'a> GraphBuilder<'a> {
         let signature = self.hir_module.borrow().get_function(id);
         let body = cell::RefCell::new(hir::Tree::default());
 
-        self.within_extension(signature.extension, |scope| {
+        self.within_scope(signature.scope, |scope| {
             use std::ops::Deref;
 
             let module = self.hir_module.borrow();
@@ -115,7 +117,8 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
 
-            let ast_tree = self.ast_module.get_function_body(f);
+            let ast_tree =
+                self.ast_module.get_function_body(f).as_ref().expect("Function Body");
             let ast_arguments = self.ast_module.get_arguments(function.arguments);
 
             let scope = self.function_scope(scope, ast_arguments);
@@ -165,6 +168,12 @@ impl<'a> GraphBuilder<'a> {
         let f = self.ast_module.get_function(f);
         let id = self.hir_module.borrow_mut().push_function_name(f.name.into());
         hir::Item::Fun(id)
+    }
+
+    fn interface_name(&mut self, i: ast::InterfaceId) -> hir::Item {
+        let i = self.ast_module.get_interface(i);
+        let id = self.hir_module.borrow_mut().push_interface_name(i.name.into());
+        hir::Item::Int(id)
     }
 
     fn record_name(&mut self, r: ast::RecordId) -> hir::Item {
@@ -233,12 +242,9 @@ impl<'a> GraphBuilder<'a> {
             self.ast_module.get_type_range(fun.result).end_offset() - (fun.keyword as usize)
         );
 
-        let extension = self.ast_module.get_function_extension(f).and_then(|ext| {
-            let ext = self.ast_module.get_extension(ext);
-            self.hir_module.borrow().lookup_extension(ext.name.into())
-        });
+        let scope = self.resolve_scope(self.ast_module.get_function_scope(f));
 
-        let arguments = self.within_extension(extension, |scope| {
+        let arguments = self.within_scope(scope, |scope| {
             let ast_arguments = self.ast_module.get_arguments(fun.arguments);
 
             let mut fields = Vec::with_capacity(ast_arguments.len());
@@ -256,16 +262,30 @@ impl<'a> GraphBuilder<'a> {
             hir::Tuple { fields, names, }
         });
 
-        let result = self.within_extension(extension, |scope| {
+        let result = self.within_scope(scope, |scope| {
             self.type_mapper(scope, self.ast_module, self.hir_module)
                 .type_of(fun.result)
         });
 
-        let signature = hir::FunctionSignature { name, range, extension, arguments, result, };
+        let signature = hir::FunctionSignature { name, range, scope, arguments, result, };
 
         self.hir_module.borrow_mut().set_function(id, signature);
 
         hir::Item::Fun(id)
+    }
+
+    fn interface_item(&mut self, i: ast::InterfaceId) -> hir::Item {
+        let int = self.ast_module.get_interface(i);
+        let id = self.hir_module.borrow().lookup_interface(int.name.into())
+            .expect("Interface to be registered");
+
+        let name = int.name.into();
+        let range = int.span();
+
+        let int = hir::Interface { name, range, };
+        self.hir_module.borrow_mut().set_interface(id, int);
+
+        hir::Item::Int(id)
     }
 
     fn rec_item(&mut self, r: ast::RecordId)
@@ -316,17 +336,24 @@ impl<'a> GraphBuilder<'a> {
         id
     }
 
-    fn within_extension<F, R>(&self, ext: Option<hir::ExtensionId>, fun: F) -> R
+    fn within_scope<F, R>(&self, s: hir::Scope, fun: F) -> R
         where
             F: FnOnce(&dyn scp::Scope) -> R
     {
-        if let Some(ext) = ext {
-            let extended = self.hir_module.borrow().get_extension(ext).extended;
-            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
-            scope.enable_self();
-            fun(&scope)
-        } else {
-            fun(self.scope)
+        match s {
+            hir::Scope::Module => fun(self.scope),
+            hir::Scope::Ext(ext) => {
+                let extended = self.hir_module.borrow().get_extension(ext).extended;
+                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+                scope.enable_self();
+                fun(&scope)
+            },
+            hir::Scope::Int(int) => {
+                let int = hir::Type::Int(int, hir::PathId::empty());
+                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, int);
+                scope.enable_self();
+                fun(&scope)
+            }
         }
     }
 
@@ -363,6 +390,22 @@ impl<'a> GraphBuilder<'a> {
 
             //  No progress made, no point in continuing.
             if self.context.fetched() == 0 && self.context.unified() == 0 { break; }
+        }
+    }
+
+    fn resolve_scope(&self, s: ast::Scope) -> hir::Scope {
+        match s {
+            ast::Scope::Module => hir::Scope::Module,
+            ast::Scope::Ext(ext) => {
+                let ext = self.ast_module.get_extension(ext);
+                let ext = self.hir_module.borrow().lookup_extension(ext.name.into());
+                hir::Scope::Ext(ext.expect("Extension"))
+            },
+            ast::Scope::Int(int) => {
+                let int = self.ast_module.get_interface(int);
+                let int = self.hir_module.borrow().lookup_interface(int.name.into());
+                hir::Scope::Int(int.expect("Interface"))
+            },
         }
     }
 
@@ -516,15 +559,16 @@ mod tests {
 
         let ast = {
             let ast = env.ast();
-            ast.item().function(
+            let fun = ast.item().function(
                     5,
                     3,
-                    ast.type_().simple(28, 3),
-                    ast.expr().block(ast.expr().var(34, 5)).build(),
+                    ast.type_module().simple(28, 3),
                 )
-                .push(9, 1, ast.type_().simple(12, 3))
-                .push(17, 1, ast.type_().simple(20, 3))
-                .build()
+                .push(9, 1, ast.type_module().simple(12, 3))
+                .push(17, 1, ast.type_module().simple(20, 3))
+                .build();
+            ast.expr().block(ast.expr().var(34, 5)).build_body(fun);
+            fun
         };
         {
             let hir = env.hir();
@@ -545,18 +589,18 @@ mod tests {
 
         let ast = {
             let f = env.ast();
-            let (e, i, t) = (f.expr(), f.item(), f.type_());
+            let (e, i, t) = (f.expr(), f.item(), f.type_module());
 
-            i.function(
+            let fun = i.function(
                 5,
                 3,
                 t.simple(28, 3),
-                e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build())
-                    .build(),
             )
-            .push(9, 1, t.simple(12, 3))
-            .push(17, 1, t.simple(20, 3))
-            .build()
+                .push(9, 1, t.simple(12, 3))
+                .push(17, 1, t.simple(20, 3))
+                .build();
+            e.block(e.bin_op(e.var(34, 1), e.var(38, 1)).build()).build_body(fun);
+            fun
         };
 
         let hir = {
@@ -603,20 +647,21 @@ mod tests {
 
         let ast = {
             let f = env.ast();
-            let (e, i, t) = (f.expr(), f.item(), f.type_());
+            let (e, i, t) = (f.expr(), f.item(), f.type_module());
 
-            i.function(
+            let fun = i.function(
                 5,
                 3,
                 t.tuple()
                     .push(t.simple(15, 3))
                     .push(t.simple(20, 3))
                     .build(),
-                e.block(
-                    e.tuple().push(e.int(1, 28)).push(e.int(2, 31)).build()
-                ).build(),
             )
-                .build()
+                .build();
+            e.block(
+                e.tuple().push(e.int(1, 28)).push(e.int(2, 31)).build()
+            ).build_body(fun);
+            fun
         };
 
         let hir = {

@@ -642,6 +642,7 @@ impl<'a> SymbolMapper<'a> {
             let range = c.span();
             let component = match self.scope.lookup_type(c.into()) {
                 Enum(id, _) => hir::PathComponent::Enum(id, range),
+                Int(id, _) => hir::PathComponent::Int(id, range),
                 Rec(id, _) => hir::PathComponent::Rec(id, range),
                 Unresolved(name, _) => hir::PathComponent::Unresolved(name),
                 Builtin(_) | Tuple(_) => hir::PathComponent::default(),

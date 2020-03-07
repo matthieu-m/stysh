@@ -1,6 +1,6 @@
 //! Syntactic pass, aka parsing.
 //!
-//! Extension parser.
+//! Interface parser.
 
 use crate::model::tt::Kind;
 use crate::model::ast::*;
@@ -8,32 +8,32 @@ use crate::model::ast::*;
 use super::body;
 use super::com::RawParser;
 
-/// Parses an extension.
-pub fn parse_extension<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> ExtensionId {
-    let mut parser = ExtensionParser::new(*raw);
-    let e = parser.parse_extension();
+/// Parses an interface.
+pub fn parse_interface<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> InterfaceId {
+    let mut parser = InterfaceParser::new(*raw);
+    let i = parser.parse_interface();
     *raw = parser.into_raw();
-    e
+    i
 }
 
 //
 //  Implementation Details
 //
-struct ExtensionParser<'a, 'tree> {
+struct InterfaceParser<'a, 'tree> {
     raw: RawParser<'a, 'tree>,
 }
 
-impl<'a, 'tree> ExtensionParser<'a, 'tree> {
+impl<'a, 'tree> InterfaceParser<'a, 'tree> {
     fn new(raw: RawParser<'a, 'tree>) -> Self { Self { raw } }
 
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse_extension(&mut self) -> ExtensionId {
+    fn parse_interface(&mut self) -> InterfaceId {
         //  Expects:
-        //  -   :ext
+        //  -   :int
         //  -   type-identifier
         //  -   <body>
-        let keyword = self.raw.pop_kind(Kind::KeywordExt).expect(":ext");
+        let keyword = self.raw.pop_kind(Kind::KeywordInt).expect(":int");
 
         let name =
             self.raw
@@ -43,7 +43,7 @@ impl<'a, 'tree> ExtensionParser<'a, 'tree> {
 
         let body = body::parse_body(&mut self.raw, name);
 
-        let ext = Extension {
+        let int = Interface {
             name,
             functions: body.functions,
             keyword: keyword.offset() as u32,
@@ -51,16 +51,16 @@ impl<'a, 'tree> ExtensionParser<'a, 'tree> {
             close: body.close,
         };
 
-        let ext = self.raw.module().borrow_mut().push_extension(ext);
+        let int = self.raw.module().borrow_mut().push_interface(int);
 
         let function_ids: Vec<_> =
             self.raw.module().borrow().get_function_ids(body.functions).iter().copied().collect();
 
         for &fun in &function_ids {
-            self.raw.module().borrow_mut().set_function_scope(fun, Scope::Ext(ext));
+            self.raw.module().borrow_mut().set_function_scope(fun, Scope::Int(int));
         }
 
-        ext
+        int
     }
 }
 
@@ -74,18 +74,18 @@ mod tests {
     use super::super::com::tests::Env;
 
     #[test]
-    fn extension_empty() {
-        let env = LocalEnv::new(b":ext Empty { }");
+    fn interface_empty() {
+        let env = LocalEnv::new(b":int Empty { }");
         let i = env.factory().item();
 
-        i.extension(5, 5).braces(11, 13).build();
+        i.interface(5, 5).braces(11, 13).build();
 
-        assert_eq!(env.actual_extension(), env.expected_module());
+        assert_eq!(env.actual_interface(), env.expected_module());
     }
 
     #[test]
-    fn extension_single_function() {
-        let env = LocalEnv::new(b":ext Simple { :fun id() -> Simple { Simple } }");
+    fn interface_single_function() {
+        let env = LocalEnv::new(b":int Simple { :fun id() -> Simple { Simple } }");
         let (e, i, _, _, tm, t) = env.factories();
 
         let fun = i.function(
@@ -95,17 +95,17 @@ mod tests {
         ).build();
         e.block(e.constructor(t.simple(36, 6)).build()).build_body(fun);
 
-        i.extension(5, 6)
+        i.interface(5, 6)
             .push_function(fun)
             .build();
 
-        assert_eq!(env.actual_extension(), env.expected_module());
+        assert_eq!(env.actual_interface(), env.expected_module());
     }
 
     #[test]
-    fn extension_three_functions() {
+    fn interface_three_functions() {
         let env = LocalEnv::new(
-            b":ext Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
+            b":int Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
         );
         let (e, i, _, _, tm, t) = env.factories();
 
@@ -134,13 +134,13 @@ mod tests {
         ).build();
         e.block(e.constructor(t.simple(78, 1)).build()).build_body(three);
 
-        i.extension(5, 6)
+        i.interface(5, 6)
             .push_function(one)
             .push_function(two)
             .push_function(three)
             .build();
 
-        assert_eq!(env.actual_extension(), env.expected_module());
+        assert_eq!(env.actual_interface(), env.expected_module());
     }
 
     struct LocalEnv { env: Env, }
@@ -150,11 +150,11 @@ mod tests {
             LocalEnv { env: Env::new(source), }
         }
 
-        fn actual_extension(&self) -> Module {
+        fn actual_interface(&self) -> Module {
             let mut raw = self.env.raw();
-            super::parse_extension(&mut raw);
+            super::parse_interface(&mut raw);
             let result = self.env.actual_module().borrow().clone();
-            println!("actual_extension: {:#?}", result);
+            println!("actual_interface: {:#?}", result);
             println!();
             result
         }

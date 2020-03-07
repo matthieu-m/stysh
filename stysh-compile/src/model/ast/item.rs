@@ -15,6 +15,9 @@ pub type ExtensionId = Id<Extension>;
 /// A FunctionId.
 pub type FunctionId = Id<Function>;
 
+/// An InterfaceId.
+pub type InterfaceId = Id<Interface>;
+
 /// A RecordId.
 pub type RecordId = Id<Record>;
 
@@ -27,6 +30,8 @@ pub enum Item {
     Ext(ExtensionId),
     /// A function.
     Fun(FunctionId),
+    /// An interface.
+    Int(InterfaceId),
     /// A record.
     Rec(RecordId),
 }
@@ -94,6 +99,8 @@ pub struct Function {
     pub close: u32,
     /// Offset of the "->" token, if any.
     pub arrow: u32,
+    /// Offset of the ";" token, if any.
+    pub semi_colon: u32,
 }
 
 /// An InnerRecord.
@@ -109,21 +116,6 @@ pub enum InnerRecord {
     Unit(TypeIdentifier),
 }
 
-/// A Record.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct Record {
-    /// Inner representation of the record.
-    pub inner: InnerRecord,
-    /// Offset of the `:rec` keyword.
-    pub keyword: u32,
-    /// Offset of the semi-colon, for unit records.
-    pub semi_colon: u32,
-}
-
-//
-//  Implementations
-//
-
 impl InnerRecord {
     /// Returns the name of the InnerRecord, if any.
     pub fn name(&self) -> Option<TypeIdentifier> {
@@ -136,10 +128,48 @@ impl InnerRecord {
     }
 }
 
+/// An Interface.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Interface {
+    /// Name of the enum.
+    pub name: TypeIdentifier,
+    /// Functions.
+    pub functions: Id<[FunctionId]>,
+    /// Offset of the `:int` keyword.
+    pub keyword: u32,
+    /// Offset of the opening brace.
+    pub open: u32,
+    /// Offset of the closing brace.
+    pub close: u32,
+}
+
+/// A Record.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Record {
+    /// Inner representation of the record.
+    pub inner: InnerRecord,
+    /// Offset of the `:rec` keyword.
+    pub keyword: u32,
+    /// Offset of the semi-colon, for unit records.
+    pub semi_colon: u32,
+}
+
 impl Record {
     /// Returns the name of the Record.
     pub fn name(&self) -> TypeIdentifier { self.inner.name().expect("Name") }
 }
+
+/// A Scope, for associated items.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum Scope {
+    /// Module scope, the default.
+    Module,
+    /// Extension scope.
+    Ext(ExtensionId),
+    /// Interface scope.
+    Int(InterfaceId),
+}
+
 
 //
 //  Implementations of Span
@@ -181,6 +211,13 @@ impl Span for InnerRecord {
     }
 }
 
+impl Span for Interface {
+    /// Returns the range spanned by the interface.
+    fn span(&self) -> Range {
+        Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
+    }
+}
+
 impl Span for Record {
     /// Returns the range spanned by the record.
     fn span(&self) -> Range {
@@ -202,6 +239,10 @@ impl convert::From<ExtensionId> for Item {
 
 impl convert::From<FunctionId> for Item {
     fn from(f: FunctionId) -> Item { Item::Fun(f) }
+}
+
+impl convert::From<InterfaceId> for Item {
+    fn from(i: InterfaceId) -> Item { Item::Int(i) }
 }
 
 impl convert::From<RecordId> for Item {
@@ -267,10 +308,10 @@ mod tests {
                 .function(
                     8,
                     3,
-                    f.type_().simple(16, 3),
-                    e.block(e.bin_op(e.int(1, 23), e.int(1, 27)).build())
-                        .build(),
+                    f.type_module().simple(16, 3),
                 ).build();
+        e.block(e.bin_op(e.int(1, 23), e.int(1, 27)).build()).build_body(item);
+
         assert_eq!(env.module().borrow().get_function_range(item), range(3, 27));
     }
 

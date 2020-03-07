@@ -69,6 +69,22 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn interfaces(&self) -> Vec<InterfaceId> {
+        let mut result = self.module.interfaces();
+        result.extend(&self.repository.interfaces());
+        result
+    }
+
+    fn get_interface(&self, id: InterfaceId) -> Interface {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_interface(id)
+        } else {
+            self.repository.get_interface(id)
+        }
+    }
+
     fn records(&self) -> Vec<RecordId> {
         let mut result = self.module.records();
         result.extend(&self.repository.records());
@@ -179,6 +195,12 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         self.registry.get_function(id)
+    }
+
+    fn interfaces(&self) -> Vec<InterfaceId> { self.registry.interfaces() }
+
+    fn get_interface(&self, id: InterfaceId) -> Interface {
+        self.registry.get_interface(id)
     }
 
     fn records(&self) -> Vec<RecordId> { self.registry.records() }

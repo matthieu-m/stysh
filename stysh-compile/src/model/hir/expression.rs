@@ -61,7 +61,7 @@ pub enum Callable {
     Builtin(BuiltinFunction),
     /// A static user-defined function.
     Function(FunctionId),
-    /// A static or dynamic user-defined function.
+    /// A dynamic user-defined function.
     Method(FunctionId),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),

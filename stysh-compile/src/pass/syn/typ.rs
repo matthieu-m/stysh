@@ -26,8 +26,8 @@ pub fn parse_record<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> RecordId {
 }
 
 pub fn parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> TypeId {
-    let tree = raw.tree();
-    parse_type_impl(raw, tree)
+    let module = raw.module();
+    parse_type_impl(raw, module)
 }
 
 pub fn try_parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>, path: Path)

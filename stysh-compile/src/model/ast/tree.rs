@@ -143,6 +143,15 @@ impl Tree {
     /// Sets the root.
     pub fn set_root(&mut self, root: Root) { self.root = Some(root); }
 
+    /// Sets the body of an expression.
+    pub fn set_root_body(&mut self, body: ExpressionId) {
+        if let Some(Root::Function(fun, _)) = self.root {
+            self.root = Some(Root::Function(fun, body));
+        } else {
+            unreachable!("Expected a function, got {:?}", self.root);
+        }
+    }
+
 
     //  Expressions.
 

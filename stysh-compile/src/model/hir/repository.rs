@@ -54,6 +54,15 @@ pub struct Repository {
     function: JaggedArray<FunctionSignature>,
 
     //
+    //  Interfaces
+    //
+
+    /// Interface canonical name to InterfaceId.
+    interface_lookup: JaggedHashMap<ItemIdentifier, InterfaceId>,
+    /// Definition of a given Interface.
+    interface: JaggedArray<Interface>,
+
+    //
     //  Records
     //
 
@@ -95,6 +104,9 @@ impl Repository {
             function_lookup: JaggedHashMap::new(5),
             function: JaggedArray::new(5),
 
+            interface_lookup: JaggedHashMap::new(5),
+            interface: JaggedArray::new(5),
+
             record_lookup: JaggedHashMap::new(5),
             record: JaggedArray::new(5),
 
@@ -127,6 +139,10 @@ impl Repository {
             self.insert_extension(extension, module, &mapper);
         }
 
+        for interface in module.interfaces() {
+            self.insert_interface(interface, module, &mapper);
+        }
+
         for function in module.functions() {
             self.insert_function(function, module, &mapper);
         }
@@ -141,6 +157,8 @@ impl Repository {
             extension: self.extension.snapshot(),
             function_lookup: self.function_lookup.snapshot(),
             function: self.function.snapshot(),
+            interface_lookup: self.interface_lookup.snapshot(),
+            interface: self.interface.snapshot(),
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
             names: self.names.snapshot(),
@@ -182,6 +200,7 @@ impl Repository {
         IdMapper::new(
             self.enum_.len() as i64,
             self.extension.len() as i64,
+            self.interface.len() as i64,
             self.record.len() as i64,
         )
     }
@@ -254,15 +273,43 @@ impl Repository {
 
         let name = signature.name;
         let range = signature.range;
-        let extension = signature.extension.map(|e| mapper.map_extension(e));
+        let scope = match signature.scope {
+            Scope::Module => Scope::Module,
+            Scope::Ext(e) => Scope::Ext(mapper.map_extension(e)),
+            Scope::Int(i) => Scope::Int(mapper.map_interface(i)),
+        };
         let arguments = self.insert_tuple(signature.arguments, module, mapper);
         let result = self.insert_type(signature.result, module, mapper);
 
         let id = FunctionId::new_repository(self.function.len() as u32);
-        let signature = FunctionSignature { name, extension, range, arguments, result, };
+        let signature = FunctionSignature { name, scope, range, arguments, result, };
 
         self.function.push(signature);
         self.function_lookup.insert(name, id);
+    }
+
+    fn insert_interface(
+        &mut self,
+        interface: InterfaceId,
+        module: &Module,
+        mapper: &IdMapper,
+    )
+    {
+        debug_assert!(self.interface_lookup.len() == self.interface.len());
+
+        let id = mapper.map_interface(interface);
+        debug_assert!(id.is_repository());
+        debug_assert!(id.get_repository().unwrap() == self.interface.len() as u32 + 1);
+
+        let int = module.get_interface(interface);
+
+        let name = int.name;
+        let range = int.range;
+
+        let int = Interface { name, range, };
+
+        self.interface.push(int);
+        self.interface_lookup.insert(name, id);
     }
 
     fn insert_record(
@@ -359,6 +406,11 @@ impl Repository {
                 let p = self.insert_path_components(p, module);
                 Enum(e, p)
             },
+            Int(i, p) => {
+                let i = mapper.map_interface(i);
+                let p = self.insert_path_components(p, module);
+                Int(i, p)
+            }
             Rec(r, p) => {
                 let r = mapper.map_record(r);
                 let p = self.insert_path_components(p, module);
@@ -396,6 +448,10 @@ pub struct RepositorySnapshot {
     function_lookup: JaggedHashMapSnapshot<ItemIdentifier, FunctionId>,
     function: JaggedArraySnapshot<FunctionSignature>,
 
+    //  Interfaces
+    interface_lookup: JaggedHashMapSnapshot<ItemIdentifier, InterfaceId>,
+    interface: JaggedArraySnapshot<Interface>,
+
     //  Records
     record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
     record: JaggedArraySnapshot<Record>,
@@ -431,6 +487,14 @@ impl Registry for RepositorySnapshot {
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         *self.function.at(index_of(id))
+    }
+
+    fn interfaces(&self) -> Vec<InterfaceId> {
+        ids_of(self.interface.len())
+    }
+
+    fn get_interface(&self, id: InterfaceId) -> Interface {
+        *self.interface.at(index_of(id))
     }
 
     fn records(&self) -> Vec<RecordId> {
@@ -570,12 +634,20 @@ impl<T> JaggedMultiArraySnapshot<T> {
 struct IdMapper {
     enum_offset: i64,
     extension_offset: i64,
+    interface_offset: i64,
     record_offset: i64,
 }
 
 impl IdMapper {
-    fn new(enum_offset: i64, extension_offset: i64, record_offset: i64) -> IdMapper {
-        IdMapper { enum_offset, extension_offset, record_offset, }
+    fn new(
+        enum_offset: i64,
+        extension_offset: i64,
+        interface_offset: i64,
+        record_offset: i64,
+    )
+        -> IdMapper
+    {
+        IdMapper { enum_offset, extension_offset, interface_offset, record_offset, }
     }
 
     fn map_enum(&self, id: EnumId) -> EnumId {
@@ -588,6 +660,12 @@ impl IdMapper {
         debug_assert!(id.is_module());
         let local = id.get_module().expect("module") as i64;
         ExtensionId::new_repository((local + self.extension_offset) as u32)
+    }
+
+    fn map_interface(&self, id: InterfaceId) -> InterfaceId {
+        debug_assert!(id.is_module());
+        let local = id.get_module().expect("module") as i64;
+        InterfaceId::new_repository((local + self.interface_offset) as u32)
     }
 
     fn map_record(&self, id: RecordId) -> RecordId {

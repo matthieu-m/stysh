@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::basic::mem;
 
-use crate::model::hir::*;
+use crate::model::hir::{self, *};
 
 /// A Lexical Scope trait.
 pub trait Scope: fmt::Debug {
@@ -108,16 +108,27 @@ impl<'a> TypeScope<'a> {
 
     /// Returns the matching callables within type.
     pub fn lookup_associated_callables(&self, name: ValueIdentifier) -> CallableCandidate {
+        use self::hir::Scope::*;
+
         let mut associated = vec!();
         for id in self.registry.functions() {
             let fun = self.registry.get_function(id);
             if fun.name.id() != name.id() {
                 continue;
             }
-            if let Some(e) = fun.extension {
-                let ext = self.registry.get_extension(e);
-                if Self::are_compatible(ext.extended, self.type_) {
-                    associated.push(CallableCandidate::Function(id));
+            match fun.scope {
+                Module => (),
+                Ext(e) => {
+                    let ext = self.registry.get_extension(e);
+                    if Self::are_compatible(ext.extended, self.type_) {
+                        associated.push(CallableCandidate::Function(id));
+                    }
+                },
+                Int(i) => {
+                    let int = Type::Int(i, PathId::empty());
+                    if Self::are_compatible(int, self.type_) {
+                        associated.push(CallableCandidate::Function(id));
+                    }
                 }
             }
         }
@@ -131,7 +142,7 @@ impl<'a> TypeScope<'a> {
 
     fn is_defined(typ: Type) -> bool {
         match typ {
-            Type::Enum(..) | Type::Rec(..) => true,
+            Type::Enum(..) | Type::Int(..) | Type::Rec(..) => true,
             _ => false,
         }
     }
@@ -139,6 +150,7 @@ impl<'a> TypeScope<'a> {
     fn are_compatible(left: Type, right: Type) -> bool {
         match (left, right) {
             (Type::Enum(l, ..), Type::Enum(r, ..)) => l == r,
+            (Type::Int(l, ..), Type::Int(r, ..)) => l == r,
             (Type::Rec(l, ..), Type::Rec(r, ..)) => l == r,
             _ => false,
         }
@@ -188,15 +200,17 @@ impl<'a> BlockScope<'a> {
 
     /// Adds a new enum to the scope.
     pub fn add_enum(&mut self, name: ItemIdentifier, id: EnumId) {
-        self.types.insert(
-            name.id(),
-            Type::Enum(id, PathId::empty()),
-        );
+        self.types.insert(name.id(), Type::Enum(id, PathId::empty()));
     }
 
     /// Adds a new function identifier to the scope.
     pub fn add_function(&mut self, name: ItemIdentifier, id: FunctionId) {
         self.functions.insert(name.id(), CallableCandidate::Function(id));
+    }
+
+    /// Adds a new interface identifier to the scope.
+    pub fn add_interface(&mut self, name: ItemIdentifier, id: InterfaceId) {
+        self.types.insert(name.id(), Type::Int(id, PathId::empty()));
     }
 
     /// Adds a new pattern to the scope.
@@ -216,10 +230,7 @@ impl<'a> BlockScope<'a> {
 
     /// Adds a new record to the scope.
     pub fn add_record(&mut self, name: ItemIdentifier, id: RecordId) {
-        self.types.insert(
-            name.id(),
-            Type::Rec(id, PathId::empty()),
-        );
+        self.types.insert(name.id(), Type::Rec(id, PathId::empty()));
     }
 
     /// Adds a new value identifier to the scope.
@@ -464,7 +475,7 @@ pub mod mocks {
 #[cfg(test)]
 mod tests {
     use crate::basic::{com, mem};
-    use crate::model::hir::*;
+    use crate::model::hir::{self, *};
 
     use super::{CallableCandidate, Scope, BuiltinScope, FunctionScope, TypeScope};
 
@@ -542,7 +553,7 @@ mod tests {
             let signature = FunctionSignature {
                 name: bar,
                 range: Default::default(),
-                extension: Some(ext),
+                scope: hir::Scope::Ext(ext),
                 arguments: Tuple::default(),
                 result: TypeId::void(),
             };

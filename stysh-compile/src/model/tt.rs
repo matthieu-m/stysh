@@ -61,6 +61,8 @@ pub enum Kind {
     KeywordFun,
     /// The :if keyword.
     KeywordIf,
+    /// The :int keyword.
+    KeywordInt,
     /// The :loop keyword.
     KeywordLoop,
     /// The :not keyword.

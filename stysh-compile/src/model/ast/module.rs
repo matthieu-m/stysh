@@ -52,6 +52,8 @@ pub struct Module {
     extension_lookup: BTreeMap<TypeIdentifier, ExtensionId>,
     /// Functions.
     function_lookup: BTreeMap<VariableIdentifier, FunctionId>,
+    /// Interfaces.
+    interface_lookup: BTreeMap<TypeIdentifier, InterfaceId>,
     /// Records.
     record_lookup: BTreeMap<TypeIdentifier, RecordId>,
 
@@ -68,9 +70,11 @@ pub struct Module {
     /// Range of a function.
     function_range: KeyedRange<Function>,
     /// Body of a function.
-    function_body: Table<FunctionId, Tree>,
-    /// Extension of a function, if any.
-    function_extension: Table<FunctionId, Option<ExtensionId>>,
+    function_body: Table<FunctionId, Option<Tree>>,
+    /// Scope in which the function is defined.
+    function_scope: Table<FunctionId, Scope>,
+    /// Interface.
+    interface: KeyedSingle<Interface>,
     /// Record.
     record: KeyedSingle<Record>,
     /// Type.
@@ -214,54 +218,122 @@ impl Module {
     }
 
     /// Returns a reference to the body of the function associated to the ID.
-    pub fn get_function_body(&self, id: FunctionId) -> &Tree {
+    pub fn get_function_body(&self, id: FunctionId) -> &Option<Tree> {
         self.function_body.at(&id)
     }
 
-    /// Returns the extension to which the function belongs to, if any.
-    pub fn get_function_extension(&self, id: FunctionId) -> Option<ExtensionId> {
-        *self.function_extension.at(&id)
+    /// Prepares the body of the function.
+    pub fn prepare_function_body(&self, id: FunctionId, tree: &mut Tree) {
+        let mut function = self.get_function(id);
+        debug_assert!(function.semi_colon == 0);
+
+        let mut arguments =
+            self.get_arguments(function.arguments).to_vec();
+        for a in &mut arguments {
+            a.type_ = replicate_type(a.type_, self, tree);
+        }
+        function.arguments = tree.push_arguments(&arguments);
+
+        function.result = replicate_type(function.result, self, tree);
+
+        tree.set_root(Root::Function(function, Default::default()));
     }
 
-    /// Associate function to an extension.
-    pub fn set_function_extension(&mut self, fun: FunctionId, ext: ExtensionId) {
-        self.function_extension.replace(&fun, Some(ext));
-    }
-
-    /// Pushes a new function.
-    ///
-    /// Returns the ID created for it.
-    pub fn push_function(&mut self, tree: Tree) -> FunctionId {
+    /// Sets the body of the function, if any.
+    pub fn set_function_body(&mut self, id: FunctionId, tree: Tree) {
+        debug_assert!(self.get_function(id).semi_colon == 0);
         debug_assert!(self.function.len() == self.function_range.len());
         debug_assert!(self.function.len() == self.function_body.len());
-        debug_assert!(self.function.len() == self.function_extension.len());
+        debug_assert!(self.function.len() == self.function_scope.len());
 
-        let (mut function, body) = if let Some(Root::Function(fun, body)) = tree.get_root() {
-            (fun, body)
+        let body = if let Some(Root::Function(_, body)) = tree.get_root() {
+            body
         } else {
             unreachable!("Expected a function root, got {:?}", tree.get_root());
         };
 
-        function.arguments = {
-            let mut arguments = tree.get_arguments(function.arguments).to_vec();
-            for a in &mut arguments {
-                a.type_ = replicate_type(a.type_, &tree, self);
-            }
-            self.push_arguments(&arguments)
+        let range = self.get_function_range(id)
+            .extend(tree.get_expression_range(body));
+
+        self.function_range.replace(&id, range);
+        self.function_body.replace(&id, Some(tree));
+    }
+
+    /// Returns the scope to which the function belongs to.
+    pub fn get_function_scope(&self, id: FunctionId) -> Scope {
+        *self.function_scope.at(&id)
+    }
+
+    /// Associate function to a scope.
+    pub fn set_function_scope(&mut self, fun: FunctionId, scp: Scope) {
+        debug_assert!(self.get_function_scope(fun) == Scope::Module);
+        self.function_scope.replace(&fun, scp);
+    }
+
+    /// Pushes a new function signature.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_function_signature(&mut self, function: Function) -> FunctionId {
+        debug_assert!(self.function.len() == self.function_range.len());
+        debug_assert!(self.function.len() == self.function_body.len());
+        debug_assert!(self.function.len() == self.function_scope.len());
+
+        let end_offset = if function.semi_colon != 0 {
+            (function.semi_colon + 1) as usize
+        } else {
+            self.get_type_range(function.result).end_offset()
         };
 
-        function.result = replicate_type(function.result, &tree, self);
-
-        let range = Range::new(function.keyword as usize, 4)
-            .extend(tree.get_expression_range(body));
+        let range = Range::new(
+            function.keyword as usize,
+            end_offset - function.keyword as usize,
+        );
 
         let id = Id::new(self.function.len() as u32);
         self.function.push(&id, function);
         self.function_range.push(&id, range);
-        self.function_body.push(&id, tree);
-        self.function_extension.push(&id, None);
+        self.function_body.push(&id, None);
+        self.function_scope.push(&id, Scope::Module);
 
         self.function_lookup.insert(function.name, id);
+
+        id
+    }
+
+
+    //  Interfaces.
+
+    /// Returns the number of interfaces.
+    pub fn len_interfaces(&self) -> usize { self.interface_lookup.len() }
+
+    /// Returns the interface IDs.
+    pub fn interfaces(&self) -> Vec<InterfaceId> {
+        (0..(self.len_interfaces() as u32)).into_iter().map(InterfaceId::new).collect()
+    }
+
+    /// Looks up an interface ID by identifier.
+    pub fn get_interface_id(&self, id: TypeIdentifier) -> Option<InterfaceId> {
+        self.interface_lookup.get(&id).copied()
+    }
+
+    /// Returns the interface associated to the ID.
+    pub fn get_interface(&self, id: InterfaceId) -> Interface {
+        *self.interface.at(&id)
+    }
+
+    /// Returns the range of the interface associated to the ID.
+    pub fn get_interface_range(&self, id: InterfaceId) -> Range {
+        self.interface.at(&id).span()
+    }
+
+    /// Pushes a new interface.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_interface(&mut self, int: Interface) -> InterfaceId {
+        let id = Id::new(self.interface.len() as u32);
+        self.interface.push(&id, int);
+
+        self.interface_lookup.insert(int.name, id);
 
         id
     }
@@ -442,6 +514,13 @@ impl Store<Extension> for Module {
     fn push(&mut self, e: Extension, _: Range) -> ExtensionId { self.push_extension(e) }
 }
 
+impl Store<Interface> for Module {
+    fn len(&self) -> usize { self.len_interfaces() }
+    fn get(&self, id: InterfaceId) -> Interface { self.get_interface(id) }
+    fn get_range(&self, id: InterfaceId) -> Range { self.get_interface_range(id) }
+    fn push(&mut self, i: Interface, _: Range) -> InterfaceId { self.push_interface(i) }
+}
+
 impl Store<Record> for Module {
     fn len(&self) -> usize { self.len_records() }
     fn get(&self, id: RecordId) -> Record { self.get_record(id) }
@@ -509,6 +588,9 @@ impl fmt::Debug for Module {
         if !self.function_lookup.is_empty() {
             write!(f, "function_lookup: {:?}, ", self.function_lookup)?;
         }
+        if !self.interface_lookup.is_empty() {
+            write!(f, "interface_lookup: {:?}, ", self.interface_lookup)?;
+        }
         if !self.record_lookup.is_empty() {
             write!(f, "record_lookup: {:?}, ", self.record_lookup)?;
         }
@@ -523,7 +605,10 @@ impl fmt::Debug for Module {
             write!(f, "function: {:?}, ", self.function)?;
             write!(f, "function_range: {:?}, ", self.function_range)?;
             write!(f, "function_body: {:?}, ", self.function_body)?;
-            write!(f, "function_extension: {:?}, ", self.function_extension)?;
+            write!(f, "function_scope: {:?}, ", self.function_scope)?;
+        }
+        if !self.interface.is_empty() {
+            write!(f, "interface: {:?}, ", self.interface)?;
         }
         if !self.record.is_empty() {
             write!(f, "record: {:?}, ", self.record)?;

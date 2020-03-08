@@ -57,10 +57,14 @@ pub enum Kind {
     KeywordEnum,
     /// The :ext keyword.
     KeywordExt,
+    /// The :for keyword.
+    KeywordFor,
     /// The :fun keyword.
     KeywordFun,
     /// The :if keyword.
     KeywordIf,
+    /// The :imp keyword.
+    KeywordImp,
     /// The :int keyword.
     KeywordInt,
     /// The :loop keyword.

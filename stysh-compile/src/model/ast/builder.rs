@@ -197,6 +197,19 @@ pub struct FunctionBuilder {
     arguments: Vec<Argument>,
 }
 
+/// ImplementationBuilder
+#[derive(Clone)]
+pub struct ImplementationBuilder {
+    module: RcModule,
+    implemented: TypeIdentifier,
+    extended: TypeIdentifier,
+    keyword: u32,
+    for_: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
+}
+
 /// InterfaceBuilder
 #[derive(Clone)]
 pub struct InterfaceBuilder {
@@ -1158,6 +1171,26 @@ impl ItemFactory {
         FunctionBuilder::named(self.module.clone(), self.tree.clone(), self.resolver.clone(), name, result)
     }
 
+    /// Creates an ImplementationBuilder.
+    pub fn implementation(&self, pos: u32, len_int: u32, len_ext: u32)
+        -> ImplementationBuilder
+    {
+        ImplementationBuilder::new(
+            self.module.clone(),
+            self.resolver.clone(),
+            pos,
+            len_int,
+            len_ext,
+        )
+    }
+
+    /// Creates an ImplementationBuilder, named.
+    pub fn implementation_named(&self, int: TypeIdentifier, ext: TypeIdentifier)
+        -> ImplementationBuilder
+    {
+        ImplementationBuilder::named(self.module.clone(), int, ext)
+    }
+
     /// Creates an InterfaceBuilder.
     pub fn interface(&self, pos: u32, len: u32) -> InterfaceBuilder {
         InterfaceBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
@@ -1584,6 +1617,120 @@ impl FunctionBuilder {
 
         if self.semi_colon == 0 {
             self.module.borrow().prepare_function_body(id, &mut *self.tree.borrow_mut());
+        }
+
+        id
+    }
+}
+
+impl ImplementationBuilder {
+    /// Creates a new instance.
+    pub fn new(
+        module: RcModule,
+        resolver: Resolver,
+        pos: u32,
+        len_int: u32,
+        len_ext: u32,
+    )
+        -> Self
+    {
+        let int = type_id(&resolver, pos, len_int);
+        let ext = type_id(&resolver, pos + len_int + 6, len_ext);
+        Self::named(module, int, ext)
+    }
+
+    /// Creates a new instance.
+    pub fn named(
+        module: RcModule,
+        implemented: TypeIdentifier,
+        extended: TypeIdentifier,
+    )
+        -> Self
+    {
+        ImplementationBuilder {
+            module,
+            implemented,
+            extended,
+            keyword: U32_NONE,
+            for_: U32_NONE,
+            open: U32_NONE,
+            close: U32_NONE,
+            functions: vec!(),
+        }
+    }
+
+    /// Sets the position of the :imp keyword.
+    pub fn keyword(&mut self, pos: u32) -> &mut Self {
+        self.keyword = pos;
+        self
+    }
+
+    /// Sets the position of the :for keyword.
+    pub fn for_(&mut self, pos: u32) -> &mut Self {
+        self.for_ = pos;
+        self
+    }
+
+    /// Sets the position of the braces.
+    pub fn braces(&mut self, open: u32, close: u32) -> &mut Self {
+        self.open = open;
+        self.close = close;
+        self
+    }
+
+    /// Pushes a new function.
+    pub fn push_function(&mut self, fun: FunctionId) -> &mut Self {
+        self.functions.push(fun);
+        self
+    }
+
+    /// Creates an Implementation.
+    pub fn build(&self) -> ImplementationId {
+        let mut functions = self.functions.clone();
+        functions.sort_unstable();
+
+        let keyword = if self.keyword == U32_NONE {
+            self.implemented.span().offset() as u32 - 5
+        } else {
+            self.keyword
+        };
+
+        let for_ = if self.for_ == U32_NONE {
+            self.extended.span().offset() as u32 - 5
+        } else {
+            self.for_
+        };
+
+        let open = if self.open == U32_NONE {
+            self.extended.span().end_offset() as u32 + 1
+        } else {
+            self.open
+        };
+
+        let close = if self.close == U32_NONE {
+            functions.last()
+                .map(|&fun| self.module.borrow().get_function_range(fun).end_offset() as u32 + 1)
+                .unwrap_or(open + 2)
+        } else {
+            self.close
+        };
+
+        let function_ids = self.module.borrow_mut().push_function_ids(&functions);
+
+        let imp = Implementation {
+            implemented: self.implemented,
+            extended: self.extended,
+            functions: function_ids,
+            keyword,
+            for_,
+            open,
+            close,
+        };
+
+        let id = self.module.borrow_mut().push_implementation(imp);
+
+        for &fun in &functions {
+            self.module.borrow_mut().set_function_scope(fun, Scope::Imp(id));
         }
 
         id

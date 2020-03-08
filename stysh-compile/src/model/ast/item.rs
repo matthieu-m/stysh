@@ -15,6 +15,9 @@ pub type ExtensionId = Id<Extension>;
 /// A FunctionId.
 pub type FunctionId = Id<Function>;
 
+/// An ImplementationId.
+pub type ImplementationId = Id<Implementation>;
+
 /// An InterfaceId.
 pub type InterfaceId = Id<Interface>;
 
@@ -30,6 +33,8 @@ pub enum Item {
     Ext(ExtensionId),
     /// A function.
     Fun(FunctionId),
+    /// An implementation.
+    Imp(ImplementationId),
     /// An interface.
     Int(InterfaceId),
     /// A record.
@@ -103,6 +108,25 @@ pub struct Function {
     pub semi_colon: u32,
 }
 
+/// An Implementation.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Implementation {
+    /// Name of the implemented interface.
+    pub implemented: TypeIdentifier,
+    /// Name of the extended type.
+    pub extended: TypeIdentifier,
+    /// Functions.
+    pub functions: Id<[FunctionId]>,
+    /// Offset of the `:imp` keyword.
+    pub keyword: u32,
+    /// Offset of the `:for` keyword.
+    pub for_: u32,
+    /// Offset of the opening brace.
+    pub open: u32,
+    /// Offset of the closing brace.
+    pub close: u32,
+}
+
 /// An InnerRecord.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum InnerRecord {
@@ -166,6 +190,8 @@ pub enum Scope {
     Module,
     /// Extension scope.
     Ext(ExtensionId),
+    /// Implementation scope.
+    Imp(ImplementationId),
     /// Interface scope.
     Int(InterfaceId),
 }
@@ -192,7 +218,14 @@ impl Span for Enum {
 }
 
 impl Span for Extension {
-    /// Returns the range spanned by the enum.
+    /// Returns the range spanned by the extension.
+    fn span(&self) -> Range {
+        Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
+    }
+}
+
+impl Span for Implementation {
+    /// Returns the range spanned by the implementation.
     fn span(&self) -> Range {
         Range::new(self.keyword as usize, (self.close + 1 - self.keyword) as usize)
     }
@@ -239,6 +272,10 @@ impl convert::From<ExtensionId> for Item {
 
 impl convert::From<FunctionId> for Item {
     fn from(f: FunctionId) -> Item { Item::Fun(f) }
+}
+
+impl convert::From<ImplementationId> for Item {
+    fn from(i: ImplementationId) -> Item { Item::Imp(i) }
 }
 
 impl convert::From<InterfaceId> for Item {
@@ -313,6 +350,24 @@ mod tests {
         e.block(e.bin_op(e.int(1, 23), e.int(1, 27)).build()).build_body(item);
 
         assert_eq!(env.module().borrow().get_function_range(item), range(3, 27));
+    }
+
+    #[test]
+    fn range_implementation_minimal() {
+        let env = Env::new(b":imp Interface :for Simple { }");
+        let item = env.factory().item();
+
+        let i = item.implementation(5, 9, 6).build();
+        assert_eq!(env.module().borrow().get_implementation_range(i), range(0, 30));
+    }
+
+    #[test]
+    fn range_interface_minimal() {
+        let env = Env::new(b":int Simple { }");
+        let item = env.factory().item();
+
+        let e = item.interface(5, 6).build();
+        assert_eq!(env.module().borrow().get_interface_range(e), range(0, 15));
     }
 
     fn range(offset: usize, length: usize) -> Range {

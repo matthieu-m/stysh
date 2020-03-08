@@ -61,6 +61,15 @@ pub struct Module {
     function: Table<FunctionId, FunctionSignature>,
 
     //
+    //  Implementations
+    //
+
+    /// Implementation's extended canonical name to ImplementationId.
+    implementation_lookup: BTreeMap<ItemIdentifier, ImplementationId>,
+    /// Definition of a given Implementation.
+    implementation: Table<ImplementationId, Implementation>,
+
+    //
     //  Interfaces.
     //
 
@@ -213,6 +222,44 @@ impl Module {
         let id = Self::localize(id);
         *self.function.at_mut(&id) = function;
     }
+
+
+    //
+    //  Implementations
+    //
+
+    /// Returns the ImplementationId corresponding to the ItemIdentifier, if any.
+    pub fn lookup_implementation(&self, name: ItemIdentifier) -> Option<ImplementationId> {
+        self.implementation_lookup.get(&name).copied()
+    }
+
+    /// Inserts an Implementation name.
+    ///
+    /// Returns the ImplementationId created for it.
+    pub fn push_implementation_name(&mut self, name: ItemIdentifier) -> ImplementationId {
+        debug_assert!(self.implementation.len() == self.implementation_lookup.len());
+        debug_assert!(!self.implementation_lookup.contains_key(&name));
+
+        let id = ImplementationId::new_module(self.implementation.len() as u32);
+        let local_id = Self::localize(id);
+
+        self.implementation.push(&local_id, Default::default());
+        self.implementation_lookup.insert(name, id);
+
+        id
+    }
+
+    /// Sets an Implementation.
+    ///
+    /// Overrides any existing definition for this ID.
+    pub fn set_implementation(&mut self, id: ImplementationId, imp: Implementation) {
+        debug_assert!(id.is_module());
+        debug_assert!(self.implementation.len() == self.implementation_lookup.len());
+
+        let id = Self::localize(id);
+        *self.implementation.at_mut(&id) = imp;
+    }
+
 
 
     //
@@ -417,6 +464,15 @@ impl Registry for Module {
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         let id = Self::localize(id);
         *self.function.at(&id)
+    }
+
+    fn implementations(&self) -> Vec<ImplementationId> {
+        self.implementation_lookup.values().copied().collect()
+    }
+
+    fn get_implementation(&self, id: ImplementationId) -> Implementation {
+        let id = Self::localize(id);
+        *self.implementation.at(&id)
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> {

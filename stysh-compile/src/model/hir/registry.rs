@@ -38,6 +38,16 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_function(&self, id: FunctionId) -> FunctionSignature;
 
+    /// Returns the list of known implementation IDs.
+    fn implementations(&self) -> Vec<ImplementationId>;
+
+    /// Returns the definition of the implementation associated to the ID.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_implementation(&self, id: ImplementationId) -> Implementation;
+
     /// Returns the list of known interface IDs.
     fn interfaces(&self) -> Vec<InterfaceId>;
 
@@ -110,6 +120,12 @@ impl<T: Registry> Registry for cell::RefCell<T> {
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
         self.borrow().get_function(id)
+    }
+
+    fn implementations(&self) -> Vec<ImplementationId> { self.borrow().implementations() }
+
+    fn get_implementation(&self, id: ImplementationId) -> Implementation {
+        self.borrow().get_implementation(id)
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> { self.borrow().interfaces() }

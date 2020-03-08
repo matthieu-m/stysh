@@ -52,6 +52,8 @@ pub struct Module {
     extension_lookup: BTreeMap<TypeIdentifier, ExtensionId>,
     /// Functions.
     function_lookup: BTreeMap<VariableIdentifier, FunctionId>,
+    /// Implementations.
+    implementation_lookup: BTreeMap<TypeIdentifier, ImplementationId>,
     /// Interfaces.
     interface_lookup: BTreeMap<TypeIdentifier, InterfaceId>,
     /// Records.
@@ -73,6 +75,8 @@ pub struct Module {
     function_body: Table<FunctionId, Option<Tree>>,
     /// Scope in which the function is defined.
     function_scope: Table<FunctionId, Scope>,
+    /// Implementation.
+    implementation: KeyedSingle<Implementation>,
     /// Interface.
     interface: KeyedSingle<Interface>,
     /// Record.
@@ -301,6 +305,44 @@ impl Module {
     }
 
 
+    //  Implementations.
+
+    /// Returns the number of implementations.
+    pub fn len_implementations(&self) -> usize { self.implementation_lookup.len() }
+
+    /// Returns the implementation IDs.
+    pub fn implementations(&self) -> Vec<ImplementationId> {
+        (0..(self.len_implementations() as u32)).into_iter().map(ImplementationId::new).collect()
+    }
+
+    /// Looks up an implementation ID by type (extended) identifier.
+    pub fn get_implementation_id(&self, id: TypeIdentifier) -> Option<ImplementationId> {
+        self.implementation_lookup.get(&id).copied()
+    }
+
+    /// Returns the implementation associated to the ID.
+    pub fn get_implementation(&self, id: ImplementationId) -> Implementation {
+        *self.implementation.at(&id)
+    }
+
+    /// Returns the range of the implementation associated to the ID.
+    pub fn get_implementation_range(&self, id: ImplementationId) -> Range {
+        self.implementation.at(&id).span()
+    }
+
+    /// Pushes a new implementation.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_implementation(&mut self, imp: Implementation) -> ImplementationId {
+        let id = Id::new(self.implementation.len() as u32);
+        self.implementation.push(&id, imp);
+
+        self.implementation_lookup.insert(imp.extended, id);
+
+        id
+    }
+
+
     //  Interfaces.
 
     /// Returns the number of interfaces.
@@ -514,6 +556,13 @@ impl Store<Extension> for Module {
     fn push(&mut self, e: Extension, _: Range) -> ExtensionId { self.push_extension(e) }
 }
 
+impl Store<Implementation> for Module {
+    fn len(&self) -> usize { self.len_implementations() }
+    fn get(&self, id: ImplementationId) -> Implementation { self.get_implementation(id) }
+    fn get_range(&self, id: ImplementationId) -> Range { self.get_implementation_range(id) }
+    fn push(&mut self, i: Implementation, _: Range) -> ImplementationId { self.push_implementation(i) }
+}
+
 impl Store<Interface> for Module {
     fn len(&self) -> usize { self.len_interfaces() }
     fn get(&self, id: InterfaceId) -> Interface { self.get_interface(id) }
@@ -588,6 +637,9 @@ impl fmt::Debug for Module {
         if !self.function_lookup.is_empty() {
             write!(f, "function_lookup: {:?}, ", self.function_lookup)?;
         }
+        if !self.implementation_lookup.is_empty() {
+            write!(f, "implementation_lookup: {:?}, ", self.implementation_lookup)?;
+        }
         if !self.interface_lookup.is_empty() {
             write!(f, "interface_lookup: {:?}, ", self.interface_lookup)?;
         }
@@ -606,6 +658,9 @@ impl fmt::Debug for Module {
             write!(f, "function_range: {:?}, ", self.function_range)?;
             write!(f, "function_body: {:?}, ", self.function_body)?;
             write!(f, "function_scope: {:?}, ", self.function_scope)?;
+        }
+        if !self.implementation.is_empty() {
+            write!(f, "implementation: {:?}, ", self.implementation)?;
         }
         if !self.interface.is_empty() {
             write!(f, "interface: {:?}, ", self.interface)?;

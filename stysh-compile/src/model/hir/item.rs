@@ -12,6 +12,8 @@ pub type EnumId = Id<Enum>;
 pub type ExtensionId = Id<Extension>;
 /// The ID of a Function.
 pub type FunctionId = Id<FunctionSignature>;
+/// The ID of an Implementation.
+pub type ImplementationId = Id<Implementation>;
 /// The ID of an Interface.
 pub type InterfaceId = Id<Interface>;
 /// The ID of a Path.
@@ -62,6 +64,8 @@ pub enum Item {
     Ext(ExtensionId),
     /// A function definition.
     Fun(FunctionId),
+    /// An implementation definition.
+    Imp(ImplementationId),
     /// An interface definition.
     Int(InterfaceId),
     /// A record definition.
@@ -122,6 +126,21 @@ pub struct FunctionSignature {
     pub result: TypeId,
 }
 
+/// An implementation definition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Implementation {
+    /// The implemented identifier.
+    pub implemented_name: ItemIdentifier,
+    /// The extended identifier.
+    pub extended_name: ItemIdentifier,
+    /// The implementation range.
+    pub range: Range,
+    /// The interface.
+    pub implemented: InterfaceId,
+    /// The extended type.
+    pub extended: Type,
+}
+
 /// An interface definition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Interface {
@@ -165,6 +184,8 @@ pub enum Scope {
     Module,
     /// Extension scope.
     Ext(ExtensionId),
+    /// Implementation scope.
+    Imp(ImplementationId),
     /// Interface scope.
     Int(InterfaceId),
 }
@@ -343,6 +364,10 @@ impl convert::From<ExtensionId> for Item {
 
 impl convert::From<FunctionId> for Item {
     fn from(f: FunctionId) -> Self { Item::Fun(f) }
+}
+
+impl convert::From<ImplementationId> for Item {
+    fn from(i: ImplementationId) -> Self { Item::Imp(i) }
 }
 
 impl convert::From<InterfaceId> for Item {

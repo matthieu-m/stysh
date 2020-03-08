@@ -84,6 +84,16 @@ pub struct FunctionSignatureBuilder {
 }
 
 #[derive(Clone, Debug)]
+pub struct ImplementationBuilder {
+    module: RcModule,
+    implemented_name: ItemIdentifier,
+    extended_name: ItemIdentifier,
+    range: Range,
+    implemented: InterfaceId,
+    extended: Type,
+}
+
+#[derive(Clone, Debug)]
 pub struct InterfaceBuilder {
     module: RcModule,
     name: ItemIdentifier,
@@ -311,6 +321,56 @@ impl FunctionSignatureBuilder {
         self.module.borrow_mut().set_function(id, signature);
 
         signature
+    }
+}
+
+impl ImplementationBuilder {
+    /// Creates an instance.
+    pub fn new(
+        module: RcModule,
+        implemented_name: ItemIdentifier,
+        extended_name: ItemIdentifier,
+        implemented: InterfaceId,
+        extended: Type,
+    )
+        -> Self
+    {
+        ImplementationBuilder {
+            module,
+            implemented_name,
+            extended_name,
+            range: Default::default(),
+            implemented,
+            extended,
+        }
+    }
+
+    /// Sets the range.
+    pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
+        self.range = range(pos, len);
+        self
+    }
+
+    /// Creates an Implementation.
+    pub fn build(&self) -> ImplementationId {
+        let implementation = Implementation {
+            implemented_name: self.implemented_name,
+            extended_name: self.extended_name,
+            range: self.range,
+            implemented: self.implemented,
+            extended: self.extended,
+        };
+
+        let id = self.module.borrow().lookup_implementation(self.extended_name);
+        let id = if let Some(id) = id {
+            id
+        } else {
+            self.module.borrow_mut().push_implementation_name(self.extended_name)
+        };
+
+        self.module.borrow_mut().set_implementation(id, implementation);
+
+        id
     }
 }
 

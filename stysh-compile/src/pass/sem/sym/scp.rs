@@ -36,6 +36,8 @@ pub enum CallableCandidate {
     Builtin(BuiltinFunction),
     /// A static user-defined function.
     Function(FunctionId),
+    /// A dynamic user-defined function.
+    Method(FunctionId),
     /// An unknown callable binding.
     Unknown(ValueIdentifier),
     /// An unresolved callable binding.
@@ -53,6 +55,7 @@ impl CallableCandidate {
         match self {
             C::Builtin(f) => Callable::Builtin(*f),
             C::Function(f) => Callable::Function(*f),
+            C::Method(f) => Callable::Method(*f),
             C::Unknown(name) => Callable::Unknown(*name),
             C::Unresolved(candidates) => {
                 let callables: Vec<_> = candidates.iter()
@@ -124,10 +127,16 @@ impl<'a> TypeScope<'a> {
                         associated.push(CallableCandidate::Function(id));
                     }
                 },
+                Imp(i) => {
+                    let imp = self.registry.get_implementation(i);
+                    if Self::are_compatible(imp.extended, self.type_) {
+                        associated.push(CallableCandidate::Function(id));
+                    }
+                },
                 Int(i) => {
                     let int = Type::Int(i, PathId::empty());
                     if Self::are_compatible(int, self.type_) {
-                        associated.push(CallableCandidate::Function(id));
+                        associated.push(CallableCandidate::Method(id));
                     }
                 }
             }

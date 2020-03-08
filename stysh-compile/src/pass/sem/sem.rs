@@ -48,6 +48,7 @@ impl<'a> GraphBuilder<'a> {
             Enum(e) => self.enum_name(e),
             Ext(e) => self.extension_name(e),
             Fun(f) => self.function_name(f),
+            Imp(i) => self.implementation_name(i),
             Int(i) => self.interface_name(i),
             Rec(r) => self.record_name(r),
         }
@@ -63,6 +64,7 @@ impl<'a> GraphBuilder<'a> {
             Enum(i) => self.enum_item(i),
             Ext(e) => self.extension_item(e),
             Fun(f) => self.fun_item(f),
+            Imp(i) => self.implementation_item(i),
             Int(i) => self.interface_item(i),
             Rec(r) => self.rec_item(r),
         }
@@ -170,6 +172,12 @@ impl<'a> GraphBuilder<'a> {
         hir::Item::Fun(id)
     }
 
+    fn implementation_name(&mut self, i: ast::ImplementationId) -> hir::Item {
+        let i = self.ast_module.get_implementation(i);
+        let id = self.hir_module.borrow_mut().push_implementation_name(i.extended.into());
+        hir::Item::Imp(id)
+    }
+
     fn interface_name(&mut self, i: ast::InterfaceId) -> hir::Item {
         let i = self.ast_module.get_interface(i);
         let id = self.hir_module.borrow_mut().push_interface_name(i.name.into());
@@ -274,6 +282,33 @@ impl<'a> GraphBuilder<'a> {
         hir::Item::Fun(id)
     }
 
+    fn implementation_item(&mut self, i: ast::ImplementationId) -> hir::Item {
+        let imp = self.ast_module.get_implementation(i);
+        let id = self.hir_module.borrow().lookup_implementation(imp.extended.into())
+            .expect("Implementation to be registered");
+
+        let implemented_name = imp.implemented.into();
+        let extended_name = imp.extended.into();
+        let range = imp.span();
+        let implemented = if let hir::Type::Int(i, _) =
+            self.scope.lookup_type(implemented_name)
+        {
+            i
+        }
+        else
+        {
+            unreachable!("Unknown interface {:?}", implemented_name);
+        };
+        let extended = self.scope.lookup_type(extended_name);
+
+        let imp = hir::Implementation {
+            implemented_name, extended_name, range, implemented, extended,
+        };
+        self.hir_module.borrow_mut().set_implementation(id, imp);
+
+        hir::Item::Imp(id)
+    }
+
     fn interface_item(&mut self, i: ast::InterfaceId) -> hir::Item {
         let int = self.ast_module.get_interface(i);
         let id = self.hir_module.borrow().lookup_interface(int.name.into())
@@ -348,6 +383,12 @@ impl<'a> GraphBuilder<'a> {
                 scope.enable_self();
                 fun(&scope)
             },
+            hir::Scope::Imp(imp) => {
+                let extended = self.hir_module.borrow().get_implementation(imp).extended;
+                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+                scope.enable_self();
+                fun(&scope)
+            },
             hir::Scope::Int(int) => {
                 let int = hir::Type::Int(int, hir::PathId::empty());
                 let mut scope = scp::TypeScope::new(self.scope, self.hir_module, int);
@@ -400,6 +441,11 @@ impl<'a> GraphBuilder<'a> {
                 let ext = self.ast_module.get_extension(ext);
                 let ext = self.hir_module.borrow().lookup_extension(ext.name.into());
                 hir::Scope::Ext(ext.expect("Extension"))
+            },
+            ast::Scope::Imp(imp) => {
+                let imp = self.ast_module.get_implementation(imp);
+                let imp = self.hir_module.borrow().lookup_implementation(imp.extended.into());
+                hir::Scope::Imp(imp.expect("Implementation"))
             },
             ast::Scope::Int(int) => {
                 let int = self.ast_module.get_interface(int);

@@ -5,7 +5,7 @@ use crate::basic::com::Span;
 use crate::model::hir::*;
 
 use super::com::*;
-use super::super::scp::{Scope, TypeScope};
+use super::super::scp::TypeScope;
 
 /// Field Fetcher.
 #[derive(Clone, Debug)]
@@ -152,8 +152,8 @@ impl<'a> FieldFetcher<'a> {
         use self::Callable::*;
 
         let candidate = {
-            let scope = TypeScope::new(self.core.scope, self.core.registry, typ);
-            scope.lookup_callable(name)
+            let scope = TypeScope::new(self.core.scope, typ);
+            scope.lookup_associated_method(name, self.core.registry)
         };
 
         let callable = candidate.into_callable(&mut *self.core.tree_mut());

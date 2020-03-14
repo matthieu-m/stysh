@@ -36,3 +36,6 @@ pub use self::registry::*;
 pub use self::repository::*;
 pub use self::statement::*;
 pub use self::tree::*;
+
+#[cfg(test)]
+pub use self::registry::mocks::MockRegistry;

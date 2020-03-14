@@ -355,8 +355,8 @@ impl<'a> SymbolMapper<'a> {
 
         let candidate = if let ast::Expression::Var(id, path) = function {
             if let Some(typ) = self.resolve_type(path) {
-                let scope = TypeScope::new(self.scope, self.registry, typ);
-                scope.lookup_associated_callables(id.into())
+                let scope = TypeScope::new(self.scope, typ);
+                scope.lookup_associated_function(id.into(), self.registry)
             } else {
                 self.scope.lookup_callable(id.into())
             }

@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::basic::mem;
 
-use crate::model::hir::{self, *};
+use crate::model::hir::*;
 
 /// A Lexical Scope trait.
 pub trait Scope: fmt::Debug {
@@ -14,6 +14,9 @@ pub trait Scope: fmt::Debug {
 
     /// Find the definition of a function, if known.
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate;
+
+    /// Find the definition of a method for a given receiver, if known.
+    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type;
@@ -79,29 +82,16 @@ impl BuiltinScope {
 
 /// A Type Scope.
 pub struct TypeScope<'a> {
-    parent: Option<&'a dyn Scope>,
-    registry: &'a dyn Registry,
+    parent: &'a dyn Scope,
     type_: Type,
     self_: bool,
 }
 
 impl<'a> TypeScope<'a> {
     /// Creates an instance of TypeScope.
-    pub fn new(
-        parent: &'a dyn Scope,
-        registry: &'a dyn Registry,
-        type_: Type
-    )
-        ->  Self
-    {
+    pub fn new(parent: &'a dyn Scope, type_: Type) ->  Self {
         debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
-        TypeScope { parent: Some(parent), registry, type_, self_: false,  }
-    }
-
-    /// Creates a stand-alone instance of TypeScope.
-    pub fn stand_alone(registry: &'a dyn Registry, type_: Type) -> Self {
-        debug_assert!(Self::is_defined(type_), "Cannot create TypeScope of {:?}", type_);
-        TypeScope { parent: None, registry, type_, self_: false, }
+        TypeScope { parent: parent, type_, self_: false,  }
     }
 
     /// Enables "Self" reserved identifier.
@@ -109,46 +99,55 @@ impl<'a> TypeScope<'a> {
     /// Note: to be used within type definitions' scopes, but not paths.
     pub fn enable_self(&mut self) { self.self_ = true }
 
-    /// Returns the matching callables within type.
-    pub fn lookup_associated_callables(&self, name: ValueIdentifier) -> CallableCandidate {
-        use self::hir::Scope::*;
+    /// Find the definition of an associated function, for this specific receiver.
+    pub fn lookup_associated_function(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry
+    )
+        -> CallableCandidate
+    {
+        use self::Type::*;
+        type Constructor = dyn Fn(FunctionId) -> CallableCandidate;
 
-        let mut associated = vec!();
-        for id in self.registry.functions() {
-            let fun = self.registry.get_function(id);
-            if fun.name.id() != name.id() {
-                continue;
-            }
-            match fun.scope {
-                Module => (),
-                Ext(e) => {
-                    let ext = self.registry.get_extension(e);
-                    if Self::are_compatible(ext.extended, self.type_) {
-                        associated.push(CallableCandidate::Function(id));
-                    }
-                },
-                Imp(i) => {
-                    let imp = self.registry.get_implementation(i);
-                    if Self::are_compatible(imp.extended, self.type_) {
-                        associated.push(CallableCandidate::Function(id));
-                    }
-                },
-                Int(i) => {
-                    let int = Type::Int(i, PathId::empty());
-                    if Self::are_compatible(int, self.type_) {
-                        associated.push(CallableCandidate::Method(id));
-                    }
-                }
-            }
-        }
+        let function: &Constructor = &CallableCandidate::Function;
+        let method: &Constructor = &CallableCandidate::Method;
 
-        match associated.len() {
-            0 => self.unresolved_function(name),
-            1 => associated[0].clone(),
-            _ => CallableCandidate::Unresolved(associated),
-        }
+        let (constructor, functions) = match self.type_ {
+            //  No extensions on those.
+            Builtin(..) | Tuple(..) | Unresolved(..) =>
+                return self.unresolved_function(name),
+            //  Always a method call, resolved at run-time.
+            Int(i, ..) => (method, registry.get_interface_functions(i)),
+            //  Always a function call, resolve at compile-time.
+            Enum(e, ..) => (function, registry.get_enum_functions(e)),
+            Rec(r, ..) => (function, registry.get_record_functions(r)),
+        };
+
+        self.lookup_associated_among(constructor, name, functions)
     }
 
+    /// Find the definition of a method, for this specific receiver.
+    pub fn lookup_associated_method(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry
+    )
+        -> CallableCandidate
+    {
+        let methods = self.lookup_method(name);
+
+        let associated = if let Type::Int(..) = self.type_ {
+            self.unresolved_function(name)
+        } else {
+            self.lookup_associated_function(name, registry)
+        };
+
+        merge(associated, methods)
+    }
+}
+
+impl<'a> TypeScope<'a> {
     fn is_defined(typ: Type) -> bool {
         match typ {
             Type::Enum(..) | Type::Int(..) | Type::Rec(..) => true,
@@ -156,12 +155,24 @@ impl<'a> TypeScope<'a> {
         }
     }
 
-    fn are_compatible(left: Type, right: Type) -> bool {
-        match (left, right) {
-            (Type::Enum(l, ..), Type::Enum(r, ..)) => l == r,
-            (Type::Int(l, ..), Type::Int(r, ..)) => l == r,
-            (Type::Rec(l, ..), Type::Rec(r, ..)) => l == r,
-            _ => false,
+    fn lookup_associated_among(
+        &self,
+        constructor: impl Fn(FunctionId) -> CallableCandidate,
+        name: ValueIdentifier,
+        functions: &[(Identifier, FunctionId)],
+    )
+        ->  CallableCandidate
+    {
+        let candidates = find_functions_by_identifier(name.id(), functions);
+
+        match candidates {
+            [] => self.unresolved_function(name),
+            [(_, fun)] => constructor(*fun),
+            _ => CallableCandidate::Unresolved(
+                candidates.iter().copied()
+                    .map(|(_, fun)| constructor(fun))
+                    .collect()
+            ),
         }
     }
 }
@@ -192,6 +203,7 @@ impl<'a> FunctionScope<'a> {
 pub struct BlockScope<'a> {
     parent: &'a dyn Scope,
     functions: IdMap<CallableCandidate>,
+    methods: IdMap<CallableCandidate>,
     types: IdMap<Type>,
     values: IdMap<ValueIdentifier>,
 }
@@ -202,6 +214,7 @@ impl<'a> BlockScope<'a> {
         BlockScope {
             parent: parent,
             functions: IdMap::new(),
+            methods: IdMap::new(),
             types: IdMap::new(),
             values: IdMap::new(),
         }
@@ -209,17 +222,40 @@ impl<'a> BlockScope<'a> {
 
     /// Adds a new enum to the scope.
     pub fn add_enum(&mut self, name: ItemIdentifier, id: EnumId) {
+        debug_assert!(!self.types.contains_key(&name.id()));
+
         self.types.insert(name.id(), Type::Enum(id, PathId::empty()));
     }
 
     /// Adds a new function identifier to the scope.
     pub fn add_function(&mut self, name: ItemIdentifier, id: FunctionId) {
-        self.functions.insert(name.id(), CallableCandidate::Function(id));
+        use std::collections::hash_map::Entry::*;
+
+        let callable = CallableCandidate::Function(id);
+
+        match self.functions.entry(name.id()) {
+            Occupied(mut o) => merge_in_place(o.get_mut(), CallableCandidate::Function(id)),
+            Vacant(v) => { v.insert(callable); },
+        };
     }
 
     /// Adds a new interface identifier to the scope.
-    pub fn add_interface(&mut self, name: ItemIdentifier, id: InterfaceId) {
+    ///
+    /// Including its associated methods.
+    pub fn add_interface(
+        &mut self,
+        name: ItemIdentifier,
+        id: InterfaceId,
+        functions: &[(Identifier, FunctionId)],
+    )
+    {
+        debug_assert!(!self.types.contains_key(&name.id()));
+
         self.types.insert(name.id(), Type::Int(id, PathId::empty()));
+
+        for &(name, fun) in functions {
+            self.add_method(name, fun);
+        }
     }
 
     /// Adds a new pattern to the scope.
@@ -239,12 +275,33 @@ impl<'a> BlockScope<'a> {
 
     /// Adds a new record to the scope.
     pub fn add_record(&mut self, name: ItemIdentifier, id: RecordId) {
+        debug_assert!(!self.types.contains_key(&name.id()));
+
         self.types.insert(name.id(), Type::Rec(id, PathId::empty()));
     }
 
     /// Adds a new value identifier to the scope.
     pub fn add_value(&mut self, name: ValueIdentifier) {
         self.values.insert(name.id(), name);
+    }
+}
+
+impl<'a> BlockScope<'a> {
+    /// Adds a methods to an interface.
+    fn add_method(
+        &mut self,
+        name: Identifier,
+        id: FunctionId,
+    )
+    {
+        use std::collections::hash_map::Entry::*;
+
+        let callable = CallableCandidate::Method(id);
+
+        match self.methods.entry(name) {
+            Occupied(mut o) => merge_in_place(o.get_mut(), callable),
+            Vacant(v) => { v.insert(callable); },
+        }
     }
 }
 
@@ -257,6 +314,10 @@ impl Scope for BuiltinScope {
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
+        self.unresolved_function(name)
+    }
+
+    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
         self.unresolved_function(name)
     }
 
@@ -276,18 +337,15 @@ impl Scope for BuiltinScope {
 
 impl<'a> Scope for TypeScope<'a> {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier> {
-        self.parent.and_then(|parent| parent.lookup_binding(name))
+        self.parent.lookup_binding(name)
     }
 
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
-        let associated = self.lookup_associated_callables(name);
+        self.parent.lookup_callable(name)
+    }
 
-        if let Some(parent) = self.parent {
-            let parent = parent.lookup_callable(name);
-            merge(associated, parent)
-        } else {
-            associated
-        }
+    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+        self.parent.lookup_method(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
@@ -295,8 +353,7 @@ impl<'a> Scope for TypeScope<'a> {
             return self.type_;
         }
 
-        self.parent.map(|parent| parent.lookup_type(name))
-            .unwrap_or(self.unresolved_type(name))
+        self.parent.lookup_type(name)
     }
 }
 
@@ -310,6 +367,10 @@ impl<'a> Scope for FunctionScope<'a> {
 
     fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
         self.parent.lookup_callable(name)
+    }
+
+    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+        self.parent.lookup_method(name)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
@@ -335,6 +396,18 @@ impl<'a> Scope for BlockScope<'a> {
         }
     }
 
+    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+        let callables = self.lookup_callable(name);
+
+        let parent = self.parent.lookup_method(name);
+
+        let immediate = self.methods.get(&name.id())
+            .cloned()
+            .unwrap_or(self.unresolved_function(name));
+
+        merge(merge(immediate, parent), callables)
+    }
+
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
         if let Some(type_) = self.types.get(&name.id()).copied() {
             return type_;
@@ -348,6 +421,31 @@ impl<'a> Scope for BlockScope<'a> {
 //  Implementation Details
 //
 type IdMap<V> = HashMap<mem::InternId, V>;
+
+fn find_functions_by_identifier(
+    name: Identifier,
+    functions: &[(Identifier, FunctionId)],
+)
+    -> &[(Identifier, FunctionId)]
+{
+    functions.binary_search_by(|&(n, _)| n.cmp(&name))
+        .map(|root| {
+            assert!(root < functions.len());
+
+            let mut left = root;
+            while left > 0 && functions[left - 1].0 == name {
+                left -= 1;
+            }
+
+            let mut right = root + 1;
+            while right < functions.len() && functions[right].0 == name {
+                right += 1
+            }
+
+            &functions[left..right]
+        })
+        .unwrap_or(&[])
+}
 
 fn merge(immediate: CallableCandidate, parent: CallableCandidate)
     -> CallableCandidate
@@ -376,6 +474,14 @@ fn merge(immediate: CallableCandidate, parent: CallableCandidate)
         //  Vec creation required.
         (immediate, parent) => Unresolved(vec!(immediate, parent)),
     }
+}
+
+fn merge_in_place(existing: &mut CallableCandidate, new: CallableCandidate)
+{
+    let tmp = CallableCandidate::Unknown(Default::default());
+    let extracted = std::mem::replace(existing, tmp);
+    let extracted = merge(extracted, new);
+    std::mem::replace(existing, extracted);
 }
 
 //
@@ -430,6 +536,8 @@ pub mod mocks {
     pub struct MockScope {
         /// Map of callables for lookup_callable.
         pub callables: HashMap<ValueIdentifier, CallableCandidate>,
+        /// Map of methods for lookup_method.
+        pub methods: HashMap<ValueIdentifier, CallableCandidate>,
         /// Map of types for lookup_type.
         pub types: HashMap<ItemIdentifier, Type>,
         /// Map of values for lookup_binding.
@@ -443,6 +551,7 @@ pub mod mocks {
         pub fn new() -> MockScope {
             MockScope {
                 callables: HashMap::new(),
+                methods: HashMap::new(),
                 types: HashMap::new(),
                 values: HashMap::new(),
                 parent: BuiltinScope::new(),
@@ -468,6 +577,14 @@ pub mod mocks {
             self.parent.lookup_callable(name)
         }
 
+        fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+            if let Some(v) = self.methods.get(&name) {
+                return v.clone();
+            }
+
+            self.parent.lookup_callable(name)
+        }
+
         fn lookup_type(&self, name: ItemIdentifier) -> Type {
             if let Some(v) = self.types.get(&name) {
                 return v.clone();
@@ -486,7 +603,35 @@ mod tests {
     use crate::basic::{com, mem};
     use crate::model::hir::{self, *};
 
-    use super::{CallableCandidate, Scope, BuiltinScope, FunctionScope, TypeScope};
+    use super::*;
+
+    #[test]
+    fn block_interface_methods() {
+        //  :int Interface {
+        //      :fun foo(self) {}
+        //      :fun bar(self) {}
+        //  }
+        let interner = mem::Interner::new();
+        let interface = interner.insert(b"Interface");
+        let (foo, foo_id) = (interner.insert(b"foo"), FunctionId::new_tree(0));
+        let (bar, bar_id) = (interner.insert(b"bar"), FunctionId::new_tree(1));
+
+        let builtin = BuiltinScope::new();
+        let scope = {
+            let mut scope = BlockScope::new(&builtin);
+            scope.add_interface(
+                item_id(interface, 5, 9),
+                InterfaceId::new_tree(0),
+                &[(foo, foo_id), (bar, bar_id)],
+            );
+            scope
+        };
+
+        assert_eq!(
+            scope.lookup_method(var_id(bar, 48, 3)),
+            CallableCandidate::Method(bar_id)
+        );
+    }
 
     #[test]
     fn function_no_arguments() {
@@ -573,10 +718,16 @@ mod tests {
         };
 
         let builtin = BuiltinScope::new();
-        let scope = TypeScope::new(&builtin, &module, extended);
+        let scope = TypeScope::new(&builtin, extended);
 
-        assert_eq!(scope.lookup_callable(baz), CallableCandidate::Unknown(baz));
-        assert_eq!(scope.lookup_callable(bar), CallableCandidate::Function(result));
+        assert_eq!(
+            scope.lookup_associated_function(baz, &module),
+            CallableCandidate::Unknown(baz)
+        );
+        assert_eq!(
+            scope.lookup_associated_function(bar, &module),
+            CallableCandidate::Function(result)
+        );
     }
 
     #[test]
@@ -589,7 +740,7 @@ mod tests {
         let interner = mem::Interner::new();
         let self_ = item_id(interner.insert(b"Self"), 46, 4);
 
-        let (module, extended) = {
+        let (_module, extended) = {
             let mut module = Module::new(Default::default());
 
             let rec = item_id(interner.insert(b"Simple"), 5, 6);
@@ -599,7 +750,7 @@ mod tests {
         };
 
         let builtin = BuiltinScope::new();
-        let mut scope = TypeScope::new(&builtin, &module, extended);
+        let mut scope = TypeScope::new(&builtin, extended);
 
         assert_eq!(scope.lookup_type(self_), Type::Unresolved(self_, Id::empty()));
 

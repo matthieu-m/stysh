@@ -2,7 +2,7 @@
 //!
 //! A read-only interface to obtain the definition of items.
 
-use std::{cell, fmt};
+use std::fmt;
 
 use crate::model::hir::*;
 
@@ -17,6 +17,13 @@ pub trait Registry: fmt::Debug {
     ///
     /// Panics if the ID is incorrect.
     fn get_enum(&self, id: EnumId) -> Enum;
+
+    /// Returns the list of functions associated to the enum, sorted.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)];
 
     /// Returns the list of known extension IDs.
     fn extensions(&self) -> Vec<ExtensionId>;
@@ -58,6 +65,13 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_interface(&self, id: InterfaceId) -> Interface;
 
+    /// Returns the list of functions associated to the interface, sorted.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_interface_functions(&self, id: InterfaceId) -> &[(Identifier, FunctionId)];
+
     /// Returns the list of known record IDs.
     fn records(&self) -> Vec<RecordId>;
 
@@ -67,6 +81,13 @@ pub trait Registry: fmt::Debug {
     ///
     /// Panics if the ID is incorrect.
     fn get_record(&self, id: RecordId) -> Record;
+
+    /// Returns the list of functions associated to the record, sorted.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)];
 
     /// Returns the names associated to the ID.
     ///
@@ -105,60 +126,139 @@ pub trait Registry: fmt::Debug {
     fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId];
 }
 
-impl<T: Registry> Registry for cell::RefCell<T> {
-    fn enums(&self) -> Vec<EnumId> { self.borrow().enums() }
+/// Mocks for the traits.
+#[cfg(test)]
+pub mod mocks {
 
-    fn get_enum(&self, id: EnumId) -> Enum { self.borrow().get_enum(id) }
+use crate::model::hir::*;
 
-    fn extensions(&self) -> Vec<ExtensionId> { self.borrow().extensions() }
+use super::Registry;
+
+/// A MockRegistry for unit-tests.
+#[derive(Default, Debug)]
+pub struct MockRegistry {
+    /// Enums.
+    pub enums: Vec<Enum>,
+    /// Functions for enums.
+    pub enum_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Extensions.
+    pub extensions: Vec<Extension>,
+    /// Functions.
+    pub functions: Vec<FunctionSignature>,
+    /// Implementations.
+    pub implementations: Vec<Implementation>,
+    /// Interfaces.
+    pub interfaces: Vec<Interface>,
+    /// Functions for interfaces.
+    pub interface_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Records.
+    pub records: Vec<Record>,
+    /// Functions for records.
+    pub record_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Names.
+    pub names: Vec<Vec<ValueIdentifier>>,
+    /// Path Components.
+    pub path_components: Vec<Vec<PathComponent>>,
+    /// Record IDs.
+    pub record_ids: Vec<Vec<RecordId>>,
+    /// Types.
+    pub types: Vec<Type>,
+    /// Type IDs.
+    pub type_ids: Vec<Vec<TypeId>>,
+}
+
+impl Registry for MockRegistry {
+    fn enums(&self) -> Vec<EnumId> { Self::enumerate(self.enums.len()) }
+
+    fn get_enum(&self, id: EnumId) -> Enum {
+        self.enums[Self::index_of(id)]
+    }
+
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)] {
+        &self.enum_functions[Self::index_of(id)]
+    }
+
+    fn extensions(&self) -> Vec<ExtensionId> {
+        Self::enumerate(self.extensions.len())
+    }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
-        self.borrow().get_extension(id)
+        self.extensions[Self::index_of(id)]
     }
 
-    fn functions(&self) -> Vec<FunctionId> { self.borrow().functions() }
+    fn functions(&self) -> Vec<FunctionId> {
+        Self::enumerate(self.functions.len())
+    }
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
-        self.borrow().get_function(id)
+        self.functions[Self::index_of(id)]
     }
 
-    fn implementations(&self) -> Vec<ImplementationId> { self.borrow().implementations() }
+    fn implementations(&self) -> Vec<ImplementationId> {
+        Self::enumerate(self.implementations.len())
+    }
 
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
-        self.borrow().get_implementation(id)
+        self.implementations[Self::index_of(id)]
     }
 
-    fn interfaces(&self) -> Vec<InterfaceId> { self.borrow().interfaces() }
+    fn interfaces(&self) -> Vec<InterfaceId> {
+        Self::enumerate(self.interfaces.len())
+    }
 
     fn get_interface(&self, id: InterfaceId) -> Interface {
-        self.borrow().get_interface(id)
+        self.interfaces[Self::index_of(id)]
     }
 
-    fn records(&self) -> Vec<RecordId> { self.borrow().records() }
+    fn get_interface_functions(&self, id: InterfaceId)
+        -> &[(Identifier, FunctionId)]
+    {
+        &self.interface_functions[Self::index_of(id)]
+    }
+
+    fn records(&self) -> Vec<RecordId> {
+        Self::enumerate(self.records.len())
+    }
 
     fn get_record(&self, id: RecordId) -> Record {
-        self.borrow().get_record(id)
+        self.records[Self::index_of(id)]
     }
 
-    fn get_names(&self, _id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
-        panic!("Cannot be implemented for cell::RefCell<T>");
+    fn get_record_functions(&self, id: RecordId)
+        -> &[(Identifier, FunctionId)]
+    {
+        &self.record_functions[Self::index_of(id)]
     }
 
-    fn get_path_components(&self, _id: Id<[PathComponent]>)
+    fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+        &self.names[Self::index_of(id)]
+    }
+
+    fn get_path_components(&self, id: Id<[PathComponent]>)
         -> &[PathComponent]
     {
-        panic!("Cannot be implemented for cell::RefCell<T>");
+        &self.path_components[Self::index_of(id)]
     }
 
-    fn get_record_ids(&self, _id: Id<[RecordId]>) -> &[RecordId] {
-        panic!("Cannot be implemented for cell::RefCell<T>");
+    fn get_record_ids(&self, id: Id<[RecordId]>) -> &[RecordId] {
+        &self.record_ids[Self::index_of(id)]
     }
 
-    fn get_type(&self, _id: TypeId) -> Type {
-        panic!("Cannot be implemented for cell::RefCell<T>");
+    fn get_type(&self, id: TypeId) -> Type {
+        self.types[Self::index_of(id)]
     }
 
-    fn get_type_ids(&self, _id: Id<[TypeId]>) -> &[TypeId] {
-        panic!("Cannot be implemented for cell::RefCell<T>");
+    fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
+        &self.type_ids[Self::index_of(id)]
     }
+}
+
+impl MockRegistry {
+    fn enumerate<T: ItemId>(to: usize) -> Vec<T> {
+        (0..to as u32).into_iter().map(|i| T::new_tree(i)).collect()
+    }
+
+    fn index_of<T: ItemId>(id: T) -> usize { id.get_tree().unwrap() as usize }
+}
+
 }

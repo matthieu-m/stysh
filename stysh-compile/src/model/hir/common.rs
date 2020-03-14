@@ -13,6 +13,9 @@ use crate::model::hir::ItemId;
 //
 pub use self::com::Id;
 
+/// Identifier (name) of an item or value.
+pub type Identifier = mem::InternId;
+
 /// Index of an Expr in the Tree.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct ExpressionId(com::CoreId);

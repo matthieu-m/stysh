@@ -37,6 +37,16 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)] {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_enum_functions(id)
+        } else {
+            self.repository.get_enum_functions(id)
+        }
+    }
+
     fn extensions(&self) -> Vec<ExtensionId> {
         let mut result = self.module.extensions();
         result.extend(&self.repository.extensions());
@@ -101,6 +111,16 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn get_interface_functions(&self, id: InterfaceId) -> &[(Identifier, FunctionId)] {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_interface_functions(id)
+        } else {
+            self.repository.get_interface_functions(id)
+        }
+    }
+
     fn records(&self) -> Vec<RecordId> {
         let mut result = self.module.records();
         result.extend(&self.repository.records());
@@ -114,6 +134,16 @@ impl<'a> Registry for Reg<'a> {
             self.module.get_record(id)
         } else {
             self.repository.get_record(id)
+        }
+    }
+
+    fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_record_functions(id)
+        } else {
+            self.repository.get_record_functions(id)
         }
     }
 
@@ -201,6 +231,10 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_enum(&self, id: EnumId) -> Enum { self.registry.get_enum(id) }
 
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)] {
+        self.registry.get_enum_functions(id)
+    }
+
     fn extensions(&self) -> Vec<ExtensionId> { self.registry.extensions() }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
@@ -225,9 +259,17 @@ impl<'a> Registry for RegRef<'a> {
         self.registry.get_interface(id)
     }
 
+    fn get_interface_functions(&self, id: InterfaceId) -> &[(Identifier, FunctionId)] {
+        self.registry.get_interface_functions(id)
+    }
+
     fn records(&self) -> Vec<RecordId> { self.registry.records() }
 
     fn get_record(&self, id: RecordId) -> Record { self.registry.get_record(id) }
+
+    fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
+        self.registry.get_record_functions(id)
+    }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         if id == Id::empty() {

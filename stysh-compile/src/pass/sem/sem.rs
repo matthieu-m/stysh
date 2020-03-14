@@ -197,7 +197,7 @@ impl<'a> GraphBuilder<'a> {
 
         let scope = {
             let self_ = hir::Type::Enum(id, hir::Id::empty());
-            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, self_);
+            let mut scope = scp::TypeScope::new(self.scope, self_);
             scope.enable_self();
             scope
         };
@@ -332,7 +332,7 @@ impl<'a> GraphBuilder<'a> {
 
         let scope = {
             let self_ = hir::Type::Rec(id, hir::Id::empty());
-            let mut scope = scp::TypeScope::new(self.scope, self.hir_module, self_);
+            let mut scope = scp::TypeScope::new(self.scope, self_);
             scope.enable_self();
             scope
         };
@@ -379,19 +379,19 @@ impl<'a> GraphBuilder<'a> {
             hir::Scope::Module => fun(self.scope),
             hir::Scope::Ext(ext) => {
                 let extended = self.hir_module.borrow().get_extension(ext).extended;
-                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+                let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
             },
             hir::Scope::Imp(imp) => {
                 let extended = self.hir_module.borrow().get_implementation(imp).extended;
-                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, extended);
+                let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
             },
             hir::Scope::Int(int) => {
                 let int = hir::Type::Int(int, hir::PathId::empty());
-                let mut scope = scp::TypeScope::new(self.scope, self.hir_module, int);
+                let mut scope = scp::TypeScope::new(self.scope, int);
                 scope.enable_self();
                 fun(&scope)
             }

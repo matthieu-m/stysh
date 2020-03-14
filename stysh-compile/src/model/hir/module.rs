@@ -41,6 +41,8 @@ pub struct Module {
     enum_lookup: BTreeMap<ItemIdentifier, EnumId>,
     /// Definition of a given Enum.
     enum_: Table<EnumId, Enum>,
+    /// Functions associated to a given Enum.
+    enum_functions: Table<EnumId, Vec<(Identifier, FunctionId)>>,
 
     //
     //  Extensions
@@ -77,6 +79,8 @@ pub struct Module {
     interface_lookup: BTreeMap<ItemIdentifier, InterfaceId>,
     /// Definition of a given Interface.
     interface: Table<InterfaceId, Interface>,
+    /// Functions associated to a given Interface.
+    interface_functions: Table<InterfaceId, Vec<(Identifier, FunctionId)>>,
 
     //
     //  Records
@@ -86,6 +90,8 @@ pub struct Module {
     record_lookup: BTreeMap<ItemIdentifier, RecordId>,
     /// Definition of a given Record.
     record: Table<RecordId, Record>,
+    /// Functions associated to a given Record.
+    record_functions: Table<RecordId, Vec<(Identifier, FunctionId)>>,
 
     //
     //  Components
@@ -127,12 +133,14 @@ impl Module {
     /// Returns the EnumId created for it.
     pub fn push_enum_name(&mut self, name: ItemIdentifier) -> EnumId {
         debug_assert!(self.enum_.len() == self.enum_lookup.len());
+        debug_assert!(self.enum_.len() == self.enum_functions.len());
         debug_assert!(!self.enum_lookup.contains_key(&name));
 
         let id = EnumId::new_module(self.enum_.len() as u32);
         let local_id = Self::localize(id);
 
         self.enum_.push(&local_id, Default::default());
+        self.enum_functions.push(&local_id, Default::default());
         self.enum_lookup.insert(name, id);
 
         id
@@ -144,6 +152,7 @@ impl Module {
     pub fn set_enum(&mut self, id: EnumId, enum_: Enum) {
         debug_assert!(id.is_module());
         debug_assert!(self.enum_.len() == self.enum_lookup.len());
+        debug_assert!(self.enum_.len() == self.enum_functions.len());
 
         let id = Self::localize(id);
         *self.enum_.at_mut(&id) = enum_;
@@ -219,8 +228,25 @@ impl Module {
         debug_assert!(id.is_module());
         debug_assert!(self.function.len() == self.function_lookup.len());
 
-        let id = Self::localize(id);
-        *self.function.at_mut(&id) = function;
+        let local_id = Self::localize(id);
+        *self.function.at_mut(&local_id) = function;
+
+        let name = function.name.id();
+
+        match function.scope {
+            Scope::Module | Scope::Imp(..) => (),
+            Scope::Int(int) => {
+                let functions = self.interface_functions.at_mut(&int);
+                debug_assert!(!functions.contains(&(name, id)));
+
+                functions.push((name, id));
+                functions.sort_unstable();
+            },
+            Scope::Ext(ext) => {
+                let ext = self.get_extension(ext);
+                self.push_type_function(ext.extended, name, id);
+            },
+        }
     }
 
 
@@ -276,12 +302,14 @@ impl Module {
     /// Returns the InterfaceId created for it.
     pub fn push_interface_name(&mut self, name: ItemIdentifier) -> InterfaceId {
         debug_assert!(self.interface.len() == self.interface_lookup.len());
+        debug_assert!(self.interface.len() == self.interface_functions.len());
         debug_assert!(!self.interface_lookup.contains_key(&name));
 
         let id = InterfaceId::new_module(self.interface.len() as u32);
         let local_id = Self::localize(id);
 
         self.interface.push(&local_id, Default::default());
+        self.interface_functions.push(&local_id, Default::default());
         self.interface_lookup.insert(name, id);
 
         id
@@ -293,6 +321,7 @@ impl Module {
     pub fn set_interface(&mut self, id: InterfaceId, int: Interface) {
         debug_assert!(id.is_module());
         debug_assert!(self.interface.len() == self.interface_lookup.len());
+        debug_assert!(self.interface.len() == self.interface_functions.len());
 
         let id = Self::localize(id);
         *self.interface.at_mut(&id) = int;
@@ -313,12 +342,14 @@ impl Module {
     /// Returns the RecordId created for it.
     pub fn push_record_name(&mut self, name: ItemIdentifier) -> RecordId {
         debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(self.record.len() == self.record_functions.len());
         debug_assert!(!self.record_lookup.contains_key(&name));
 
         let id = RecordId::new_module(self.record.len() as u32);
         let local_id = Self::localize(id);
 
         self.record.push(&local_id, Default::default());
+        self.record_functions.push(&local_id, Default::default());
         self.record_lookup.insert(name, id);
 
         id
@@ -330,6 +361,7 @@ impl Module {
     pub fn set_record(&mut self, id: RecordId, record: Record) {
         debug_assert!(id.is_module());
         debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(self.record.len() == self.record_functions.len());
 
         let id = Self::localize(id);
         *self.record.at_mut(&id) = record;
@@ -436,6 +468,22 @@ impl Module {
     fn modularize<I: ItemId>(id: I) -> I {
         I::new_module(id.get_tree().expect("tree"))
     }
+
+    fn push_type_function(&mut self, ty: Type, name: Identifier, id: FunctionId) {
+        use self::Type::*;
+
+        let functions = match ty {
+            Builtin(..) | Tuple(..) | Unresolved(..) => return,
+            Enum(e, ..) => self.enum_functions.at_mut(&Self::localize(e)),
+            Int(i, ..) => self.interface_functions.at_mut(&Self::localize(i)),
+            Rec(r, ..) => self.record_functions.at_mut(&Self::localize(r)),
+        };
+
+        debug_assert!(!functions.contains(&(name, id)));
+
+        functions.push((name, id));
+        functions.sort_unstable();
+    }
 }
 
 impl Registry for Module {
@@ -446,6 +494,11 @@ impl Registry for Module {
     fn get_enum(&self, id: EnumId) -> Enum {
         let id = Self::localize(id);
         *self.enum_.at(&id)
+    }
+
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)] {
+        let id = Self::localize(id);
+        self.enum_functions.at(&id)
     }
 
     fn extensions(&self) -> Vec<ExtensionId> {
@@ -484,6 +537,11 @@ impl Registry for Module {
         *self.interface.at(&id)
     }
 
+    fn get_interface_functions(&self, id: InterfaceId) -> &[(Identifier, FunctionId)] {
+        let id = Self::localize(id);
+        self.interface_functions.at(&id)
+    }
+
     fn records(&self) -> Vec<RecordId> {
         self.record_lookup.values().copied().collect()
     }
@@ -491,6 +549,11 @@ impl Registry for Module {
     fn get_record(&self, id: RecordId) -> Record {
         let id = Self::localize(id);
         *self.record.at(&id)
+    }
+
+    fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
+        let id = Self::localize(id);
+        self.record_functions.at(&id)
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

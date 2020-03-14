@@ -34,6 +34,8 @@ pub struct Repository {
     enum_lookup: JaggedHashMap<ItemIdentifier, EnumId>,
     /// Definition of a given Enum.
     enum_: JaggedArray<Enum>,
+    /// Functions associated to a given Enum.
+    enum_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
 
     //
     //  Extensions
@@ -70,6 +72,8 @@ pub struct Repository {
     interface_lookup: JaggedHashMap<ItemIdentifier, InterfaceId>,
     /// Definition of a given Interface.
     interface: JaggedArray<Interface>,
+    /// Functions associated to a given Interface.
+    interface_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
 
     //
     //  Records
@@ -79,6 +83,8 @@ pub struct Repository {
     record_lookup: JaggedHashMap<ItemIdentifier, RecordId>,
     /// Definition of a given Record.
     record: JaggedArray<Record>,
+    /// Functions associated to a given record.
+    record_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
 
     //
     //  Components
@@ -106,6 +112,7 @@ impl Repository {
         Repository {
             enum_lookup: JaggedHashMap::new(5),
             enum_: JaggedArray::new(5),
+            enum_functions: JaggedArray::new(5),
 
             extension_lookup: JaggedHashMap::new(5),
             extension: JaggedArray::new(5),
@@ -118,9 +125,11 @@ impl Repository {
 
             interface_lookup: JaggedHashMap::new(5),
             interface: JaggedArray::new(5),
+            interface_functions: JaggedArray::new(5),
 
             record_lookup: JaggedHashMap::new(5),
             record: JaggedArray::new(5),
+            record_functions: JaggedArray::new(5),
 
             names: JaggedMultiArray::new(5),
             path_components: JaggedMultiArray::new(5),
@@ -169,6 +178,7 @@ impl Repository {
         RepositorySnapshot {
             enum_lookup: self.enum_lookup.snapshot(),
             enum_: self.enum_.snapshot(),
+            enum_functions: self.enum_functions.snapshot(),
             extension_lookup: self.extension_lookup.snapshot(),
             extension: self.extension.snapshot(),
             function_lookup: self.function_lookup.snapshot(),
@@ -177,8 +187,10 @@ impl Repository {
             implementation: self.implementation.snapshot(),
             interface_lookup: self.interface_lookup.snapshot(),
             interface: self.interface.snapshot(),
+            interface_functions: self.interface_functions.snapshot(),
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
+            record_functions: self.record_functions.snapshot(),
             names: self.names.snapshot(),
             path_components: self.path_components.snapshot(),
             record_ids: self.record_ids.snapshot(),
@@ -218,6 +230,7 @@ impl Repository {
         IdMapper::new(
             self.enum_.len() as i64,
             self.extension.len() as i64,
+            self.function.len() as i64,
             self.implementation.len() as i64,
             self.interface.len() as i64,
             self.record.len() as i64,
@@ -232,12 +245,14 @@ impl Repository {
     )
     {
         debug_assert!(self.enum_.len() == self.enum_lookup.len());
+        debug_assert!(self.enum_.len() == self.enum_functions.len());
 
         let id = mapper.map_enum(e);
         debug_assert!(id.is_repository());
         debug_assert!(id.get_repository().unwrap() == self.enum_.len() as u32 + 1);
 
         let enum_ = module.get_enum(e);
+        let functions = mapper.map_functions(module.get_enum_functions(e));
 
         let mut records = vec!();
         for &record in module.get_record_ids(enum_.variants) {
@@ -251,6 +266,7 @@ impl Repository {
             .unwrap_or(Id::empty());
 
         self.enum_.push(Enum { name, range, variants, });
+        self.enum_functions.push(functions);
         self.enum_lookup.insert(name, id);
     }
 
@@ -288,6 +304,10 @@ impl Repository {
     {
         debug_assert!(self.function_lookup.len() == self.function.len());
 
+        let id = mapper.map_function(function);
+        debug_assert!(id.is_repository());
+        debug_assert!(id.get_repository().unwrap() == self.function.len() as u32 + 1);
+
         let signature = module.get_function(function);
 
         let name = signature.name;
@@ -301,7 +321,6 @@ impl Repository {
         let arguments = self.insert_tuple(signature.arguments, module, mapper);
         let result = self.insert_type(signature.result, module, mapper);
 
-        let id = FunctionId::new_repository(self.function.len() as u32);
         let signature = FunctionSignature { name, scope, range, arguments, result, };
 
         self.function.push(signature);
@@ -348,13 +367,15 @@ impl Repository {
         mapper: &IdMapper,
     )
     {
-        debug_assert!(self.interface_lookup.len() == self.interface.len());
+        debug_assert!(self.interface.len() == self.interface_lookup.len());
+        debug_assert!(self.interface.len() == self.interface_functions.len());
 
         let id = mapper.map_interface(interface);
         debug_assert!(id.is_repository());
         debug_assert!(id.get_repository().unwrap() == self.interface.len() as u32 + 1);
 
         let int = module.get_interface(interface);
+        let functions = mapper.map_functions(module.get_interface_functions(interface));
 
         let name = int.name;
         let range = int.range;
@@ -362,6 +383,7 @@ impl Repository {
         let int = Interface { name, range, };
 
         self.interface.push(int);
+        self.interface_functions.push(functions);
         self.interface_lookup.insert(name, id);
     }
 
@@ -373,12 +395,14 @@ impl Repository {
     )
     {
         debug_assert!(self.record.len() == self.record_lookup.len());
+        debug_assert!(self.record.len() == self.record_functions.len());
 
         let id = mapper.map_record(r);
         debug_assert!(id.is_repository());
         debug_assert!(id.get_repository().unwrap() == self.record.len() as u32 + 1);
 
         let record = module.get_record(r);
+        let functions = mapper.map_functions(module.get_record_functions(r));
 
         let name = record.name;
         let range = record.range;
@@ -386,6 +410,7 @@ impl Repository {
         let definition = self.insert_tuple(record.definition, module, mapper);
 
         self.record.push(Record { name, range, enum_, definition, });
+        self.record_functions.push(functions);
         self.record_lookup.insert(name, id);
     }
 
@@ -492,6 +517,7 @@ pub struct RepositorySnapshot {
     //  Enums
     enum_lookup: JaggedHashMapSnapshot<ItemIdentifier, EnumId>,
     enum_: JaggedArraySnapshot<Enum>,
+    enum_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
 
     //  Extensions
     extension_lookup: JaggedHashMapSnapshot<ItemIdentifier, ExtensionId>,
@@ -508,10 +534,12 @@ pub struct RepositorySnapshot {
     //  Interfaces
     interface_lookup: JaggedHashMapSnapshot<ItemIdentifier, InterfaceId>,
     interface: JaggedArraySnapshot<Interface>,
+    interface_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
 
     //  Records
     record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
     record: JaggedArraySnapshot<Record>,
+    record_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
 
     //  Components
     names: JaggedMultiArraySnapshot<ValueIdentifier>,
@@ -528,6 +556,10 @@ impl Registry for RepositorySnapshot {
 
     fn get_enum(&self, id: EnumId) -> Enum {
         *self.enum_.at(index_of(id))
+    }
+
+    fn get_enum_functions(&self, id: EnumId) -> &[(Identifier, FunctionId)] {
+        self.enum_functions.at(index_of(id))
     }
 
     fn extensions(&self) -> Vec<ExtensionId> {
@@ -562,12 +594,20 @@ impl Registry for RepositorySnapshot {
         *self.interface.at(index_of(id))
     }
 
+    fn get_interface_functions(&self, id: InterfaceId) -> &[(Identifier, FunctionId)] {
+        self.interface_functions.at(index_of(id))
+    }
+
     fn records(&self) -> Vec<RecordId> {
         ids_of(self.record.len())
     }
 
     fn get_record(&self, id: RecordId) -> Record {
         *self.record.at(index_of(id))
+    }
+
+    fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
+        self.record_functions.at(index_of(id))
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
@@ -699,6 +739,7 @@ impl<T> JaggedMultiArraySnapshot<T> {
 struct IdMapper {
     enum_offset: i64,
     extension_offset: i64,
+    function_offset: i64,
     implementation_offset: i64,
     interface_offset: i64,
     record_offset: i64,
@@ -708,13 +749,21 @@ impl IdMapper {
     fn new(
         enum_offset: i64,
         extension_offset: i64,
+        function_offset: i64,
         implementation_offset: i64,
         interface_offset: i64,
         record_offset: i64,
     )
         -> IdMapper
     {
-        IdMapper { enum_offset, extension_offset, implementation_offset, interface_offset, record_offset, }
+        IdMapper {
+            enum_offset,
+            extension_offset,
+            function_offset,
+            implementation_offset,
+            interface_offset,
+            record_offset,
+        }
     }
 
     fn map_enum(&self, id: EnumId) -> EnumId {
@@ -727,6 +776,20 @@ impl IdMapper {
         debug_assert!(id.is_module());
         let local = id.get_module().expect("module") as i64;
         ExtensionId::new_repository((local + self.extension_offset) as u32)
+    }
+
+    fn map_function(&self, id: FunctionId) -> FunctionId {
+        debug_assert!(id.is_module());
+        let local = id.get_module().expect("module") as i64;
+        FunctionId::new_repository((local + self.function_offset) as u32)
+    }
+
+    fn map_functions(&self, functions: &[(Identifier, FunctionId)])
+        -> Vec<(Identifier, FunctionId)>
+    {
+        functions.iter()
+            .map(|&(name, id)| (name, self.map_function(id)))
+            .collect()
     }
 
     fn map_implementation(&self, id: ImplementationId) -> ImplementationId {

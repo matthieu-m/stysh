@@ -1,6 +1,6 @@
 //! Lexical scopes for name resolution
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 use crate::basic::mem;
@@ -47,7 +47,7 @@ pub enum CallableCandidate {
     ///
     /// Note: this variant only contains possible resolutions.
     /// Note: this variant contains at least two possible resolutions.
-    Unresolved(Vec<CallableCandidate>),
+    Unresolved(BTreeSet<CallableCandidate>),
 }
 
 impl CallableCandidate {
@@ -457,22 +457,27 @@ fn merge(immediate: CallableCandidate, parent: CallableCandidate)
         (Unknown(_), parent) => parent,
         (immediate, Unknown(_)) => immediate,
 
-        //  Vec merge required.
+        //  BTreeSet merge required.
         (Unresolved(mut immediate), Unresolved(parent)) => {
             immediate.extend(parent.into_iter());
             Unresolved(immediate)
         },
         (Unresolved(mut immediate), parent) => {
-            immediate.push(parent);
+            immediate.insert(parent);
             Unresolved(immediate)
         },
         (immediate, Unresolved(mut parent)) => {
-            parent.insert(0, immediate);
+            parent.insert(immediate);
             Unresolved(parent)
         },
 
-        //  Vec creation required.
-        (immediate, parent) => Unresolved(vec!(immediate, parent)),
+        //  BTreeSet creation required.
+        (immediate, parent) => {
+            let mut callables = BTreeSet::new();
+            callables.insert(immediate);
+            callables.insert(parent);
+            Unresolved(callables)
+        },
     }
 }
 

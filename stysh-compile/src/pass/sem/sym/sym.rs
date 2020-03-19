@@ -358,7 +358,7 @@ impl<'a> SymbolMapper<'a> {
                 let scope = TypeScope::new(self.scope, typ);
                 scope.lookup_associated_function(id.into(), self.registry)
             } else {
-                self.scope.lookup_callable(id.into())
+                self.scope.lookup_callable(id.into(), self.registry)
             }
         } else {
             unimplemented!("value_of_function_call - {:?}", function)

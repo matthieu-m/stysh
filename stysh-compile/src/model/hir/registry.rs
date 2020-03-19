@@ -167,6 +167,10 @@ pub struct MockRegistry {
     pub type_ids: Vec<Vec<TypeId>>,
 }
 
+impl MockRegistry {
+    pub fn new() -> Self { Default::default() }
+}
+
 impl Registry for MockRegistry {
     fn enums(&self) -> Vec<EnumId> { Self::enumerate(self.enums.len()) }
 

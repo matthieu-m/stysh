@@ -13,10 +13,20 @@ pub trait Scope: fmt::Debug {
     fn lookup_binding(&self, name: ValueIdentifier) -> Option<ValueIdentifier>;
 
     /// Find the definition of a function, if known.
-    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate;
+    fn lookup_callable(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate;
 
     /// Find the definition of a method for a given receiver, if known.
-    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate;
+    fn lookup_method(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate;
 
     /// Find the definition of a type, if known.
     fn lookup_type(&self, name: ItemIdentifier) -> Type;
@@ -135,7 +145,7 @@ impl<'a> TypeScope<'a> {
     )
         -> CallableCandidate
     {
-        let methods = self.lookup_method(name);
+        let methods = self.lookup_method(name, registry);
 
         let associated = if let Type::Int(..) = self.type_ {
             self.unresolved_function(name)
@@ -313,11 +323,23 @@ impl Scope for BuiltinScope {
         None
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
+    fn lookup_callable(
+        &self,
+        name: ValueIdentifier,
+        _registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
         self.unresolved_function(name)
     }
 
-    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+    fn lookup_method(
+        &self,
+        name: ValueIdentifier,
+        _registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
         self.unresolved_function(name)
     }
 
@@ -340,12 +362,26 @@ impl<'a> Scope for TypeScope<'a> {
         self.parent.lookup_binding(name)
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
-        self.parent.lookup_callable(name)
+    fn lookup_callable(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        let immediate = self.lookup_associated_function(name, registry);
+        let parent = self.parent.lookup_callable(name, registry);
+        merge(immediate, parent)
     }
 
-    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
-        self.parent.lookup_method(name)
+    fn lookup_method(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        self.parent.lookup_method(name, registry)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
@@ -365,12 +401,24 @@ impl<'a> Scope for FunctionScope<'a> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
-        self.parent.lookup_callable(name)
+    fn lookup_callable(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        self.parent.lookup_callable(name, registry)
     }
 
-    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
-        self.parent.lookup_method(name)
+    fn lookup_method(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        self.parent.lookup_method(name, registry)
     }
 
     fn lookup_type(&self, name: ItemIdentifier) -> Type {
@@ -386,8 +434,14 @@ impl<'a> Scope for BlockScope<'a> {
             .or_else(|| self.parent.lookup_binding(name))
     }
 
-    fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
-        let parent = self.parent.lookup_callable(name);
+    fn lookup_callable(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        let parent = self.parent.lookup_callable(name, registry);
 
         if let Some(callable) = self.functions.get(&name.id()).cloned() {
             merge(callable, parent)
@@ -396,10 +450,16 @@ impl<'a> Scope for BlockScope<'a> {
         }
     }
 
-    fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
-        let callables = self.lookup_callable(name);
+    fn lookup_method(
+        &self,
+        name: ValueIdentifier,
+        registry: &dyn Registry,
+    )
+        -> CallableCandidate
+    {
+        let callables = self.lookup_callable(name, registry);
 
-        let parent = self.parent.lookup_method(name);
+        let parent = self.parent.lookup_method(name, registry);
 
         let immediate = self.methods.get(&name.id())
             .cloned()
@@ -574,20 +634,32 @@ pub mod mocks {
             self.values.get(&name.id()).cloned()
         }
 
-        fn lookup_callable(&self, name: ValueIdentifier) -> CallableCandidate {
+        fn lookup_callable(
+            &self,
+            name: ValueIdentifier,
+            registry: &dyn Registry,
+        )
+            -> CallableCandidate
+        {
             if let Some(v) = self.callables.get(&name) {
                 return v.clone();
             }
 
-            self.parent.lookup_callable(name)
+            self.parent.lookup_callable(name, registry)
         }
 
-        fn lookup_method(&self, name: ValueIdentifier) -> CallableCandidate {
+        fn lookup_method(
+            &self,
+            name: ValueIdentifier,
+            registry: &dyn Registry,
+        )
+            -> CallableCandidate
+        {
             if let Some(v) = self.methods.get(&name) {
                 return v.clone();
             }
 
-            self.parent.lookup_callable(name)
+            self.parent.lookup_method(name, registry)
         }
 
         fn lookup_type(&self, name: ItemIdentifier) -> Type {
@@ -622,6 +694,8 @@ mod tests {
         let (bar, bar_id) = (interner.insert(b"bar"), FunctionId::new_tree(1));
 
         let builtin = BuiltinScope::new();
+        let registry = MockRegistry::new();
+
         let scope = {
             let mut scope = BlockScope::new(&builtin);
             scope.add_interface(
@@ -633,7 +707,7 @@ mod tests {
         };
 
         assert_eq!(
-            scope.lookup_method(var_id(bar, 48, 3)),
+            scope.lookup_method(var_id(bar, 48, 3), &registry),
             CallableCandidate::Method(bar_id)
         );
     }

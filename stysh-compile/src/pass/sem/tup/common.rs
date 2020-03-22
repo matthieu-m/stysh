@@ -147,6 +147,10 @@ pub mod tests {
             self.resolver.resolve_value_id(id)
         }
 
+        pub fn link_gvns(&self, gvns: &[Gvn]) {
+            self.context.link_gvns(gvns);
+        }
+
         pub fn link_types(&self, ty: TypeId, rel: Relation<TypeId>) {
             self.context.link_types(ty, rel);
         }

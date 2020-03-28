@@ -109,9 +109,11 @@ impl<'a> TypeUnifier<'a> {
                 self.resolve(ty, other),
             Enum(name, path) =>
                 self.unify_as_sub_type_of_enum(ty, name, path),
+            Int(name, path) =>
+                self.unify_as_sub_type_of_int(name, path),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SubTypeOf),
-            Int(..) | Rec(..) | Unresolved(..) =>
+            Rec(..) | Unresolved(..) =>
                 self.resolve(ty, other),
         }
     }
@@ -151,6 +153,21 @@ impl<'a> TypeUnifier<'a> {
         }
 
         None
+    }
+
+    /// Attempts to unify a type with a super interface.
+    ///
+    /// Whether the type actually implements the interface can be checked later
+    /// during the diagnosis pass -- from an IDE point of view, it seems best
+    /// to assume that it does.
+    fn unify_as_sub_type_of_int(
+        &self,
+        int: InterfaceId,
+        path: PathId,
+    )
+        -> Option<Action>
+    {
+        Some(Action::Cast(Type::Int(int, path)))
     }
 
     /// Attempts to unify a type with a tuple.

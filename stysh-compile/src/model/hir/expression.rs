@@ -102,8 +102,10 @@ pub enum Expression {
 /// An Implicit cast.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Implicit {
-    /// An enumerator to enum cast.
+    /// An enumerator (struct) to enum cast.
     ToEnum(EnumId, ExpressionId),
+    /// A type to interface cast.
+    ToInt(InterfaceId, ExpressionId),
 }
 
 //

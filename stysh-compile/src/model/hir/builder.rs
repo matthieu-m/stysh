@@ -1743,6 +1743,7 @@ impl ImplicitBuilder {
     fn compute_implicit(&self) -> Implicit {
         match self.typ {
             Type::Enum(name, ..) => Implicit::ToEnum(name, self.expr),
+            Type::Int(name, ..) => Implicit::ToInt(name, self.expr),
             _ => panic!("Cannot compute implicit for {:?}", self.typ),
         }
     }

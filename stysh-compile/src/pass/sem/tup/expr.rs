@@ -100,6 +100,7 @@ impl<'a> ExprUnifier<'a> {
     fn cast(&self, e: ExpressionId, target: Type) -> Status {
         let implicit = match target {
             Type::Enum(id, ..) => Implicit::ToEnum(id, e),
+            Type::Int(id, ..) => Implicit::ToInt(id, e),
             _ => unreachable!("{:?}", target),
         };
 
@@ -272,6 +273,50 @@ mod tests {
         }
 
         apply_action(&local, expr, Action::Cast(Type::Enum(x, PathId::empty())));
+    }
+
+    #[test]
+    fn cast_to_interface() {
+        let env = Env::default();
+        let local = env.local(b"{ A() } :int X {} :struct A;");
+
+        let (x, a) = {
+            let (i, _, _, _, _, _) = env.source_factories();
+
+            let x = i.int(local.item_id(13, 1)).build();
+            let a = i.unit(local.item_id(26, 1));
+
+            (x, a)
+        };
+
+        let expr = {
+            let (_, _, _, t, _, v) = env.source_factories();
+            let constructor = v.constructor(t.record(a).build())
+                .range(2, 3)
+                .build();
+            let block = v.block(constructor).build();
+
+            local.link_gvns(&[constructor.into(), block.into()]);
+
+            constructor
+        };
+
+        {
+            let (_, _, _, t, _, v) = env.target_factories();
+            let constructor = v.constructor(t.record(a).build())
+                .range(2, 3)
+                .build();
+            let block = v.block(constructor).build();
+
+            let implicit = v.implicit(constructor)
+                .type_(Type::Int(x, PathId::empty()))
+                .build();
+
+            local.target().borrow_mut()
+                .set_expression(block, Expression::Block(Id::empty(), Some(implicit)));
+        }
+
+        apply_action(&local, expr, Action::Cast(Type::Int(x, PathId::empty())));
     }
 
     fn apply_action(local: &LocalEnv, e: ExpressionId, a: Action) {

@@ -34,6 +34,18 @@ impl<'a> TypeUnifier<'a> {
         TypeUnifier { core }
     }
 
+    /// Attempts to finalize ty with target.
+    pub fn finalize(&self, ty: Type, target: Type) -> Option<Action> {
+        use self::Type::*;
+
+        match (ty, target) {
+            (Rec(r, ..), Enum(e, ..)) => self.finalize_enum(r, e),
+            (Int(a, ..), Int(b, ..)) if a == b => None,
+            (    _     , Int(i, ..)) => self.finalize_int(i),
+            _ => None,
+        }
+    }
+
     /// Attempts to unify ty with related types.
     pub fn unify(&self, ty: TypeId) -> Option<Action> {
         if self.is_determined(ty) {
@@ -74,6 +86,22 @@ impl<'a> TypeUnifier<'a> {
                     .all(|id| self.is_determined(*id)),
             Unresolved(..) => false,
         }
+    }
+
+    /// Attempts to finalize a record with a super enum.
+    fn finalize_enum(&self, r: RecordId, e: EnumId) -> Option<Action> {
+        let record = self.core.registry.get_record(r);
+
+        if record.enum_ == Some(e) {
+            Some(Action::Cast(Type::Enum(e, PathId::empty())))
+        } else {
+            None
+        }
+    }
+
+    /// Attempts to finalize a record with a super interface.
+    fn finalize_int(&self, i: InterfaceId) -> Option<Action> {
+        Some(Action::Cast(Type::Int(i, PathId::empty())))
     }
 
     /// Attempts to unify a type based on its relation.

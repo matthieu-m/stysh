@@ -36,9 +36,14 @@ impl<'a> TypeUnifier<'a> {
         }
     }
 
+    /// Finalizes the Tree by inserting Implicit casts as appropriate.
+    pub fn finalize(&self) {
+        for e in self.core.tree().get_expressions() {
+            self.finalize_expression(e);
+        }
+    }
+
     /// Attempts to unify all entities for this iteration.
-    ///
-    /// Returns the number of entities successfully unified.
     pub fn unify_all(&self) {
         while let Some(gvn) = self.core.context.pop_diverging() {
             let status = self.unify_entity(gvn);
@@ -55,6 +60,10 @@ impl<'a> TypeUnifier<'a> {
 //
 
 impl<'a> TypeUnifier<'a> {
+    fn finalize_expression(&self, e: ExpressionId) {
+        expr::ExprUnifier::new(self.core).finalize(e)
+    }
+
     fn unify_entity(&self, gvn: Gvn) -> common::Status {
         if let Some(e) = gvn.as_expression() {
             self.unify_expression(e)

@@ -1322,6 +1322,12 @@ impl BlockBuilder {
         self
     }
 
+    /// Sets a type.
+    pub fn type_(&mut self, ty: Type) -> &mut Self {
+        self.typ = ty;
+        self
+    }
+
     /// Sets a range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
         self.range = Range::new(pos, len);
@@ -1353,7 +1359,9 @@ impl BlockBuilder {
     }
 
     fn compute_type(&self) -> Type {
-        if let Some(expr) = self.expr {
+        if self.typ != Type::unresolved() {
+            self.typ
+        } else if let Some(expr) = self.expr {
             self.tree.borrow().get_expression_type(expr)
         } else if let Some(stmt) = self.statements.last() {
             //  Possibly void, if ending with break/continue/return.

@@ -432,6 +432,8 @@ impl<'a> GraphBuilder<'a> {
             //  No progress made, no point in continuing.
             if self.context.fetched() == 0 && self.context.unified() == 0 { break; }
         }
+
+        self.unifier(&registry, tree).finalize();
     }
 
     fn resolve_scope(&self, s: ast::Scope) -> hir::Scope {

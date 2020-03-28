@@ -20,6 +20,41 @@ impl<'a> ExprUnifier<'a> {
         ExprUnifier { core }
     }
 
+    /// Finalizes the Tree by inserting Implicit Casts as necessary.
+    pub fn finalize(&self, e: ExpressionId) {
+        use self::Expression::*;
+
+        let ty = self.core.tree().get_expression_type_id(e);
+        let e = self.core.tree().get_expression(e);
+
+        match e {
+            BuiltinVal(..) | FieldAccess(..) | Implicit(..) |
+                Ref(..) | UnresolvedRef(..) => (),
+            Block(statements, e) => {
+                self.finalize_statements(statements);
+                if let Some(e) = e {
+                    self.finalize_expression_with(e, ty);
+                }
+            },
+            Call(callable, receiver, arguments) =>
+                self.finalize_call(callable, receiver, arguments),
+            Constructor(arguments) =>
+                self.finalize_constructor(ty, arguments),
+            If(condition, true_, false_) =>
+                self.finalize_if(condition, ty, true_, false_),
+            Loop(statements) =>
+                self.finalize_statements(statements),
+            Tuple(arguments) => {
+                let ty = self.core.tree().get_type(ty);
+                if let Type::Tuple(target) = ty {
+                    self.finalize_tuple(arguments, target, 0);
+                } else {
+                    unimplemented!("Expected tuple type for {:?}", ty);
+                }
+            },
+        }
+    }
+
     /// Unifies the type of the expression.
     pub fn unify(&self, e: ExpressionId) -> Status {
         let ty = self.core.tree().get_expression_type_id(e);
@@ -83,6 +118,133 @@ impl<'a> ExprUnifier<'a> {
             Unknown(_) | Unresolved(_) =>
                 None,
         }
+    }
+
+    /// Finalize the statements
+    fn finalize_statements(&self, statements: Id<[Statement]>) {
+        use self::Statement::*;
+
+        let statements: Vec<_> = self.core.tree()
+            .get_statements(statements)
+            .iter()
+            .copied()
+            .collect();
+
+        for statement in statements {
+            match statement {
+                Return(r) => {
+                    let signature = self.core.tree()
+                        .get_function()
+                        .expect("Function");
+                    self.finalize_expression_with(r.value, signature.result);
+                },
+                Set(r) => {
+                    let target = self.core.tree().get_expression_type_id(r.left);
+                    self.finalize_expression_with(r.right, target);
+                },
+                Var(b) => {
+                    let target = self.core.tree().get_pattern_type_id(b.left);
+                    self.finalize_expression_with(b.right, target);
+                },
+            }
+        }
+    }
+
+    /// Finalize the arguments of the Call.
+    fn finalize_call(
+        &self,
+        callable: Callable,
+        receiver: Option<ExpressionId>,
+        arguments: Tuple<ExpressionId>,
+    )
+    {
+        use self::Callable::*;
+
+        let targets = match callable {
+            Builtin(_) | Unknown(_) | Unresolved(_) => return,
+            Function(fun) | Method(fun) => {
+                let signature = self.core.registry.get_function(fun);
+                signature.arguments
+            }
+        };
+
+        let offset = if let Some(receiver) = receiver {
+            let target = self.core.registry()
+                .get_type_ids(targets.fields)[0];
+            self.finalize_expression_with(receiver, target);
+            1
+        } else {
+            0
+        };
+
+        self.finalize_tuple(arguments, targets, offset);
+    }
+
+    /// Finalize the arguments of the Constructor.
+    fn finalize_constructor(&self, target: TypeId, arguments: Tuple<ExpressionId>) {
+        if let Type::Rec(r, ..) = self.core.registry().get_type(target) {
+            let r = self.core.registry().get_record(r);
+            self.finalize_tuple(arguments, r.definition, 0);
+        } else {
+            unimplemented!("Unexpected type: {:?}", target);
+        }
+    }
+
+    /// Finalize the condition and the branches of the If.
+    fn finalize_if(
+        &self,
+        condition: ExpressionId,
+        target: TypeId,
+        true_: ExpressionId,
+        false_: ExpressionId,
+    )
+    {
+        self.finalize_expression_with(condition, TypeId::bool_());
+        self.finalize_expression_with(true_, target);
+        self.finalize_expression_with(false_, target);
+    }
+
+    /// Finalize the expression tuple to match the target type.
+    fn finalize_tuple(
+        &self,
+        e: Tuple<ExpressionId>,
+        target: Tuple<TypeId>,
+        offset: usize,
+    )
+    {
+        let es: Vec<_> = self.core.tree()
+            .get_expression_ids(e.fields)
+            .iter()
+            .copied()
+            .collect();
+
+        let targets: Vec<_> = self.core.registry()
+            .get_type_ids(target.fields)
+            .iter()
+            .copied()
+            .skip(offset)
+            .collect();
+
+        assert!(es.len() == targets.len(), "{:?} <> {:?}", es, targets);
+
+        for (e, target) in es.into_iter().zip(targets.into_iter()) {
+            self.finalize_expression_with(e, target);
+        }
+    }
+
+    /// Finalize the expression to match the target type.
+    fn finalize_expression_with(&self, e: ExpressionId, target: TypeId) {
+        let ty = self.core.tree().get_expression_type(e);
+        let target = self.core.registry().get_type(target);
+
+        if let Some(a) = self.finalize_type_with(ty, target) {
+            self.apply_action(e, a);
+        }
+    }
+
+    /// Determine the necessary action to finalize the type.
+    fn finalize_type_with(&self, ty: Type, target: Type) -> Option<Action> {
+        typ::TypeUnifier::new(self.core).finalize(ty, target)
     }
 
     /// Determine the necessary action to unify the type.
@@ -196,9 +358,11 @@ impl<'a> ExprUnifier<'a> {
 mod tests {
     use crate::model::hir::*;
 
-    use super::{common, Action, ExprUnifier, Status};
+    use super::{common, ExprUnifier, Status};
     use super::super::Relation;
     use super::super::tests::{Env, LocalEnv};
+
+    use self::builder::*;
 
     #[test]
     fn name() {
@@ -228,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn cast_to_enum() {
+    fn finalize_block_to_enum() {
         let env = Env::default();
         let local = env.local(b"{ A() } :enum X { A }");
 
@@ -245,24 +409,28 @@ mod tests {
             (x, a)
         };
 
-        let expr = {
-            let (_, _, _, t, _, v) = env.source_factories();
+        let create = |t: &TypeFactory<Tree>, v: &ExpressionFactory| {
             let constructor = v.constructor(t.record(a).build())
                 .range(2, 3)
                 .build();
-            let block = v.block(constructor).build();
+            let block = v.block(constructor)
+                .type_(t.enum_(x).build())
+                .build_with_type();
+            (block, constructor)
+        };
+
+        let expr = {
+            let (_, _, _, t, _, v) = env.source_factories();
+            let (block, constructor) = create(&t, &v);
 
             local.link_gvns(&[constructor.into(), block.into()]);
 
-            constructor
+            block
         };
 
         {
             let (_, _, _, t, _, v) = env.target_factories();
-            let constructor = v.constructor(t.record(a).build())
-                .range(2, 3)
-                .build();
-            let block = v.block(constructor).build();
+            let (block, constructor) = create(&t, &v);
 
             let implicit = v.implicit(constructor)
                 .type_(Type::Enum(x, PathId::empty()))
@@ -272,11 +440,11 @@ mod tests {
                 .set_expression(block, Expression::Block(Id::empty(), Some(implicit)));
         }
 
-        apply_action(&local, expr, Action::Cast(Type::Enum(x, PathId::empty())));
+        finalize(&local, expr);
     }
 
     #[test]
-    fn cast_to_interface() {
+    fn finalize_block_to_interface() {
         let env = Env::default();
         let local = env.local(b"{ A() } :int X {} :struct A;");
 
@@ -289,24 +457,28 @@ mod tests {
             (x, a)
         };
 
-        let expr = {
-            let (_, _, _, t, _, v) = env.source_factories();
+        let create = |t: &TypeFactory<Tree>, v: &ExpressionFactory| {
             let constructor = v.constructor(t.record(a).build())
                 .range(2, 3)
                 .build();
-            let block = v.block(constructor).build();
+            let block = v.block(constructor)
+                .type_(t.interface(x).build())
+                .build_with_type();
+            (block, constructor)
+        };
+
+        let expr = {
+            let (_, _, _, t, _, v) = env.source_factories();
+            let (block, constructor) = create(&t, &v);
 
             local.link_gvns(&[constructor.into(), block.into()]);
 
-            constructor
+            block
         };
 
         {
             let (_, _, _, t, _, v) = env.target_factories();
-            let constructor = v.constructor(t.record(a).build())
-                .range(2, 3)
-                .build();
-            let block = v.block(constructor).build();
+            let (block, constructor) = create(&t, &v);
 
             let implicit = v.implicit(constructor)
                 .type_(Type::Int(x, PathId::empty()))
@@ -316,10 +488,10 @@ mod tests {
                 .set_expression(block, Expression::Block(Id::empty(), Some(implicit)));
         }
 
-        apply_action(&local, expr, Action::Cast(Type::Int(x, PathId::empty())));
+        finalize(&local, expr);
     }
 
-    fn apply_action(local: &LocalEnv, e: ExpressionId, a: Action) {
+    fn finalize(local: &LocalEnv, e: ExpressionId) {
         println!("source before: {:?}", local.source());
         println!();
 
@@ -329,7 +501,7 @@ mod tests {
             &*module,
             &*local.source()
         );
-        ExprUnifier::new(core).apply_action(e, a);
+        ExprUnifier::new(core).finalize(e);
 
         println!("source after: {:?}", local.source());
         println!();

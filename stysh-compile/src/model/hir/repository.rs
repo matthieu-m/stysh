@@ -35,7 +35,7 @@ pub struct Repository {
     /// Definition of a given Enum.
     enum_: JaggedArray<Enum>,
     /// Functions associated to a given Enum.
-    enum_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
+    enum_functions: JaggedArray<Functions>,
 
     //
     //  Extensions
@@ -63,6 +63,14 @@ pub struct Repository {
     implementation_lookup: JaggedHashMap<ItemIdentifier, ImplementationId>,
     /// Definition of a given Implementation.
     implementation: JaggedArray<Implementation>,
+    /// Functions associated to a given Implementation.
+    implementation_functions: JaggedArray<Functions>,
+    /// Implementations indexed by InterfaceId/EnumId.
+    implementation_of_enum: JaggedHashMap<(InterfaceId, EnumId), ImplementationId>,
+    /// Implementations indexed by InterfaceId/InterfaceId.
+    implementation_of_interface: JaggedHashMap<(InterfaceId, InterfaceId), ImplementationId>,
+    /// Implementations indexed by InterfaceId/RecordId.
+    implementation_of_record: JaggedHashMap<(InterfaceId, RecordId), ImplementationId>,
 
     //
     //  Interfaces
@@ -73,7 +81,7 @@ pub struct Repository {
     /// Definition of a given Interface.
     interface: JaggedArray<Interface>,
     /// Functions associated to a given Interface.
-    interface_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
+    interface_functions: JaggedArray<Functions>,
 
     //
     //  Records
@@ -84,7 +92,7 @@ pub struct Repository {
     /// Definition of a given Record.
     record: JaggedArray<Record>,
     /// Functions associated to a given record.
-    record_functions: JaggedArray<Vec<(Identifier, FunctionId)>>,
+    record_functions: JaggedArray<Functions>,
 
     //
     //  Components
@@ -122,6 +130,10 @@ impl Repository {
 
             implementation_lookup: JaggedHashMap::new(5),
             implementation: JaggedArray::new(5),
+            implementation_functions: JaggedArray::new(5),
+            implementation_of_enum: JaggedHashMap::new(5),
+            implementation_of_interface: JaggedHashMap::new(5),
+            implementation_of_record: JaggedHashMap::new(5),
 
             interface_lookup: JaggedHashMap::new(5),
             interface: JaggedArray::new(5),
@@ -185,6 +197,10 @@ impl Repository {
             function: self.function.snapshot(),
             implementation_lookup: self.implementation_lookup.snapshot(),
             implementation: self.implementation.snapshot(),
+            implementation_functions: self.implementation_functions.snapshot(),
+            implementation_of_enum: self.implementation_of_enum.snapshot(),
+            implementation_of_interface: self.implementation_of_interface.snapshot(),
+            implementation_of_record: self.implementation_of_record.snapshot(),
             interface_lookup: self.interface_lookup.snapshot(),
             interface: self.interface.snapshot(),
             interface_functions: self.interface_functions.snapshot(),
@@ -334,13 +350,17 @@ impl Repository {
         mapper: &IdMapper,
     )
     {
+        use self::Type::*;
+
         debug_assert!(self.implementation_lookup.len() == self.implementation.len());
+        debug_assert!(self.implementation_functions.len() == self.implementation.len());
 
         let id = mapper.map_implementation(implementation);
         debug_assert!(id.is_repository());
         debug_assert!(id.get_repository().unwrap() == self.implementation.len() as u32 + 1);
 
         let imp = module.get_implementation(implementation);
+        let functions = mapper.map_functions(module.get_implementation_functions(implementation));
 
         let implemented_name = imp.implemented_name;
         let extended_name = imp.extended_name;
@@ -357,7 +377,19 @@ impl Repository {
         };
 
         self.implementation.push(imp);
+        self.implementation_functions.push(functions);
         self.implementation_lookup.insert(extended_name, id);
+
+        match extended {
+            Enum(e, ..) =>
+                { self.implementation_of_enum.insert((implemented, e), id); },
+            Int(int, ..) =>
+                { self.implementation_of_interface.insert((implemented, int), id); },
+            Rec(rec, ..) =>
+                { self.implementation_of_record.insert((implemented, rec), id); },
+            Builtin(..) | Tuple(..) | Unresolved(..) =>
+                unimplemented!("Implementations for {:?}", extended),
+        }
     }
 
     fn insert_interface(
@@ -517,7 +549,7 @@ pub struct RepositorySnapshot {
     //  Enums
     enum_lookup: JaggedHashMapSnapshot<ItemIdentifier, EnumId>,
     enum_: JaggedArraySnapshot<Enum>,
-    enum_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
+    enum_functions: JaggedArraySnapshot<Functions>,
 
     //  Extensions
     extension_lookup: JaggedHashMapSnapshot<ItemIdentifier, ExtensionId>,
@@ -530,16 +562,20 @@ pub struct RepositorySnapshot {
     //  Implementations
     implementation_lookup: JaggedHashMapSnapshot<ItemIdentifier, ImplementationId>,
     implementation: JaggedArraySnapshot<Implementation>,
+    implementation_functions: JaggedArraySnapshot<Functions>,
+    implementation_of_enum: JaggedHashMapSnapshot<(InterfaceId, EnumId), ImplementationId>,
+    implementation_of_interface: JaggedHashMapSnapshot<(InterfaceId, InterfaceId), ImplementationId>,
+    implementation_of_record: JaggedHashMapSnapshot<(InterfaceId, RecordId), ImplementationId>,
 
     //  Interfaces
     interface_lookup: JaggedHashMapSnapshot<ItemIdentifier, InterfaceId>,
     interface: JaggedArraySnapshot<Interface>,
-    interface_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
+    interface_functions: JaggedArraySnapshot<Functions>,
 
     //  Records
     record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
     record: JaggedArraySnapshot<Record>,
-    record_functions: JaggedArraySnapshot<Vec<(Identifier, FunctionId)>>,
+    record_functions: JaggedArraySnapshot<Functions>,
 
     //  Components
     names: JaggedMultiArraySnapshot<ValueIdentifier>,
@@ -584,6 +620,25 @@ impl Registry for RepositorySnapshot {
 
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
         *self.implementation.at(index_of(id))
+    }
+
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)]
+    {
+        self.implementation_functions.at(index_of(id))
+    }
+
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>
+    {
+        use self::Type::*;
+
+        match ty {
+            Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
+            Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
+            Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
+            Builtin(..) | Tuple(..) | Unresolved(..) => None,
+        }
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> {
@@ -645,6 +700,8 @@ fn index_of<T: ItemId>(id: T) -> usize {
 //
 //  Private Types
 //
+
+type Functions = Vec<(Identifier, FunctionId)>;
 
 /// JaggedMultiArray
 ///
@@ -785,7 +842,7 @@ impl IdMapper {
     }
 
     fn map_functions(&self, functions: &[(Identifier, FunctionId)])
-        -> Vec<(Identifier, FunctionId)>
+        -> Functions
     {
         functions.iter()
             .map(|&(name, id)| (name, self.map_function(id)))

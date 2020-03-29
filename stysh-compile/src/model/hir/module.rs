@@ -70,6 +70,14 @@ pub struct Module {
     implementation_lookup: BTreeMap<ItemIdentifier, ImplementationId>,
     /// Definition of a given Implementation.
     implementation: Table<ImplementationId, Implementation>,
+    /// Functions associated to a given Implementation.
+    implementation_functions: Table<ImplementationId, Vec<(Identifier, FunctionId)>>,
+    /// Implementations indexed by InterfaceId/EnumId.
+    implementation_of_enum: BTreeMap<(InterfaceId, EnumId), ImplementationId>,
+    /// Implementations indexed by InterfaceId/InterfaceId.
+    implementation_of_interface: BTreeMap<(InterfaceId, InterfaceId), ImplementationId>,
+    /// Implementations indexed by InterfaceId/RecordId.
+    implementation_of_record: BTreeMap<(InterfaceId, RecordId), ImplementationId>,
 
     //
     //  Interfaces.
@@ -234,7 +242,14 @@ impl Module {
         let name = function.name.id();
 
         match function.scope {
-            Scope::Module | Scope::Imp(..) => (),
+            Scope::Module => (),
+            Scope::Imp(imp) => {
+                let functions = self.implementation_functions.at_mut(&imp);
+                debug_assert!(!functions.contains(&(name, id)));
+
+                functions.push((name, id));
+                functions.sort_unstable();
+            },
             Scope::Int(int) => {
                 let functions = self.interface_functions.at_mut(&int);
                 debug_assert!(!functions.contains(&(name, id)));
@@ -264,12 +279,14 @@ impl Module {
     /// Returns the ImplementationId created for it.
     pub fn push_implementation_name(&mut self, name: ItemIdentifier) -> ImplementationId {
         debug_assert!(self.implementation.len() == self.implementation_lookup.len());
+        debug_assert!(self.implementation.len() == self.implementation_functions.len());
         debug_assert!(!self.implementation_lookup.contains_key(&name));
 
         let id = ImplementationId::new_module(self.implementation.len() as u32);
         let local_id = Self::localize(id);
 
         self.implementation.push(&local_id, Default::default());
+        self.implementation_functions.push(&local_id, Default::default());
         self.implementation_lookup.insert(name, id);
 
         id
@@ -279,11 +296,22 @@ impl Module {
     ///
     /// Overrides any existing definition for this ID.
     pub fn set_implementation(&mut self, id: ImplementationId, imp: Implementation) {
+        use self::Type::*;
+
         debug_assert!(id.is_module());
         debug_assert!(self.implementation.len() == self.implementation_lookup.len());
 
         let id = Self::localize(id);
         *self.implementation.at_mut(&id) = imp;
+
+        let int = imp.implemented;
+        match imp.extended {
+            Enum(e, ..) => { self.implementation_of_enum.insert((int, e), id); },
+            Int(i, ..) => { self.implementation_of_interface.insert((int, i), id); },
+            Rec(r, ..) => { self.implementation_of_record.insert((int, r), id); },
+            Builtin(..) | Tuple(..) | Unresolved(..) =>
+                unimplemented!("Implementations for {:?}", imp.extended),
+        }
     }
 
 
@@ -526,6 +554,26 @@ impl Registry for Module {
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
         let id = Self::localize(id);
         *self.implementation.at(&id)
+    }
+
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)]
+    {
+        let id = Self::localize(id);
+        self.implementation_functions.at(&id)
+    }
+
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>
+    {
+        use self::Type::*;
+
+        match ty {
+            Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
+            Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
+            Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
+            Builtin(..) | Tuple(..) | Unresolved(..) => None,
+        }
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> {

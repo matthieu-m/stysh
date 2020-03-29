@@ -95,6 +95,30 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)]
+    {
+        debug_assert!(id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id.is_module() {
+            self.module.get_implementation_functions(id)
+        } else {
+            self.repository.get_implementation_functions(id)
+        }
+    }
+
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>
+    {
+        debug_assert!(int.is_module() || int.is_repository(), "{:?}", int);
+
+        if int.is_module() {
+            self.module.get_implementation_of(int, ty)
+        } else {
+            self.repository.get_implementation_of(int, ty)
+        }
+    }
+
     fn interfaces(&self) -> Vec<InterfaceId> {
         let mut result = self.module.interfaces();
         result.extend(&self.repository.interfaces());
@@ -251,6 +275,18 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
         self.registry.get_implementation(id)
+    }
+
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)]
+    {
+        self.registry.get_implementation_functions(id)
+    }
+
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>
+    {
+        self.registry.get_implementation_of(int, ty)
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> { self.registry.interfaces() }

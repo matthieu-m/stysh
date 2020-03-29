@@ -55,6 +55,19 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_implementation(&self, id: ImplementationId) -> Implementation;
 
+    /// Return the list of functions associated to the implementation, sorted.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)];
+
+    /// Returns the implemention IDs of the implementation matching the
+    /// interface and type, if any.
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>;
+
     /// Returns the list of known interface IDs.
     fn interfaces(&self) -> Vec<InterfaceId>;
 
@@ -130,6 +143,8 @@ pub trait Registry: fmt::Debug {
 #[cfg(test)]
 pub mod mocks {
 
+use std::collections::BTreeMap;
+
 use crate::model::hir::*;
 
 use super::Registry;
@@ -147,6 +162,10 @@ pub struct MockRegistry {
     pub functions: Vec<FunctionSignature>,
     /// Implementations.
     pub implementations: Vec<Implementation>,
+    /// Functions for implementations.
+    pub implementation_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Implementation by Interface/Type.
+    pub implementation_of: BTreeMap<(InterfaceId, Type), ImplementationId>,
     /// Interfaces.
     pub interfaces: Vec<Interface>,
     /// Functions for interfaces.
@@ -204,6 +223,18 @@ impl Registry for MockRegistry {
 
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
         self.implementations[Self::index_of(id)]
+    }
+
+    fn get_implementation_functions(&self, id: ImplementationId)
+        -> &[(Identifier, FunctionId)]
+    {
+        &self.implementation_functions[Self::index_of(id)]
+    }
+
+    fn get_implementation_of(&self, int: InterfaceId, ty: Type)
+        -> Option<ImplementationId>
+    {
+        self.implementation_of.get(&(int, ty)).copied()
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> {

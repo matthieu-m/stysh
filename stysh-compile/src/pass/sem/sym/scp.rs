@@ -252,19 +252,21 @@ impl<'a> BlockScope<'a> {
     /// Adds a new interface identifier to the scope.
     ///
     /// Including its associated methods.
-    pub fn add_interface(
-        &mut self,
-        name: ItemIdentifier,
-        id: InterfaceId,
-        functions: &[(Identifier, FunctionId)],
-    )
-    {
+    pub fn add_interface(&mut self, name: ItemIdentifier, id: InterfaceId) {
         debug_assert!(!self.types.contains_key(&name.id()));
 
         self.types.insert(name.id(), Type::Int(id, PathId::empty()));
+    }
 
-        for &(name, fun) in functions {
-            self.add_method(name, fun);
+    /// Adds a methods to an interface.
+    pub fn add_method(&mut self, name: Identifier, id: FunctionId) {
+        use std::collections::hash_map::Entry::*;
+
+        let callable = CallableCandidate::Method(id);
+
+        match self.methods.entry(name) {
+            Occupied(mut o) => merge_in_place(o.get_mut(), callable),
+            Vacant(v) => { v.insert(callable); },
         }
     }
 
@@ -293,25 +295,6 @@ impl<'a> BlockScope<'a> {
     /// Adds a new value identifier to the scope.
     pub fn add_value(&mut self, name: ValueIdentifier) {
         self.values.insert(name.id(), name);
-    }
-}
-
-impl<'a> BlockScope<'a> {
-    /// Adds a methods to an interface.
-    fn add_method(
-        &mut self,
-        name: Identifier,
-        id: FunctionId,
-    )
-    {
-        use std::collections::hash_map::Entry::*;
-
-        let callable = CallableCandidate::Method(id);
-
-        match self.methods.entry(name) {
-            Occupied(mut o) => merge_in_place(o.get_mut(), callable),
-            Vacant(v) => { v.insert(callable); },
-        }
     }
 }
 
@@ -701,8 +684,9 @@ mod tests {
             scope.add_interface(
                 item_id(interface, 5, 9),
                 InterfaceId::new_tree(0),
-                &[(foo, foo_id), (bar, bar_id)],
             );
+            scope.add_method(foo, foo_id);
+            scope.add_method(bar, bar_id);
             scope
         };
 

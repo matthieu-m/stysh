@@ -56,7 +56,7 @@ pub enum Value {
     /// String.
     String(Vec<u8>),
     /// A constructor call.
-    Constructor(hir::TypeId, Vec<Value>),
+    Constructor(hir::Type, Vec<Value>),
     /// A tuple.
     Tuple(Vec<Value>),
 }
@@ -85,13 +85,13 @@ impl<'a> FrameInterpreter<'a> {
         fn interpret_block(
             external: External<'_>,
             graph: &sir::Graph,
-            block: &sir::Block,
+            block: sir::BlockId,
             arguments: Vec<Value>,
         )
             -> BlockResult
         {
             let mut interpreter = BlockInterpreter::new(
-                external, graph, block, arguments
+                block, external, graph, arguments
             );
             interpreter.evaluate()
         }
@@ -104,7 +104,7 @@ impl<'a> FrameInterpreter<'a> {
             let (i, args) = match interpret_block(
                 self.external.clone(),
                 cfg,
-                cfg.get_block(index),
+                index,
                 arguments
             ) 
             {
@@ -129,13 +129,14 @@ struct BlockInterpreter<'a> {
 
 impl<'a> BlockInterpreter<'a> {
     fn new(
+        block_index: sir::BlockId,
         external: External<'a>,
         graph: &'a sir::Graph,
-        block: &'a sir::Block,
         arguments: Vec<Value>
     )
         -> BlockInterpreter<'a>
     {
+        let block = graph.get_block(block_index);
         let bindings = Default::default();
         BlockInterpreter { external, graph, block, arguments, bindings }
     }
@@ -183,6 +184,7 @@ impl<'a> BlockInterpreter<'a> {
         match fun {
             sir::Callable::Builtin(b) => self.eval_builtin(b, args),
             sir::Callable::Function(f) => self.eval_function(f, args),
+            sir::Callable::Method(i, f) => self.eval_method(i, f, args),
         }
     }
 
@@ -201,24 +203,6 @@ impl<'a> BlockInterpreter<'a> {
             Constructor(_, tup) | Tuple(tup) => tup[index as usize].clone(),
             _ => unreachable!(),
         }
-    }
-
-    fn eval_function(
-        &self,
-        fun: hir::FunctionId,
-        args: &[sir::ValueId],
-    )
-        -> Value
-    {
-        let cfg = self.external.cfg_registry.lookup_cfg(fun).expect("CFG present");
-        let interpreter = FrameInterpreter::new(self.external.clone());
-
-        let mut arguments = Vec::with_capacity(args.len());
-        for &a in args {
-            arguments.push(self.get_value(a));
-        }
-
-        interpreter.evaluate(cfg, arguments)
     }
 
     fn eval_builtin_fun(
@@ -266,6 +250,36 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
+    fn eval_function(
+        &self,
+        fun: hir::FunctionId,
+        args: &[sir::ValueId],
+    )
+        -> Value
+    {
+        let cfg = self.external.cfg_registry.lookup_cfg(fun).expect("CFG present");
+        let interpreter = FrameInterpreter::new(self.external.clone());
+
+        let mut arguments = Vec::with_capacity(args.len());
+        for &a in args {
+            arguments.push(self.get_value(a));
+        }
+
+        interpreter.evaluate(cfg, arguments)
+    }
+
+    fn eval_method(
+        &self,
+        int: hir::InterfaceId,
+        fun: hir::FunctionId,
+        args: &[sir::ValueId],
+    )
+        -> Value
+    {
+        let fun = self.resolve_method(int, fun, *args.get(0).expect("Receiver"));
+        self.eval_function(fun, args)
+    }
+
     fn eval_new(
         &self,
         ty: hir::TypeId,
@@ -280,7 +294,8 @@ impl<'a> BlockInterpreter<'a> {
             fields.push(self.get_value(id))
         }
 
-        if let hir::Type::Tuple(..) = self.get_type(ty) {
+        let ty = self.get_type(ty);
+        if let hir::Type::Tuple(..) = ty {
             Value::Tuple(fields)
         } else {
             Value::Constructor(ty, fields)
@@ -301,6 +316,35 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
+    fn resolve_method(
+        &self,
+        int: hir::InterfaceId,
+        fun: hir::FunctionId,
+        receiver: sir::ValueId,
+    )
+        -> hir::FunctionId
+    {
+        let ty = self.get_dynamic_type(self.get_value(receiver));
+        let imp = if let Some(imp) = self.get_implementation_of(int, ty) {
+            imp
+        } else {
+            unreachable!("No implementation of {:?} for {:?}", int, ty);
+        };
+        let functions =
+            self.external.hir_registry.get_implementation_functions(imp);
+
+        let name = self.external.hir_registry.get_function(fun).name.0;
+
+        for &(n, fun) in functions {
+            if n == name { return fun; }
+        }
+
+        unreachable!(
+            "Could not resolve method {:?}.{:?} for {:?} ({:?})",
+            int, fun, ty, imp
+        );
+    }
+
     fn get_value(&self, id: sir::ValueId) -> Value {
         if let Some(i) = id.as_instruction() {
             let i = i as usize;
@@ -315,7 +359,7 @@ impl<'a> BlockInterpreter<'a> {
             );
             self.arguments[a].clone()
         } else {
-            unreachable!()
+            unreachable!("No value {}", id);
         }
     }
 
@@ -335,6 +379,32 @@ impl<'a> BlockInterpreter<'a> {
         } else {
             self.external.hir_registry.get_type(ty)
         }
+    }
+
+    fn get_dynamic_type(&self, receiver: Value) -> hir::Type {
+        use self::Value::*;
+
+        match receiver {
+            Bool(_) => hir::Type::bool_(),
+            Int(_) => hir::Type::int(),
+            String(_) => hir::Type::string(),
+            Constructor(ty, mut args) => {
+                if let hir::Type::Int(..) = ty {
+                    assert!(args.len() == 1, "Conversion has multiple arguments: {:?}", args);
+
+                    self.get_dynamic_type(args.pop().unwrap())
+                } else {
+                    ty
+                }
+            },
+            Tuple(_) => unreachable!("get_dynamic_type - Tuple"),
+        }
+    }
+
+    fn get_implementation_of(&self, int: hir::InterfaceId, receiver: hir::Type)
+        -> Option<hir::ImplementationId>
+    {
+        self.external.hir_registry.get_implementation_of(int, receiver)
     }
 
     fn jump(&self, jump: sir::JumpId) -> BlockResult {

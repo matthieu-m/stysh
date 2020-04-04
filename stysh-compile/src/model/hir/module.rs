@@ -244,6 +244,7 @@ impl Module {
         match function.scope {
             Scope::Module => (),
             Scope::Imp(imp) => {
+                let imp = Self::localize(imp);
                 let functions = self.implementation_functions.at_mut(&imp);
                 debug_assert!(!functions.contains(&(name, id)));
 
@@ -251,6 +252,7 @@ impl Module {
                 functions.sort_unstable();
             },
             Scope::Int(int) => {
+                let int = Self::localize(int);
                 let functions = self.interface_functions.at_mut(&int);
                 debug_assert!(!functions.contains(&(name, id)));
 
@@ -301,8 +303,8 @@ impl Module {
         debug_assert!(id.is_module());
         debug_assert!(self.implementation.len() == self.implementation_lookup.len());
 
-        let id = Self::localize(id);
-        *self.implementation.at_mut(&id) = imp;
+        let local_id = Self::localize(id);
+        *self.implementation.at_mut(&local_id) = imp;
 
         let int = imp.implemented;
         match imp.extended {

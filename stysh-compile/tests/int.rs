@@ -88,3 +88,33 @@ fn peano_method() {
         int::Value::Int(2)
     );
 }
+
+#[test]
+fn peano_interface() {
+    assert_eq!(
+        utils::interpret(
+            b"
+            :rec Number;
+
+            :ext Number {
+                :fun new() -> Self { Self() }
+            }
+
+            :int Peano {
+                :fun zero(self) -> Int;
+                :fun one(self: Self) -> Int;
+                :fun two(self: Peano) -> Int;
+            }
+
+            :imp Peano :for Number {
+                :fun zero(self) -> Int { 0 }
+                :fun one(self: Self) -> Int { 1 }
+                :fun two(self: Self) -> Int { self.one() + self.one() }
+            }
+
+            Number::new().two()
+            "
+        ),
+        int::Value::Int(2)
+    );
+}

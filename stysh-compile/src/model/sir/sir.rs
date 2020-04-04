@@ -57,8 +57,10 @@ pub enum Instruction {
 pub enum Callable {
     /// A Builtin.
     Builtin(hir::BuiltinFunction),
-    /// User-defined.
+    /// User-defined, statically resolved.
     Function(hir::FunctionId),
+    /// User-defined, dynamically resolved.
+    Method(hir::InterfaceId, hir::FunctionId),
 }
 
 /// An instruction.

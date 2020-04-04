@@ -38,7 +38,8 @@ impl<'a> TypeUnifier<'a> {
 
     /// Finalizes the Tree by inserting Implicit casts as appropriate.
     pub fn finalize(&self) {
-        for e in self.core.tree().get_expressions() {
+        let expressions = self.core.tree().get_expressions();
+        for e in expressions {
             self.finalize_expression(e);
         }
     }

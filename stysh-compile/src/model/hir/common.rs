@@ -36,11 +36,11 @@ pub struct Gvn(pub u32);
 
 /// An item identifier.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ItemIdentifier(pub mem::InternId, pub com::Range);
+pub struct ItemIdentifier(pub Identifier, pub com::Range);
 
 /// A value identifier.
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ValueIdentifier(pub mem::InternId, pub com::Range);
+pub struct ValueIdentifier(pub Identifier, pub com::Range);
 
 //
 //  Public Types

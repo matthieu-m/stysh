@@ -35,9 +35,9 @@ impl<'a, 'tree> ImplementationParser<'a, 'tree> {
         //  -   :for
         //  -   type-identifier
         //  -   <body>
-        let keyword = self.raw.pop_kind(Kind::KeywordInt).expect(":int");
+        let keyword = self.raw.pop_kind(Kind::KeywordImp).expect(":imp");
 
-        let interface =
+        let implemented =
             self.raw
                 .pop_kind(Kind::NameType)
                 .map(|t| self.raw.resolve_type(t))
@@ -54,7 +54,7 @@ impl<'a, 'tree> ImplementationParser<'a, 'tree> {
         let body = body::parse_body(&mut self.raw, extended);
 
         let imp = Implementation {
-            interface,
+            implemented,
             extended,
             functions: body.functions,
             keyword: keyword.offset() as u32,

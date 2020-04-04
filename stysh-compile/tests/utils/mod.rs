@@ -103,8 +103,17 @@ fn create_names<'a>(
         let item = create_name(ast::Item::Rec(id), ast_module, tree, scope, hir_module);
 
         if let hir::Item::Rec(hir_id) = item {
-            let e = ast_module.get_record(id);
-            scope.add_record(e.name().into(), hir_id);
+            let r = ast_module.get_record(id);
+            scope.add_record(r.name().into(), hir_id);
+        }
+    }
+
+    for id in ast_module.interfaces() {
+        let item = create_name(ast::Item::Int(id), ast_module, tree, scope, hir_module);
+
+        if let hir::Item::Int(hir_id) = item {
+            let i = ast_module.get_interface(id);
+            scope.add_interface(i.name.into(), hir_id);
         }
     }
 
@@ -112,15 +121,28 @@ fn create_names<'a>(
         create_name(ast::Item::Ext(id), ast_module, tree, scope, hir_module);
     }
 
+    for id in ast_module.implementations() {
+        create_name(ast::Item::Imp(id), ast_module, tree, scope, hir_module);
+    }
+
     for id in ast_module.functions() {
         let item = create_name(ast::Item::Fun(id), ast_module, tree, scope, hir_module);
 
-        //  Only register global scope functions.
-        if let ast::Scope::Module = ast_module.get_function_scope(id) {
-            if let hir::Item::Fun(hir_id) = item {
-                let fun = ast_module.get_function(id);
-                scope.add_function(fun.name.into(), hir_id);
-            }
+        //  Only register global scope functions and interface methods.
+        match ast_module.get_function_scope(id) {
+            ast::Scope::Module => {
+                if let hir::Item::Fun(hir_id) = item {
+                    let fun = ast_module.get_function(id);
+                    scope.add_function(fun.name.into(), hir_id);
+                };
+            },
+            ast::Scope::Int(_) => {
+                if let hir::Item::Fun(hir_id) = item {
+                    let fun = ast_module.get_function(id);
+                    scope.add_method(fun.name.id(), hir_id);
+                };
+            },
+            ast::Scope::Ext(_) | ast::Scope::Imp(_) => (),
         }
     }
 }
@@ -158,8 +180,16 @@ fn create_items(
         create_item(ast::Item::Rec(id), ast_module, tree, scope, hir_module);
     }
 
+    for id in ast_module.interfaces() {
+        create_item(ast::Item::Int(id), ast_module, tree, scope, hir_module);
+    }
+
     for id in ast_module.extensions() {
         create_item(ast::Item::Ext(id), ast_module, tree, scope, hir_module);
+    }
+
+    for id in ast_module.implementations() {
+        create_item(ast::Item::Imp(id), ast_module, tree, scope, hir_module);
     }
 
     for id in ast_module.functions() {
@@ -243,8 +273,8 @@ fn create_cfg_from_value(module: &hir::Module, tree: &hir::Tree)
 
     let result = GraphBuilder::new(module).from_expression(tree);
 
-    println!("create_cfg_from_value -\n");
-    sir::display_graph(&result, module);
+    println!("create_cfg_from_value =>");
+    println!("{}", sir::display_graph(&result, module));
     println!("");
 
     result
@@ -257,9 +287,9 @@ fn create_cfg_from_function(module: &hir::Module, tree: &hir::Tree, fun: hir::Fu
 
     let result = GraphBuilder::new(module).from_function(tree, fun);
 
-    println!("create_cfg_from_function - {:?} =>\n",
-        module.get_function(fun).name);
-    sir::display_graph(&result, module);
+    println!("create_cfg_from_function - {:?} ({:?}) =>",
+        fun, module.get_function(fun).name);
+    println!("{}", sir::display_graph(&result, module));
     println!("");
 
     result

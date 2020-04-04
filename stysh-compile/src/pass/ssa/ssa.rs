@@ -155,6 +155,8 @@ impl<'a> GraphBuilderImpl<'a> {
                 => Some(self.convert_field_access(current, t, e, f, r)),
             hir::Expression::If(cond, true_, false_)
                 => Some(self.convert_if(current, cond, true_, false_, t, gvn)),
+            hir::Expression::Implicit(imp)
+                => self.convert_implicit(current, imp, t, gvn, r),
             hir::Expression::Loop(stmts)
                 => self.convert_loop(current, stmts, gvn),
             hir::Expression::Ref(_, gvn)
@@ -238,7 +240,14 @@ impl<'a> GraphBuilderImpl<'a> {
         let callable = match callable {
             hir::Callable::Builtin(b) => sir::Callable::Builtin(b),
             hir::Callable::Function(f) => sir::Callable::Function(f),
-            hir::Callable::Method(_) => todo!("Dynamic look-up"),
+            hir::Callable::Method(f) => {
+                let fun = self.registry.get_function(f);
+                if let hir::Scope::Int(i) = fun.scope {
+                    sir::Callable::Method(i, f)
+                } else {
+                    unreachable!("Method call to non-interface function: {:?}", fun);
+                }
+            },
             _ => unreachable!("Incomplete HIR: {:?}", callable),
         };
 
@@ -448,6 +457,38 @@ impl<'a> GraphBuilderImpl<'a> {
         }
 
         result
+    }
+
+    fn convert_implicit(
+        &mut self,
+        current: ProtoBlock,
+        imp: hir::Implicit,
+        type_: hir::TypeId,
+        gvn: hir::Gvn,
+        range: Range,
+    )
+        -> Option<ProtoBlock>
+    {
+        use self::hir::Implicit::*;
+
+        let expr = match imp {
+            ToEnum(_, expr) => expr,
+            ToInt(_, expr) => expr,
+        };
+
+        if let Some(mut current) = self.convert_expression(current, expr) {
+            let argument = current.last_value();
+            let argument = current
+                .block
+                .push_instruction_ids(Some(argument).into_iter());
+
+            let ins = sir::Instruction::New(type_, argument);
+            current.push_instruction(gvn.into(), ins, range);
+
+            Some(current)
+        } else {
+            None
+        }
     }
 
     fn convert_literal(

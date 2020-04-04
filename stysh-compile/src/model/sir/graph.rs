@@ -316,7 +316,7 @@ impl Block {
 /// Displays the graph in a human readable form.
 pub fn display_graph(graph: &Graph, registry: &dyn hir::Registry) -> String {
     let displayer = GraphDisplayer{ graph, registry };
-    
+
     format!("{}", displayer)
 }
 
@@ -436,6 +436,11 @@ impl<'a> BlockDisplayer<'a> {
                 let fun = self.registry.get_function(fun);
                 write!(f, "<{}>", fun.name.1)
             },
+            Method(int, fun) => {
+                let int = self.registry.get_interface(int);
+                let fun = self.registry.get_function(fun);
+                write!(f, "<{}.{}>", int.name.1, fun.name.1)
+            }
         }
     }
 
@@ -458,7 +463,6 @@ impl<'a> BlockDisplayer<'a> {
         }
 
         let type_ = if ty.is_tree() {
-            println!("display_type - {:?}", ty);
             self.graph.get_type(ty)
         } else {
             self.registry.get_type(ty)

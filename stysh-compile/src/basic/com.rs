@@ -102,6 +102,9 @@ impl<T: ?Sized> Copy for Id<T> {}
 
 impl<T: ?Sized> fmt::Debug for Id<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        const MODULE_OFFSET: usize = 1usize << 30;
+        const REPOSITORY_OFFSET: usize = 1usize << 31;
+
         //  More compact representation for `{:#?}`.
         //
         //  FIXME(matthieum): consider adding `std::intrinsics::type_name<T>()`
@@ -111,7 +114,14 @@ impl<T: ?Sized> fmt::Debug for Id<T> {
         } else if *self == Self::empty() {
             write!(f, "Id(empty)")
         } else {
-            write!(f, "Id({})", self.index())
+            match self.index() {
+                index if index < MODULE_OFFSET =>
+                    write!(f, "Id({})", index),
+                index if index < REPOSITORY_OFFSET =>
+                    write!(f, "Id(M-{})", index - MODULE_OFFSET),
+                index =>
+                    write!(f, "Id(R-{})", index - REPOSITORY_OFFSET),
+            }
         }
     }
 }

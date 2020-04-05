@@ -44,6 +44,8 @@ pub type ValueId = Id<Instruction>;
 pub enum Instruction {
     /// A function call.
     Call(hir::TypeId, Callable, Id<[ValueId]>),
+    /// A cast to an interface.
+    Cast(hir::TypeId, ValueId),
     /// A field load.
     Field(hir::TypeId, ValueId, u16),
     /// A value load.
@@ -103,7 +105,7 @@ impl Instruction {
         use self::Instruction::*;
 
         match *self {
-            Call(ty, ..) | Field(ty, ..) | New(ty, ..) => ty,
+            Call(ty, ..) | Cast(ty, ..) | Field(ty, ..) | New(ty, ..) => ty,
             Load(b) => b.result_type_id(),
         }
     }

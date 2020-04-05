@@ -375,6 +375,10 @@ impl<'a> BlockDisplayer<'a> {
                 self.display_callable(fun, f)?;
                 self.display_arguments(args, f)?;
             },
+            Cast(ty, val) => {
+                write!(f, "cast {} to ", val)?;
+                self.display_type(ty, f)?
+            },
             Field(_, val, i) => write!(f, "field {} of {}", i, val)?,
             Load(val) => write!(f, "load {}", val)?,
             New(ty, args) => {

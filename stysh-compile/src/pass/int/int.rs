@@ -57,6 +57,8 @@ pub enum Value {
     String(Vec<u8>),
     /// A constructor call.
     Constructor(hir::Type, Vec<Value>),
+    /// An interface.
+    Dynamic(hir::InterfaceId, Box<Value>),
     /// A tuple.
     Tuple(Vec<Value>),
 }
@@ -171,6 +173,7 @@ impl<'a> BlockInterpreter<'a> {
 
         match self.block.get_instruction(instr) {
             Call(_, fun, args) => self.eval_call(fun, args),
+            Cast(int, arg) => self.eval_cast(int, arg),
             Field(_, value, index) => self.eval_field(value, index),
             Load(value) => self.load(value),
             New(type_, fields) => self.eval_new(type_, fields),
@@ -192,6 +195,15 @@ impl<'a> BlockInterpreter<'a> {
         -> Value
     {
         self.eval_builtin_fun(fun, args)
+    }
+
+    fn eval_cast(&self, ty: hir::TypeId, value: sir::ValueId) -> Value {
+        if let hir::Type::Int(int, ..) = self.get_type(ty) {
+            Value::Dynamic(int, Box::new(self.get_value(value)))
+        } else {
+            unreachable!("Cast target should be an interface, not {:?}",
+                self.get_type(ty));
+        }
     }
 
     fn eval_field(&self, value: sir::ValueId, index: u16) -> Value {
@@ -324,7 +336,7 @@ impl<'a> BlockInterpreter<'a> {
     )
         -> hir::FunctionId
     {
-        let ty = self.get_dynamic_type(self.get_value(receiver));
+        let ty = self.get_dynamic_type(self.get_value_ref(receiver));
         let imp = if let Some(imp) = self.get_implementation_of(int, ty) {
             imp
         } else {
@@ -346,18 +358,22 @@ impl<'a> BlockInterpreter<'a> {
     }
 
     fn get_value(&self, id: sir::ValueId) -> Value {
+        self.get_value_ref(id).clone()
+    }
+
+    fn get_value_ref(&self, id: sir::ValueId) -> &Value {
         if let Some(i) = id.as_instruction() {
             let i = i as usize;
             debug_assert!(
                 i < self.bindings.len(), "{} not in {:?}", i, self.bindings
             );
-            self.bindings[i].clone()
+            &self.bindings[i]
         } else if let Some(a) = id.as_argument() {
             let a = a as usize;
             debug_assert!(
                 a < self.arguments.len(), "{} not in {:?}", a, self.arguments
             );
-            self.arguments[a].clone()
+            &self.arguments[a]
         } else {
             unreachable!("No value {}", id);
         }
@@ -381,22 +397,15 @@ impl<'a> BlockInterpreter<'a> {
         }
     }
 
-    fn get_dynamic_type(&self, receiver: Value) -> hir::Type {
+    fn get_dynamic_type(&self, receiver: &Value) -> hir::Type {
         use self::Value::*;
 
         match receiver {
             Bool(_) => hir::Type::bool_(),
             Int(_) => hir::Type::int(),
             String(_) => hir::Type::string(),
-            Constructor(ty, mut args) => {
-                if let hir::Type::Int(..) = ty {
-                    assert!(args.len() == 1, "Conversion has multiple arguments: {:?}", args);
-
-                    self.get_dynamic_type(args.pop().unwrap())
-                } else {
-                    ty
-                }
-            },
+            Constructor(ty, _) => *ty,
+            Dynamic(_, value) => self.get_dynamic_type(&*value),
             Tuple(_) => unreachable!("get_dynamic_type - Tuple"),
         }
     }

@@ -476,19 +476,23 @@ impl<'a> GraphBuilderImpl<'a> {
             ToInt(_, expr) => expr,
         };
 
-        if let Some(mut current) = self.convert_expression(current, expr) {
-            let argument = current.last_value();
-            let argument = current
-                .block
-                .push_instruction_ids(Some(argument).into_iter());
+        let mut current = self.convert_expression(current, expr)?;
 
-            let ins = sir::Instruction::New(type_, argument);
-            current.push_instruction(gvn.into(), ins, range);
+        let argument = current.last_value();
 
-            Some(current)
-        } else {
-            None
-        }
+        let ins = match imp {
+            ToEnum(..) => {
+                let argument = current
+                    .block
+                    .push_instruction_ids(Some(argument).into_iter());
+                sir::Instruction::New(type_, argument)
+            },
+            ToInt(..) => sir::Instruction::Cast(type_, argument),
+        };
+
+        current.push_instruction(gvn.into(), ins, range);
+
+        Some(current)
     }
 
     fn convert_literal(

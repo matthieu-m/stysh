@@ -292,7 +292,8 @@ impl<'a> ExprUnifier<'a> {
     {
         use self::Expression::*;
 
-        let replacement = match self.core.tree().get_expression(expr) {
+        let expression = self.core.tree().get_expression(expr);
+        let replacement = match expression {
             BuiltinVal(..) | FieldAccess(..) | Implicit(..) | Loop(..) |
             Ref(..) | UnresolvedRef(..) =>
                 unreachable!("replace_in_expression {:?}", expr),

@@ -27,6 +27,11 @@ use crate::model::hir::*;
 #[derive(Clone, Debug)]
 pub struct Repository {
     //
+    //  Builtins
+    //
+    builtin_functions: [Functions; BuiltinType::NUMBER],
+
+    //
     //  Enums
     //
 
@@ -65,6 +70,8 @@ pub struct Repository {
     implementation: JaggedArray<Implementation>,
     /// Functions associated to a given Implementation.
     implementation_functions: JaggedArray<Functions>,
+    /// Implementations indexed by InterfaceId/BuiltinType.
+    implementation_of_builtin: JaggedHashMap<(InterfaceId, BuiltinType), ImplementationId>,
     /// Implementations indexed by InterfaceId/EnumId.
     implementation_of_enum: JaggedHashMap<(InterfaceId, EnumId), ImplementationId>,
     /// Implementations indexed by InterfaceId/InterfaceId.
@@ -118,6 +125,8 @@ impl Repository {
     /// Creates a new instance.
     pub fn new() -> Repository {
         Repository {
+            builtin_functions: Default::default(),
+
             enum_lookup: JaggedHashMap::new(5),
             enum_: JaggedArray::new(5),
             enum_functions: JaggedArray::new(5),
@@ -131,6 +140,7 @@ impl Repository {
             implementation_lookup: JaggedHashMap::new(5),
             implementation: JaggedArray::new(5),
             implementation_functions: JaggedArray::new(5),
+            implementation_of_builtin: JaggedHashMap::new(5),
             implementation_of_enum: JaggedHashMap::new(5),
             implementation_of_interface: JaggedHashMap::new(5),
             implementation_of_record: JaggedHashMap::new(5),
@@ -188,6 +198,7 @@ impl Repository {
     /// Creates a snapshot of the repository.
     pub fn snapshot(&self) -> RepositorySnapshot {
         RepositorySnapshot {
+            builtin_functions: self.builtin_functions.clone(),
             enum_lookup: self.enum_lookup.snapshot(),
             enum_: self.enum_.snapshot(),
             enum_functions: self.enum_functions.snapshot(),
@@ -198,6 +209,7 @@ impl Repository {
             implementation_lookup: self.implementation_lookup.snapshot(),
             implementation: self.implementation.snapshot(),
             implementation_functions: self.implementation_functions.snapshot(),
+            implementation_of_builtin: self.implementation_of_builtin.snapshot(),
             implementation_of_enum: self.implementation_of_enum.snapshot(),
             implementation_of_interface: self.implementation_of_interface.snapshot(),
             implementation_of_record: self.implementation_of_record.snapshot(),
@@ -381,13 +393,15 @@ impl Repository {
         self.implementation_lookup.insert(extended_name, id);
 
         match extended {
+            Builtin(ty) =>
+                { self.implementation_of_builtin.insert((implemented, ty), id); },
             Enum(e, ..) =>
                 { self.implementation_of_enum.insert((implemented, e), id); },
             Int(int, ..) =>
                 { self.implementation_of_interface.insert((implemented, int), id); },
             Rec(rec, ..) =>
                 { self.implementation_of_record.insert((implemented, rec), id); },
-            Builtin(..) | Tuple(..) | Unresolved(..) =>
+            Tuple(..) | Unresolved(..) =>
                 unimplemented!("Implementations for {:?}", extended),
         }
     }
@@ -546,6 +560,9 @@ impl Repository {
 /// Multiple snapshots, each from a different time, can coexist.
 #[derive(Clone, Debug, Default)]
 pub struct RepositorySnapshot {
+    //  Builtins
+    builtin_functions: [Functions; BuiltinType::NUMBER],
+
     //  Enums
     enum_lookup: JaggedHashMapSnapshot<ItemIdentifier, EnumId>,
     enum_: JaggedArraySnapshot<Enum>,
@@ -563,6 +580,7 @@ pub struct RepositorySnapshot {
     implementation_lookup: JaggedHashMapSnapshot<ItemIdentifier, ImplementationId>,
     implementation: JaggedArraySnapshot<Implementation>,
     implementation_functions: JaggedArraySnapshot<Functions>,
+    implementation_of_builtin: JaggedHashMapSnapshot<(InterfaceId, BuiltinType), ImplementationId>,
     implementation_of_enum: JaggedHashMapSnapshot<(InterfaceId, EnumId), ImplementationId>,
     implementation_of_interface: JaggedHashMapSnapshot<(InterfaceId, InterfaceId), ImplementationId>,
     implementation_of_record: JaggedHashMapSnapshot<(InterfaceId, RecordId), ImplementationId>,
@@ -586,6 +604,10 @@ pub struct RepositorySnapshot {
 }
 
 impl Registry for RepositorySnapshot {
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)] {
+        &self.builtin_functions[ty.index()]
+    }
+
     fn enums(&self) -> Vec<EnumId> {
         ids_of(self.enum_.len())
     }
@@ -634,10 +656,11 @@ impl Registry for RepositorySnapshot {
         use self::Type::*;
 
         match ty {
+            Builtin(ty) => self.implementation_of_builtin.get(&(int, ty)).copied(),
             Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
             Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
             Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
-            Builtin(..) | Tuple(..) | Unresolved(..) => None,
+            Tuple(..) | Unresolved(..) => None,
         }
     }
 

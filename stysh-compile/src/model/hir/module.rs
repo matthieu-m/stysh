@@ -34,6 +34,11 @@ pub struct Module {
     module_id: ModuleId,
 
     //
+    //  Builtins
+    //
+    builtin_functions: [Vec<(Identifier, FunctionId)>; BuiltinType::NUMBER],
+
+    //
     //  Enums
     //
 
@@ -72,6 +77,8 @@ pub struct Module {
     implementation: Table<ImplementationId, Implementation>,
     /// Functions associated to a given Implementation.
     implementation_functions: Table<ImplementationId, Vec<(Identifier, FunctionId)>>,
+    /// Implementations indexed by InterfaceId/BuiltinType.
+    implementation_of_builtins: BTreeMap<(InterfaceId, BuiltinType), ImplementationId>,
     /// Implementations indexed by InterfaceId/EnumId.
     implementation_of_enum: BTreeMap<(InterfaceId, EnumId), ImplementationId>,
     /// Implementations indexed by InterfaceId/InterfaceId.
@@ -308,10 +315,11 @@ impl Module {
 
         let int = imp.implemented;
         match imp.extended {
+            Builtin(ty) => { self.implementation_of_builtins.insert((int, ty), id); },
             Enum(e, ..) => { self.implementation_of_enum.insert((int, e), id); },
             Int(i, ..) => { self.implementation_of_interface.insert((int, i), id); },
             Rec(r, ..) => { self.implementation_of_record.insert((int, r), id); },
-            Builtin(..) | Tuple(..) | Unresolved(..) =>
+            Tuple(..) | Unresolved(..) =>
                 unimplemented!("Implementations for {:?}", imp.extended),
         }
     }
@@ -503,7 +511,8 @@ impl Module {
         use self::Type::*;
 
         let functions = match ty {
-            Builtin(..) | Tuple(..) | Unresolved(..) => return,
+            Tuple(..) | Unresolved(..) => return,
+            Builtin(ty) => &mut self.builtin_functions[ty.index()],
             Enum(e, ..) => self.enum_functions.at_mut(&Self::localize(e)),
             Int(i, ..) => self.interface_functions.at_mut(&Self::localize(i)),
             Rec(r, ..) => self.record_functions.at_mut(&Self::localize(r)),
@@ -517,6 +526,10 @@ impl Module {
 }
 
 impl Registry for Module {
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)] {
+        &self.builtin_functions[ty.index()]
+    }
+
     fn enums(&self) -> Vec<EnumId> {
         self.enum_lookup.values().copied().collect()
     }
@@ -571,10 +584,11 @@ impl Registry for Module {
         use self::Type::*;
 
         match ty {
+            Builtin(ty) => self.implementation_of_builtins.get(&(int, ty)).copied(),
             Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
             Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
             Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
-            Builtin(..) | Tuple(..) | Unresolved(..) => None,
+            Tuple(..) | Unresolved(..) => None,
         }
     }
 

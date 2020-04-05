@@ -125,11 +125,12 @@ impl<'a> TypeScope<'a> {
 
         let (constructor, functions) = match self.type_ {
             //  No extensions on those.
-            Builtin(..) | Tuple(..) | Unresolved(..) =>
+            Tuple(..) | Unresolved(..) =>
                 return self.unresolved_function(name),
             //  Always a method call, resolved at run-time.
             Int(i, ..) => (method, registry.get_interface_functions(i)),
             //  Always a function call, resolve at compile-time.
+            Builtin(ty) => (function, registry.get_builtin_functions(ty)),
             Enum(e, ..) => (function, registry.get_enum_functions(e)),
             Rec(r, ..) => (function, registry.get_record_functions(r)),
         };
@@ -159,8 +160,10 @@ impl<'a> TypeScope<'a> {
 
 impl<'a> TypeScope<'a> {
     fn is_defined(typ: Type) -> bool {
+        use self::Type::*;
+
         match typ {
-            Type::Enum(..) | Type::Int(..) | Type::Rec(..) => true,
+            Builtin(..) | Enum(..) | Int(..) | Rec(..) => true,
             _ => false,
         }
     }

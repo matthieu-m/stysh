@@ -21,6 +21,19 @@ impl<'a> Reg<'a> {
 }
 
 impl<'a> Registry for Reg<'a> {
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)] {
+        let module = self.module.get_builtin_functions(ty);
+
+        //  Builtin extensions should only ever belong to a core module, so
+        //  either this is the core module and it has them, or it is not
+        //  and they are in the repository.
+        if !module.is_empty() {
+            module
+        } else {
+            self.repository.get_builtin_functions(ty)
+        }
+    }
+
     fn enums(&self) -> Vec<EnumId> {
         let mut result = self.module.enums();
         result.extend(&self.repository.enums());
@@ -236,7 +249,7 @@ impl<'a> Registry for Reg<'a> {
 
 /// RegRef
 ///
-/// A Registry unifiying over a local and a distant Registry.
+/// A Registry unifiying over a Tree and a Registry.
 #[derive(Debug)]
 pub struct RegRef<'a> {
     registry: &'a dyn Registry,
@@ -251,6 +264,10 @@ impl<'a> RegRef<'a> {
 }
 
 impl<'a> Registry for RegRef<'a> {
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)] {
+        self.registry.get_builtin_functions(ty)
+    }
+
     fn enums(&self) -> Vec<EnumId> { self.registry.enums() }
 
     fn get_enum(&self, id: EnumId) -> Enum { self.registry.get_enum(id) }

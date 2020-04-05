@@ -8,6 +8,9 @@ use crate::model::hir::*;
 
 /// Registry.
 pub trait Registry: fmt::Debug {
+    /// Returns the list of functions associated to the enum, sorted.
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)];
+
     /// Returns the list of known enum IDs.
     fn enums(&self) -> Vec<EnumId>;
 
@@ -152,6 +155,8 @@ use super::Registry;
 /// A MockRegistry for unit-tests.
 #[derive(Default, Debug)]
 pub struct MockRegistry {
+    /// Functions for builtins.
+    pub builtin_functions: [Vec<(Identifier, FunctionId)>; BuiltinType::NUMBER],
     /// Enums.
     pub enums: Vec<Enum>,
     /// Functions for enums.
@@ -192,6 +197,10 @@ impl MockRegistry {
 
 impl Registry for MockRegistry {
     fn enums(&self) -> Vec<EnumId> { Self::enumerate(self.enums.len()) }
+
+    fn get_builtin_functions(&self, ty: BuiltinType) -> &[(Identifier, FunctionId)] {
+        &self.builtin_functions[ty.index()]
+    }
 
     fn get_enum(&self, id: EnumId) -> Enum {
         self.enums[Self::index_of(id)]

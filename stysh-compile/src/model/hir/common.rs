@@ -196,6 +196,23 @@ impl ValueIdentifier {
 //  Public interface
 //
 
+impl BuiltinType {
+    /// Total number of built-in types.
+    pub const NUMBER: usize = 4;
+
+    /// Index of a built-in type, guaranteed to be in [0, NUMBER)
+    pub fn index(&self) -> usize {
+        use self::BuiltinType::*;
+
+        match *self {
+            Bool => 0,
+            Int => 1,
+            String => 2,
+            Void => 3,
+        }
+    }
+}
+
 impl Field {
     /// Returns the index.
     ///

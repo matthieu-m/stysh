@@ -112,6 +112,10 @@ pub struct Module {
     //  Components
     //
 
+    /// Elaborate Types
+    elaborate_type: Table<ElaborateTypeId, ElaborateType>,
+    /// Elaborate Type Ids
+    elaborate_type_ids: KeyedMulti<ElaborateTypeId>,
     /// Names
     names: KeyedMulti<ValueIdentifier>,
     /// Path
@@ -314,12 +318,12 @@ impl Module {
         *self.implementation.at_mut(&local_id) = imp;
 
         let int = imp.implemented;
-        match imp.extended {
+        match self.get_type(imp.extended) {
             Builtin(ty) => { self.implementation_of_builtins.insert((int, ty), id); },
-            Enum(e, ..) => { self.implementation_of_enum.insert((int, e), id); },
-            Int(i, ..) => { self.implementation_of_interface.insert((int, i), id); },
-            Rec(r, ..) => { self.implementation_of_record.insert((int, r), id); },
-            Tuple(..) | Unresolved(..) =>
+            Enum(e) => { self.implementation_of_enum.insert((int, e), id); },
+            Int(i) => { self.implementation_of_interface.insert((int, i), id); },
+            Rec(r) => { self.implementation_of_record.insert((int, r), id); },
+            Tuple(..) | Unresolved =>
                 unimplemented!("Implementations for {:?}", imp.extended),
         }
     }
@@ -409,6 +413,61 @@ impl Module {
     //
     //  Components
     //
+
+    /// Sets the elaborate type associated to the id.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if attempting to associate a non built-in ElaborateType to a
+    /// built-in ElaborateTypeId.
+    pub fn set_elaborate_type(&mut self, id: ElaborateTypeId, ty: ElaborateType)
+        -> ElaborateTypeId
+    {
+        if let Some(_) = id.builtin() {
+            if let ElaborateType::Builtin(b) = ty {
+                return ElaborateTypeId::from(b);
+            }
+
+            panic!("Cannot update a built-in to a non built-in");
+        }
+
+        let local_id = Self::localize(id);
+        *self.elaborate_type.at_mut(&local_id) = ty;
+
+        if let ElaborateType::Builtin(b) = ty {
+            ElaborateTypeId::from(b)
+        } else {
+            id
+        }
+    }
+
+    /// Inserts a new Elaborate Type.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_elaborate_type(&mut self, typ: ElaborateType)
+        -> ElaborateTypeId
+    {
+        let ty = Self::modularize(self.elaborate_type.extend(typ));
+
+        if let ElaborateType::Builtin(b) = typ {
+            ElaborateTypeId::from(b)
+        } else {
+            ty
+        }
+    }
+
+    /// Pushes a new slice of Elaborate Type IDs.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_elaborate_type_ids<I>(&mut self, type_ids: I)
+        -> Id<[ElaborateTypeId]>
+        where
+            I: IntoIterator<Item = ElaborateTypeId>
+    {
+        self.elaborate_type_ids.create(type_ids)
+            .map(Self::modularize)
+            .unwrap_or(Id::empty())
+    }
 
     /// Pushes a new slice of names.
     ///
@@ -507,15 +566,15 @@ impl Module {
         I::new_module(id.get_tree().expect("tree"))
     }
 
-    fn push_type_function(&mut self, ty: Type, name: Identifier, id: FunctionId) {
+    fn push_type_function(&mut self, ty: TypeId, name: Identifier, id: FunctionId) {
         use self::Type::*;
 
-        let functions = match ty {
-            Tuple(..) | Unresolved(..) => return,
+        let functions = match self.get_type(ty) {
+            Tuple(..) | Unresolved => return,
             Builtin(ty) => &mut self.builtin_functions[ty.index()],
-            Enum(e, ..) => self.enum_functions.at_mut(&Self::localize(e)),
-            Int(i, ..) => self.interface_functions.at_mut(&Self::localize(i)),
-            Rec(r, ..) => self.record_functions.at_mut(&Self::localize(r)),
+            Enum(e) => self.enum_functions.at_mut(&Self::localize(e)),
+            Int(i) => self.interface_functions.at_mut(&Self::localize(i)),
+            Rec(r) => self.record_functions.at_mut(&Self::localize(r)),
         };
 
         debug_assert!(!functions.contains(&(name, id)));
@@ -585,10 +644,10 @@ impl Registry for Module {
 
         match ty {
             Builtin(ty) => self.implementation_of_builtins.get(&(int, ty)).copied(),
-            Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
-            Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
-            Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
-            Tuple(..) | Unresolved(..) => None,
+            Enum(e) => self.implementation_of_enum.get(&(int, e)).copied(),
+            Int(i) => self.implementation_of_interface.get(&(int, i)).copied(),
+            Rec(r) => self.implementation_of_record.get(&(int, r)).copied(),
+            Tuple(..) | Unresolved => None,
         }
     }
 
@@ -620,6 +679,22 @@ impl Registry for Module {
         self.record_functions.at(&id)
     }
 
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        if let Some(b) = id.builtin() {
+            ElaborateType::Builtin(b)
+        } else {
+            let id = Self::localize(id);
+            *self.elaborate_type.at(&id)
+        }
+    }
+
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>)
+        -> &[ElaborateTypeId]
+    {
+        let id = Self::localize(id);
+        self.elaborate_type_ids.get(&id)
+    }
+
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         let id = Self::localize(id);
         self.names.get(&id)
@@ -638,13 +713,33 @@ impl Registry for Module {
     }
 
     fn get_type(&self, id: TypeId) -> Type {
-        let id = Self::localize(id);
-        *self.type_.at(&id)
+        if let Some(b) = id.builtin() {
+            Type::Builtin(b)
+        } else {
+            let id = Self::localize(id);
+            *self.type_.at(&id)
+        }
     }
 
     fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
         let id = Self::localize(id);
         self.type_ids.get(&id)
+    }
+}
+
+impl Store<ElaborateType, ElaborateTypeId> for Module {
+    fn len(&self) -> usize { self.elaborate_type.len() }
+
+    fn get(&self, id: ElaborateTypeId) -> ElaborateType {
+        self.get_elaborate_type(id)
+    }
+
+    fn get_range(&self, _: ElaborateTypeId) -> Range {
+        unimplemented!("<Module as Store<Elaborate>>::get_range")
+    }
+
+    fn push(&mut self, item: ElaborateType, _: Range) -> ElaborateTypeId {
+        self.push_elaborate_type(item)
     }
 }
 
@@ -659,6 +754,16 @@ impl Store<Type, TypeId> for Module {
 
     fn push(&mut self, item: Type, _: Range) -> TypeId {
         self.push_type(item)
+    }
+}
+
+impl MultiStore<ElaborateTypeId> for Module {
+    fn get_slice(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
+        if id.is_empty() { &[] } else { self.get_elaborate_type_ids(id) }
+    }
+
+    fn push_slice(&mut self, items: &[ElaborateTypeId]) -> Id<[ElaborateTypeId]> {
+        self.push_elaborate_type_ids(items.iter().copied())
     }
 }
 

@@ -73,8 +73,29 @@ pub enum Item {
 }
 
 /// A Type.
+///
+/// The actual Type of an expression, field, pattern, ...
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Type {
+    /// A built-in type.
+    Builtin(BuiltinType),
+    /// An enum type.
+    Enum(EnumId),
+    /// An interface type.
+    Int(InterfaceId),
+    /// A record type.
+    Rec(RecordId),
+    /// A tuple type.
+    Tuple(Tuple<TypeId>),
+    /// An unresolved type.
+    Unresolved,
+}
+
+/// An Elaborate Type.
+///
+/// The explicitly specified type of an expression, field, pattern, ...
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum ElaborateType {
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
@@ -84,7 +105,7 @@ pub enum Type {
     /// A record type, possibly nested.
     Rec(RecordId, PathId),
     /// A tuple type.
-    Tuple(Tuple<TypeId>),
+    Tuple(Tuple<ElaborateTypeId>),
     /// An unresolved type, possibly nested.
     Unresolved(ItemIdentifier, PathId),
 }
@@ -108,7 +129,9 @@ pub struct Extension {
     /// The extension range.
     pub range: Range,
     /// The extended type.
-    pub extended: Type,
+    pub extended: TypeId,
+    /// The specified extended type.
+    pub elaborate_extended: ElaborateTypeId,
 }
 
 /// A function signature.
@@ -124,6 +147,10 @@ pub struct FunctionSignature {
     pub arguments: Tuple<TypeId>,
     /// The return type of the function.
     pub result: TypeId,
+    /// The specified function arguments.
+    pub elaborate_arguments: Tuple<ElaborateTypeId>,
+    /// The specified return type.
+    pub elaborate_result: ElaborateTypeId,
 }
 
 /// An implementation definition.
@@ -138,7 +165,11 @@ pub struct Implementation {
     /// The interface.
     pub implemented: InterfaceId,
     /// The extended type.
-    pub extended: Type,
+    pub extended: TypeId,
+    /// The specified interface type.
+    pub elaborate_implemented: ElaborateTypeId,
+    /// The specified extended type.
+    pub elaborate_extended: ElaborateTypeId,
 }
 
 /// An interface definition.
@@ -175,6 +206,8 @@ pub struct Record {
     pub enum_: Option<EnumId>,
     /// The definition.
     pub definition: Tuple<TypeId>,
+    /// The specified definition.
+    pub elaborate_definition: Tuple<ElaborateTypeId>,
 }
 
 /// A scope.
@@ -212,13 +245,52 @@ impl Type {
     pub fn unit() -> Self { Type::Tuple(Tuple::unit()) }
 
     /// Returns an unresolved type.
+    pub fn unresolved() -> Self { Type::Unresolved }
+
+    /// Replaces the Path.
+    pub fn elaborate(self, name: ItemIdentifier, path: PathId) -> ElaborateType
+    {
+        use self::Type::*;
+
+        match self {
+            Builtin(b) if path == PathId::empty() => ElaborateType::Builtin(b),
+            Enum(id) => ElaborateType::Enum(id, path),
+            Int(id) => ElaborateType::Int(id, path),
+            Rec(id) => ElaborateType::Rec(id, path),
+            Unresolved => ElaborateType::Unresolved(name, path),
+            _ => panic!("{:?} has no path!", self),
+        }
+    }
+}
+
+impl ElaborateType {
+    /// Returns a Bool type.
+    pub fn bool_() -> Self { ElaborateType::Builtin(BuiltinType::Bool) }
+
+    /// Returns an Int type.
+    pub fn int() -> Self { ElaborateType::Builtin(BuiltinType::Int) }
+
+    /// Returns a String type.
+    pub fn string() -> Self { ElaborateType::Builtin(BuiltinType::String) }
+
+    /// Returns a Void type.
+    pub fn void() -> Self { ElaborateType::Builtin(BuiltinType::Void) }
+
+    /// Returns a Unit type.
+    pub fn unit() -> Self { ElaborateType::Tuple(Tuple::unit()) }
+
+    /// Returns an unresolved type.
     pub fn unresolved() -> Self {
-        Type::Unresolved(ItemIdentifier::unresolved(), PathId::empty())
+        ElaborateType::Unresolved(ItemIdentifier::unresolved(), PathId::empty())
     }
 
     /// Replaces the Path.
     pub fn with_path(self, path: PathId) -> Self {
-        use self::Type::*;
+        use self::ElaborateType::*;
+
+        if path == PathId::empty() {
+            return self;
+        }
 
         match self {
             Enum(id, _) => Enum(id, path),
@@ -333,13 +405,66 @@ impl ItemId for TypeId {
     }
 }
 
+impl ItemId for ElaborateTypeId {
+    fn new_tree(id: u32) -> Self {
+        debug_assert!(id < MODULE_OFFSET);
+
+        ElaborateTypeId::new(id)
+    }
+
+    fn new_module(id: u32) -> Self {
+        debug_assert!(id < REPOSITORY_OFFSET - MODULE_OFFSET);
+
+        ElaborateTypeId::new(id + MODULE_OFFSET)
+    }
+
+    fn new_repository(id: u32) -> Self {
+        debug_assert!(id < SPECIAL_OFFSET - REPOSITORY_OFFSET);
+
+        ElaborateTypeId::new(id + REPOSITORY_OFFSET)
+    }
+
+    fn get_tree(&self) -> Option<u32> {
+        let value = self.value();
+        if value < MODULE_OFFSET {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    fn get_module(&self) -> Option<u32> {
+        let value = self.value();
+        if MODULE_OFFSET <= value && value < REPOSITORY_OFFSET {
+            Some(value - MODULE_OFFSET)
+        } else {
+            None
+        }
+    }
+
+    fn get_repository(&self) -> Option<u32> {
+        let value = self.value();
+        if REPOSITORY_OFFSET <= value && value < SPECIAL_OFFSET {
+            Some(value - REPOSITORY_OFFSET)
+        } else {
+            None
+        }
+    }
+}
+
 
 //
 //  Default Implementations
 //
 
 impl Default for Type {
-    fn default() -> Self { Type::Unresolved(Default::default(), Default::default()) }
+    fn default() -> Self { Type::Unresolved }
+}
+
+impl Default for ElaborateType {
+    fn default() -> Self {
+        ElaborateType::Unresolved(Default::default(), Default::default())
+    }
 }
 
 impl Default for PathComponent {
@@ -376,4 +501,42 @@ impl convert::From<InterfaceId> for Item {
 
 impl convert::From<RecordId> for Item {
     fn from(r: RecordId) -> Self { Item::Rec(r) }
+}
+
+//
+//  TryFrom Implementations
+//
+
+impl convert::TryFrom<Type> for ElaborateType {
+    type Error = &'static str;
+
+    fn try_from(t: Type) -> Result<Self, Self::Error> {
+        use self::Type::*;
+
+        match t {
+            Builtin(b) => Ok(ElaborateType::Builtin(b)),
+            Enum(e) => Ok(ElaborateType::Enum(e, PathId::empty())),
+            Int(i) => Ok(ElaborateType::Int(i, PathId::empty())),
+            Rec(r) => Ok(ElaborateType::Rec(r, PathId::empty())),
+            Tuple(..) => Err("No conversion from Type::Tuple to ElaborateType"),
+            Unresolved => Ok(ElaborateType::Unresolved(Default::default(), PathId::empty())),
+        }
+    }
+}
+
+impl convert::TryFrom<ElaborateType> for Type {
+    type Error = &'static str;
+
+    fn try_from(t: ElaborateType) -> Result<Self, Self::Error> {
+        use self::ElaborateType::*;
+
+        match t {
+            Builtin(b) => Ok(Type::Builtin(b)),
+            Enum(e, ..) => Ok(Type::Enum(e)),
+            Int(i, ..) => Ok(Type::Int(i)),
+            Rec(r, ..) => Ok(Type::Rec(r)),
+            Tuple(..) => Err("No conversion from ElaborateType::Tuple to Type"),
+            Unresolved(..) => Ok(Type::Unresolved),
+        }
+    }
 }

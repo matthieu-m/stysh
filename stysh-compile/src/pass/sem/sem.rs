@@ -196,8 +196,7 @@ impl<'a> GraphBuilder<'a> {
             .expect("Enum to be registered");
 
         let scope = {
-            let self_ = hir::Type::Enum(id, hir::Id::empty());
-            let mut scope = scp::TypeScope::new(self.scope, self_);
+            let mut scope = scp::TypeScope::new(self.scope, hir::Type::Enum(id));
             scope.enable_self();
             scope
         };
@@ -224,6 +223,8 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn extension_item(&mut self, e: ast::ExtensionId) -> hir::Item {
+        use std::convert::TryInto;
+
         let ext = self.ast_module.get_extension(e);
         let id = self.hir_module.borrow().lookup_extension(ext.name.into())
             .expect("Extension to be registered");
@@ -231,8 +232,14 @@ impl<'a> GraphBuilder<'a> {
         let name = ext.name.into();
         let range = ext.span();
         let extended = self.scope.lookup_type(name);
+        let elaborate_extended = extended.try_into().expect("FIXME (tuple)");
 
-        let ext = hir::Extension { name, range, extended, };
+        let extended = self.hir_module.borrow_mut().push_type(extended);
+        let elaborate_extended = self.hir_module
+            .borrow_mut()
+            .push_elaborate_type(elaborate_extended);
+
+        let ext = hir::Extension { name, range, extended, elaborate_extended, };
         self.hir_module.borrow_mut().set_extension(id, ext);
 
         hir::Item::Ext(id)
@@ -252,30 +259,49 @@ impl<'a> GraphBuilder<'a> {
 
         let scope = self.resolve_scope(self.ast_module.get_function_scope(f));
 
-        let arguments = self.within_scope(scope, |scope| {
+        let (arguments, elaborate_arguments) = self.within_scope(scope, |scope| {
             let ast_arguments = self.ast_module.get_arguments(fun.arguments);
 
+            let mut elaborate_fields = Vec::with_capacity(ast_arguments.len());
             let mut fields = Vec::with_capacity(ast_arguments.len());
             let mut names = Vec::with_capacity(ast_arguments.len());
 
             for a in ast_arguments {
+                let type_ = self
+                    .type_mapper(scope, self.ast_module, self.hir_module)
+                    .type_of(a.type_);
+
                 names.push(hir::ValueIdentifier(a.name.id(), a.name.span()));
-                fields.push(self.type_mapper(scope, self.ast_module, self.hir_module)
-                        .type_of(a.type_));
+                fields.push(self.simplify(type_));
+                elaborate_fields.push(type_);
             }
 
             let names = self.hir_module.borrow_mut().push_names(names);
             let fields = self.hir_module.borrow_mut().push_type_ids(fields);
+            let elaborate_fields = self.hir_module.borrow_mut()
+                .push_elaborate_type_ids(elaborate_fields);
 
-            hir::Tuple { fields, names, }
+            (
+                hir::Tuple { fields, names, },
+                hir::Tuple { fields: elaborate_fields, names, },
+            )
         });
 
-        let result = self.within_scope(scope, |scope| {
+        let elaborate_result = self.within_scope(scope, |scope| {
             self.type_mapper(scope, self.ast_module, self.hir_module)
                 .type_of(fun.result)
         });
+        let result = self.simplify(elaborate_result);
 
-        let signature = hir::FunctionSignature { name, range, scope, arguments, result, };
+        let signature = hir::FunctionSignature {
+            name,
+            range,
+            scope,
+            arguments,
+            result,
+            elaborate_arguments,
+            elaborate_result,
+        };
 
         self.hir_module.borrow_mut().set_function(id, signature);
 
@@ -283,6 +309,8 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn implementation_item(&mut self, i: ast::ImplementationId) -> hir::Item {
+        use std::convert::TryInto;
+
         let imp = self.ast_module.get_implementation(i);
         let id = self.hir_module.borrow().lookup_implementation(imp.extended.into())
             .expect("Implementation to be registered");
@@ -290,7 +318,7 @@ impl<'a> GraphBuilder<'a> {
         let implemented_name = imp.implemented.into();
         let extended_name = imp.extended.into();
         let range = imp.span();
-        let implemented = if let hir::Type::Int(i, _) =
+        let implemented = if let hir::Type::Int(i) =
             self.scope.lookup_type(implemented_name)
         {
             i
@@ -300,9 +328,25 @@ impl<'a> GraphBuilder<'a> {
             unreachable!("Unknown interface {:?}", implemented_name);
         };
         let extended = self.scope.lookup_type(extended_name);
+        let elaborate_implemented = hir::ElaborateType::Int(implemented, hir::PathId::empty());
+        let elaborate_extended = extended.try_into().expect("FIXME (tuple)");
+
+        let extended = self.hir_module.borrow_mut().push_type(extended);
+        let elaborate_implemented = self.hir_module
+            .borrow_mut()
+            .push_elaborate_type(elaborate_implemented);
+        let elaborate_extended = self.hir_module
+            .borrow_mut()
+            .push_elaborate_type(elaborate_extended);
 
         let imp = hir::Implementation {
-            implemented_name, extended_name, range, implemented, extended,
+            implemented_name,
+            extended_name,
+            range,
+            implemented,
+            extended,
+            elaborate_implemented,
+            elaborate_extended,
         };
         self.hir_module.borrow_mut().set_implementation(id, imp);
 
@@ -331,8 +375,7 @@ impl<'a> GraphBuilder<'a> {
             .expect("Record to be registered");
 
         let scope = {
-            let self_ = hir::Type::Rec(id, hir::Id::empty());
-            let mut scope = scp::TypeScope::new(self.scope, self_);
+            let mut scope = scp::TypeScope::new(self.scope, hir::Type::Rec(id));
             scope.enable_self();
             scope
         };
@@ -358,14 +401,15 @@ impl<'a> GraphBuilder<'a> {
         let id = self.hir_module.borrow().lookup_record(name)
             .expect("Record to be registered");
 
-        let definition = match record {
+        let elaborate_definition = match record {
             Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
             Tuple(_, tup) => 
                 self.type_mapper(scope, self.ast_module, self.hir_module)
                     .tuple_of(tup),
         };
+        let definition = self.simplify_tuple(elaborate_definition);
 
-        let record = hir::Record { name, range, enum_, definition, };
+        let record = hir::Record { name, range, enum_, definition, elaborate_definition, };
         self.hir_module.borrow_mut().set_record(id, record);
 
         id
@@ -379,19 +423,20 @@ impl<'a> GraphBuilder<'a> {
             hir::Scope::Module => fun(self.scope),
             hir::Scope::Ext(ext) => {
                 let extended = self.hir_module.borrow().get_extension(ext).extended;
+                let extended = self.hir_module.borrow().get_type(extended);
                 let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
             },
             hir::Scope::Imp(imp) => {
                 let extended = self.hir_module.borrow().get_implementation(imp).extended;
+                let extended = self.hir_module.borrow().get_type(extended);
                 let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
             },
             hir::Scope::Int(int) => {
-                let int = hir::Type::Int(int, hir::PathId::empty());
-                let mut scope = scp::TypeScope::new(self.scope, int);
+                let mut scope = scp::TypeScope::new(self.scope, hir::Type::Int(int));
                 scope.enable_self();
                 fun(&scope)
             }
@@ -455,6 +500,60 @@ impl<'a> GraphBuilder<'a> {
                 hir::Scope::Int(int.expect("Interface"))
             },
         }
+    }
+
+    fn simplify(&self, t: hir::ElaborateTypeId) -> hir::TypeId {
+        self.simplify_impl(&mut self.hir_module.borrow_mut(), t)
+    }
+
+    fn simplify_tuple(&self, t: hir::Tuple<hir::ElaborateTypeId>)
+        -> hir::Tuple<hir::TypeId>
+    {
+        self.simplify_tuple_impl(&mut self.hir_module.borrow_mut(), t)
+    }
+
+    fn simplify_impl(&self, module: &mut hir::Module, t: hir::ElaborateTypeId)
+        -> hir::TypeId
+    {
+        use self::hir::ElaborateType::*;
+
+        match module.get_elaborate_type(t) {
+            Builtin(b) => hir::TypeId::from(b),
+            Enum(e, ..) => module.push_type(hir::Type::Enum(e)),
+            Int(i, ..) => module.push_type(hir::Type::Int(i)),
+            Rec(r, ..) => module.push_type(hir::Type::Rec(r)),
+            Tuple(t) => {
+                let tuple = self.simplify_tuple_impl(module, t);
+                module.push_type(hir::Type::Tuple(tuple))
+            },
+            Unresolved(..) => module.push_type(hir::Type::Unresolved),
+        }
+    }
+
+    fn simplify_tuple_impl(
+        &self,
+        module: &mut hir::Module,
+        tup: hir::Tuple<hir::ElaborateTypeId>,
+    )
+        -> hir::Tuple<hir::TypeId>
+    {
+        if tup.fields == hir::Id::empty() {
+            return hir::Tuple::unit();
+        }
+
+        //  End borrow early.
+        let elaborate: Vec<_> = module.get_elaborate_type_ids(tup.fields)
+            .iter()
+            .copied()
+            .collect();
+
+        //  End borrow early.
+        let fields: Vec<_> = elaborate.into_iter()
+            .map(|e| self.simplify_impl(module, e))
+            .collect();
+
+        let fields = module.push_type_ids(fields);
+        hir::Tuple { fields, names: tup.names, }
     }
 
     fn function_scope<'b>(
@@ -589,12 +688,14 @@ mod tests {
         };
         {
             let hir = env.hir();
-            let (i, t) = (hir.item(), hir.type_module());
+            let (i, t, te) = (hir.item(), hir.type_module(), hir.elaborate_type_module());
 
             i.rec(env.item_id(5, 3))
                 .range(0, 22)
                 .push(t.int())
+                .push_elaborate(te.int())
                 .push(t.string())
+                .push_elaborate(te.string())
                 .build();
         }
 

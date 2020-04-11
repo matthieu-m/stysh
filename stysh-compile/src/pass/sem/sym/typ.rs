@@ -32,11 +32,11 @@ impl<'a, A, H> TypeMapper<'a, A, H> {
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::Type, hir::TypeId> + MultiStore<hir::ValueIdentifier>
-            + MultiStore<hir::PathComponent> + MultiStore<hir::TypeId>,
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::ValueIdentifier>
+            + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
 {
     /// Translates a type into... a type!
-    pub fn type_of(&self, t: ast::TypeId) -> hir::TypeId {
+    pub fn type_of(&self, t: ast::TypeId) -> hir::ElaborateTypeId {
         use self::ast::Type;
 
         match self.ast_store.get(t) {
@@ -48,7 +48,7 @@ impl<'a, A, H> TypeMapper<'a, A, H>
     }
 
     /// Translates a tuple of types into a type.
-    pub fn tuple_of(&self, tup: ast::Tuple<ast::Type>) -> hir::Tuple<hir::TypeId> {
+    pub fn tuple_of(&self, tup: ast::Tuple<ast::Type>) -> hir::Tuple<hir::ElaborateTypeId> {
         let fields = self.ast_store.get_slice(tup.fields);
         let names = self.ast_store.get_slice(tup.names);
 
@@ -67,11 +67,11 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::Type, hir::TypeId> + MultiStore<hir::ValueIdentifier>
-            + MultiStore<hir::PathComponent> + MultiStore<hir::TypeId>,
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::ValueIdentifier>
+            + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
 {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
-        -> hir::TypeId
+        -> hir::ElaborateTypeId
     {
         let components = self.ast_store.get_slice(p.components);
         let range = if let Some(first) = components.first() {
@@ -87,19 +87,25 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 
         let path = self.hir_store.borrow_mut().push_slice(&path);
 
-        self.hir_store.borrow_mut().push(hir::Type::Unresolved(t.into(), path), range)
+        self.hir_store.borrow_mut().push(hir::ElaborateType::Unresolved(t.into(), path), range)
     }
 
-    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::TypeId {
-        let type_ = self.scope.lookup_type(t.into());
+    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::ElaborateTypeId {
         let range = t.span();
+        let type_ = self.scope
+            .lookup_type(t.into())
+            .elaborate(t.into(), hir::PathId::empty());
 
-        self.hir_store.borrow_mut().push(type_, range)
+        if let hir::ElaborateType::Builtin(b) = type_ {
+            hir::ElaborateTypeId::from(b)
+        } else {
+            self.hir_store.borrow_mut().push(type_, range)
+        }
     }
 
     /// Translates a tuple of types into a type.
-    pub fn type_of_tuple(&self, t: ast::Tuple<ast::Type>) -> hir::TypeId {
-        let type_ = hir::Type::Tuple(self.tuple_of(t));
+    pub fn type_of_tuple(&self, t: ast::Tuple<ast::Type>) -> hir::ElaborateTypeId {
+        let type_ = hir::ElaborateType::Tuple(self.tuple_of(t));
         let range = t.span();
         self.hir_store.borrow_mut().push(type_, range)
     }

@@ -103,7 +103,7 @@ impl<'a> FieldFetcher<'a> {
         let registry = self.core.registry();
 
         let definition = match tree.get_expression_type(accessed) {
-            Rec(id, _) => registry.get_record(id).definition,
+            Rec(id) => registry.get_record(id).definition,
             Tuple(t) => t,
             _ => return None,
         };
@@ -134,7 +134,7 @@ impl<'a> FieldFetcher<'a> {
                 => self.fetch_method_impl(e, name, typ, receiver, arguments),
             Tuple(..)
                 => unimplemented!("fetch_method of Tuple"),
-            Unresolved(..)
+            Unresolved
                 => Status::Unfetched
         }
     }

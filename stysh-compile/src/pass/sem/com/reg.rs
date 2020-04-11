@@ -184,6 +184,30 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        debug_assert!(id.is_builtin() || id.is_module() || id.is_repository(), "{:?}", id);
+
+        if let Some(b) = id.builtin() {
+            ElaborateType::Builtin(b)
+        } else if id.is_module() {
+            self.module.get_elaborate_type(id)
+        } else {
+            self.repository.get_elaborate_type(id)
+        }
+    }
+  
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
+        debug_assert!(id == Id::empty() || id.is_module() || id.is_repository(), "{:?}", id);
+
+        if id == Id::empty() {
+            &[]
+        } else if id.is_module() {
+            self.module.get_elaborate_type_ids(id)
+        } else {
+            self.repository.get_elaborate_type_ids(id)
+        }
+    }
+
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         debug_assert!(id == Id::empty() || id.is_module() || id.is_repository(), "{:?}", id);
 
@@ -322,6 +346,26 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
         self.registry.get_record_functions(id)
+    }
+
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        if let Some(b) = id.builtin() {
+            ElaborateType::Builtin(b)
+        } else if id.is_tree() {
+            self.tree.get_elaborate_type(id)
+        } else {
+            self.registry.get_elaborate_type(id)
+        }
+    }
+  
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
+        if id == Id::empty() {
+            &[]
+        } else if id.is_tree() {
+            self.tree.get_elaborate_type_ids(id)
+        } else {
+            self.registry.get_elaborate_type_ids(id)
+        }
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

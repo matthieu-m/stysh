@@ -105,6 +105,12 @@ pub struct Repository {
     //  Components
     //
 
+    /// ElaborateTypes
+    elaborate_type: JaggedArray<ElaborateType>,
+
+    /// ElaborateTypeIds
+    elaborate_type_ids: JaggedMultiArray<ElaborateTypeId>,
+
     /// Names
     names: JaggedMultiArray<ValueIdentifier>,
 
@@ -153,6 +159,8 @@ impl Repository {
             record: JaggedArray::new(5),
             record_functions: JaggedArray::new(5),
 
+            elaborate_type: JaggedArray::new(5),
+            elaborate_type_ids: JaggedMultiArray::new(5),
             names: JaggedMultiArray::new(5),
             path_components: JaggedMultiArray::new(5),
             record_ids: JaggedMultiArray::new(5),
@@ -219,6 +227,8 @@ impl Repository {
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
             record_functions: self.record_functions.snapshot(),
+            elaborate_type: self.elaborate_type.snapshot(),
+            elaborate_type_ids: self.elaborate_type_ids.snapshot(),
             names: self.names.snapshot(),
             path_components: self.path_components.snapshot(),
             record_ids: self.record_ids.snapshot(),
@@ -315,9 +325,11 @@ impl Repository {
 
         let name = ext.name;
         let range = ext.range;
-        let extended = self.insert_type_impl(ext.extended, module, mapper);
+        let extended = self.insert_type(ext.extended, module, mapper);
+        let elaborate_extended =
+            self.insert_elaborate_type(ext.elaborate_extended, module, mapper);
 
-        let ext = Extension { name, range, extended, };
+        let ext = Extension { name, range, extended, elaborate_extended, };
 
         self.extension.push(ext);
         self.extension_lookup.insert(name, id);
@@ -348,8 +360,20 @@ impl Repository {
         };
         let arguments = self.insert_tuple(signature.arguments, module, mapper);
         let result = self.insert_type(signature.result, module, mapper);
+        let elaborate_arguments =
+            self.insert_elaborate_tuple(signature.elaborate_arguments, module, mapper);
+        let elaborate_result =
+            self.insert_elaborate_type(signature.elaborate_result, module, mapper);
 
-        let signature = FunctionSignature { name, scope, range, arguments, result, };
+        let signature = FunctionSignature {
+            name,
+            scope,
+            range,
+            arguments,
+            result,
+            elaborate_arguments,
+            elaborate_result,
+        };
 
         self.function.push(signature);
         self.function_lookup.insert(name, id);
@@ -378,7 +402,11 @@ impl Repository {
         let extended_name = imp.extended_name;
         let range = imp.range;
         let implemented = mapper.map_interface(imp.implemented);
-        let extended = self.insert_type_impl(imp.extended, module, mapper);
+        let extended = self.insert_type(imp.extended, module, mapper);
+        let elaborate_implemented =
+            self.insert_elaborate_type(imp.elaborate_implemented, module, mapper);
+        let elaborate_extended = 
+            self.insert_elaborate_type(imp.elaborate_extended, module, mapper);
 
         let imp = Implementation {
             implemented_name, 
@@ -386,22 +414,24 @@ impl Repository {
             range, 
             implemented, 
             extended,
+            elaborate_implemented,
+            elaborate_extended,
         };
 
         self.implementation.push(imp);
         self.implementation_functions.push(functions);
         self.implementation_lookup.insert(extended_name, id);
 
-        match extended {
+        match module.get_type(imp.extended) {
             Builtin(ty) =>
                 { self.implementation_of_builtin.insert((implemented, ty), id); },
-            Enum(e, ..) =>
+            Enum(e) =>
                 { self.implementation_of_enum.insert((implemented, e), id); },
-            Int(int, ..) =>
+            Int(int) =>
                 { self.implementation_of_interface.insert((implemented, int), id); },
-            Rec(rec, ..) =>
+            Rec(rec) =>
                 { self.implementation_of_record.insert((implemented, rec), id); },
-            Tuple(..) | Unresolved(..) =>
+            Tuple(..) | Unresolved =>
                 unimplemented!("Implementations for {:?}", extended),
         }
     }
@@ -454,10 +484,95 @@ impl Repository {
         let range = record.range;
         let enum_ = record.enum_.map(|e| mapper.map_enum(e));
         let definition = self.insert_tuple(record.definition, module, mapper);
+        let elaborate_definition =
+            self.insert_elaborate_tuple(record.elaborate_definition, module, mapper);
 
-        self.record.push(Record { name, range, enum_, definition, });
+        self.record.push(Record { name, range, enum_, definition, elaborate_definition, });
         self.record_functions.push(functions);
         self.record_lookup.insert(name, id);
+    }
+
+    fn insert_elaborate_type(
+        &mut self,
+        ty: ElaborateTypeId,
+        module: &Module,
+        mapper: &IdMapper,
+    )
+        -> ElaborateTypeId
+    {
+        use self::ElaborateType::*;
+
+        let ty = match module.get_elaborate_type(ty) {
+            Builtin(b) => return ElaborateTypeId::from(b),
+            ty => ty,
+        };
+
+        let ty = self.insert_elaborate_type_impl(ty, module, mapper);
+
+        let index = self.type_.len();
+        self.elaborate_type.push(ty);
+        ElaborateTypeId::new_repository(index as u32)
+    }
+
+    fn insert_elaborate_tuple(
+        &mut self,
+        tuple: Tuple<ElaborateTypeId>,
+        module: &Module,
+        mapper: &IdMapper,
+    )
+        -> Tuple<ElaborateTypeId>
+    {
+        let mut fields = vec!();
+        for &id in module.get_elaborate_type_ids(tuple.fields) {
+            fields.push(self.insert_elaborate_type(id, module, &mapper));
+        }
+
+        let fields = self.elaborate_type_ids.push(&fields)
+            .map(|index| Id::new_repository(index as u32))
+            .unwrap_or(Id::empty());
+
+        let names = self.names.push(module.get_names(tuple.names))
+            .map(|index| Id::new_repository(index as u32))
+            .unwrap_or(Id::empty());
+
+        Tuple { fields, names, }
+    }
+
+    fn insert_elaborate_type_impl(
+        &mut self,
+        type_: ElaborateType,
+        module: &Module,
+        mapper: &IdMapper,
+    )
+        -> ElaborateType
+    {
+        use self::ElaborateType::*;
+
+        match type_ {
+            Builtin(b) => Builtin(b),
+            Enum(e, p) => {
+                let e = mapper.map_enum(e);
+                let p = self.insert_path_components(p, module);
+                Enum(e, p)
+            },
+            Int(i, p) => {
+                let i = mapper.map_interface(i);
+                let p = self.insert_path_components(p, module);
+                Int(i, p)
+            }
+            Rec(r, p) => {
+                let r = mapper.map_record(r);
+                let p = self.insert_path_components(p, module);
+                Rec(r, p)
+            },
+            Tuple(tuple) => {
+                let tuple = self.insert_elaborate_tuple(tuple, module, mapper);
+                Tuple(tuple)
+            },
+            Unresolved(name, path) =>
+                unreachable!("Cannot insert Unresolved({:?}, {:?})",
+                    name, module.get_path_components(path)),
+        }
     }
 
     fn insert_path_components(
@@ -525,28 +640,11 @@ impl Repository {
 
         match type_ {
             Builtin(b) => Builtin(b),
-            Enum(e, p) => {
-                let e = mapper.map_enum(e);
-                let p = self.insert_path_components(p, module);
-                Enum(e, p)
-            },
-            Int(i, p) => {
-                let i = mapper.map_interface(i);
-                let p = self.insert_path_components(p, module);
-                Int(i, p)
-            }
-            Rec(r, p) => {
-                let r = mapper.map_record(r);
-                let p = self.insert_path_components(p, module);
-                Rec(r, p)
-            },
-            Tuple(tuple) => {
-                let tuple = self.insert_tuple(tuple, module, mapper);
-                Tuple(tuple)
-            },
-            Unresolved(name, path) =>
-                unreachable!("Cannot insert Unresolved({:?}, {:?})",
-                    name, module.get_path_components(path)),
+            Enum(e) => Enum(mapper.map_enum(e)),
+            Int(i) => Int(mapper.map_interface(i)),
+            Rec(r) => Rec(mapper.map_record(r)),
+            Tuple(tuple) => Tuple(self.insert_tuple(tuple, module, mapper)),
+            Unresolved => unreachable!("Cannot insert Unresolved"),
         }
     }
 }
@@ -596,6 +694,8 @@ pub struct RepositorySnapshot {
     record_functions: JaggedArraySnapshot<Functions>,
 
     //  Components
+    elaborate_type: JaggedArraySnapshot<ElaborateType>,
+    elaborate_type_ids: JaggedMultiArraySnapshot<ElaborateTypeId>,
     names: JaggedMultiArraySnapshot<ValueIdentifier>,
     path_components: JaggedMultiArraySnapshot<PathComponent>,
     record_ids: JaggedMultiArraySnapshot<RecordId>,
@@ -657,10 +757,10 @@ impl Registry for RepositorySnapshot {
 
         match ty {
             Builtin(ty) => self.implementation_of_builtin.get(&(int, ty)).copied(),
-            Enum(e, ..) => self.implementation_of_enum.get(&(int, e)).copied(),
-            Int(i, ..) => self.implementation_of_interface.get(&(int, i)).copied(),
-            Rec(r, ..) => self.implementation_of_record.get(&(int, r)).copied(),
-            Tuple(..) | Unresolved(..) => None,
+            Enum(e) => self.implementation_of_enum.get(&(int, e)).copied(),
+            Int(i) => self.implementation_of_interface.get(&(int, i)).copied(),
+            Rec(r) => self.implementation_of_record.get(&(int, r)).copied(),
+            Tuple(..) | Unresolved => None,
         }
     }
 
@@ -686,6 +786,14 @@ impl Registry for RepositorySnapshot {
 
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
         self.record_functions.at(index_of(id))
+    }
+
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        *self.elaborate_type.at(index_of(id))
+    }
+  
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
+        self.elaborate_type_ids.get_slice(index_of(id))
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

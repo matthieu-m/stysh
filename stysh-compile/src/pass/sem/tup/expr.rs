@@ -261,8 +261,8 @@ impl<'a> ExprUnifier<'a> {
     /// Cast the expression to a new type to unify it.
     fn cast(&self, e: ExpressionId, target: Type) -> Status {
         let implicit = match target {
-            Type::Enum(id, ..) => Implicit::ToEnum(id, e),
-            Type::Int(id, ..) => Implicit::ToInt(id, e),
+            Type::Enum(id) => Implicit::ToEnum(id, e),
+            Type::Int(id) => Implicit::ToInt(id, e),
             _ => unreachable!("{:?}", target),
         };
 
@@ -411,11 +411,11 @@ mod tests {
         };
 
         let create = |t: &TypeFactory<Tree>, v: &ExpressionFactory| {
-            let constructor = v.constructor(t.record(a).build())
+            let constructor = v.constructor(t.record(a))
                 .range(2, 3)
                 .build();
             let block = v.block(constructor)
-                .type_(t.enum_(x).build())
+                .type_(t.enum_(x))
                 .build_with_type();
             (block, constructor)
         };
@@ -434,7 +434,7 @@ mod tests {
             let (block, constructor) = create(&t, &v);
 
             let implicit = v.implicit(constructor)
-                .type_(Type::Enum(x, PathId::empty()))
+                .type_(Type::Enum(x))
                 .build();
 
             local.target().borrow_mut()
@@ -459,11 +459,11 @@ mod tests {
         };
 
         let create = |t: &TypeFactory<Tree>, v: &ExpressionFactory| {
-            let constructor = v.constructor(t.record(a).build())
+            let constructor = v.constructor(t.record(a))
                 .range(2, 3)
                 .build();
             let block = v.block(constructor)
-                .type_(t.interface(x).build())
+                .type_(t.interface(x))
                 .build_with_type();
             (block, constructor)
         };
@@ -482,7 +482,7 @@ mod tests {
             let (block, constructor) = create(&t, &v);
 
             let implicit = v.implicit(constructor)
-                .type_(Type::Int(x, PathId::empty()))
+                .type_(Type::Int(x))
                 .build();
 
             local.target().borrow_mut()

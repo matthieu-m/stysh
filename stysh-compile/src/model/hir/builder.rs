@@ -45,6 +45,21 @@ impl Factory {
     /// Creates an TypeIdFactory, backed by modules.
     pub fn type_module(&self) -> TypeIdFactory<Module> { TypeIdFactory::new(self.0.clone()) }
 
+    /// Creates an ElaboraetTypeFactory.
+    pub fn elaborate_type(&self) -> ElaborateTypeFactory<Tree> {
+        ElaborateTypeFactory::new(self.1.clone())
+    }
+
+    /// Creates an ElaborateTypeIdFactory.
+    pub fn elaborate_type_id(&self) -> ElaborateTypeIdFactory<Tree> {
+        ElaborateTypeIdFactory::new(self.1.clone())
+    }
+
+    /// Creates an ElaborateTypeIdFactory, backed by modules.
+    pub fn elaborate_type_module(&self) -> ElaborateTypeIdFactory<Module> {
+        ElaborateTypeIdFactory::new(self.0.clone())
+    }
+
     /// Creates a ExpressionFactory.
     pub fn value(&self) -> ExpressionFactory { ExpressionFactory::new(self.1.clone()) }
 }
@@ -70,7 +85,8 @@ pub struct ExtensionBuilder {
     module: RcModule,
     name: ItemIdentifier,
     range: Range,
-    extended: Type,
+    extended: TypeId,
+    elaborate_extended: ElaborateTypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +97,8 @@ pub struct FunctionSignatureBuilder {
     scope: Scope,
     arguments: TupleBuilder<Module, TypeId>,
     result: TypeId,
+    elaborate_arguments: TupleBuilder<Module, ElaborateTypeId>,
+    elaborate_result: ElaborateTypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -90,7 +108,9 @@ pub struct ImplementationBuilder {
     extended_name: ItemIdentifier,
     range: Range,
     implemented: InterfaceId,
-    extended: Type,
+    extended: TypeId,
+    elaborate_implemented: ElaborateTypeId,
+    elaborate_extended: ElaborateTypeId,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +126,7 @@ pub struct RecordBuilder {
     range: Range,
     enum_: Option<EnumId>,
     definition: TupleBuilder<Module, TypeId>,
+    elaborate_definition: TupleBuilder<Module, ElaborateTypeId>,
 }
 
 impl ItemFactory {
@@ -122,7 +143,7 @@ impl ItemFactory {
     }
 
     /// Creates an ExtensionBuilder.
-    pub fn ext(&self, name: ItemIdentifier, extended: Type)
+    pub fn ext(&self, name: ItemIdentifier, extended: TypeId)
         ->  ExtensionBuilder
     {
         ExtensionBuilder::new(self.0.clone(), name, extended)
@@ -139,8 +160,27 @@ impl ItemFactory {
         FunctionSignatureBuilder::new(self.0.clone(), name, result)
     }
 
+    /// Creates an ImplementationBuilder.
+    pub fn impl_(
+        &self,
+        implemented_name: ItemIdentifier,
+        extended_name: ItemIdentifier,
+        implemented: InterfaceId,
+        extended: TypeId
+    )
+        -> ImplementationBuilder
+    {
+        ImplementationBuilder::new(
+            self.0.clone(),
+            implemented_name,
+            extended_name,
+            implemented,
+            extended,
+        )
+    }
+
     /// Creates an InterfaceBuilder.
-    pub fn int(&self, name: ItemIdentifier) ->  InterfaceBuilder {
+    pub fn int(&self, name: ItemIdentifier) -> InterfaceBuilder {
         InterfaceBuilder::new(self.0.clone(), name)
     }
 
@@ -216,7 +256,7 @@ impl ExtensionBuilder {
     pub fn new(
         module: RcModule,
         name: ItemIdentifier,
-        extended: Type,
+        extended: TypeId,
     )
         -> Self
     {
@@ -225,6 +265,7 @@ impl ExtensionBuilder {
             name,
             range: Default::default(),
             extended,
+            elaborate_extended: Default::default(),
         }
     }
 
@@ -234,12 +275,19 @@ impl ExtensionBuilder {
         self
     }
 
+    /// Sets the elaborate type.
+    pub fn elaborate_extended(&mut self, e: ElaborateTypeId) -> &mut Self {
+        self.elaborate_extended = e;
+        self
+    }
+
     /// Creates an Extension.
     pub fn build(&self) -> ExtensionId {
         let extension = Extension {
             name: self.name,
             range: self.range,
             extended: self.extended,
+            elaborate_extended: self.elaborate_extended,
         };
 
         let id = self.module.borrow().lookup_extension(self.name);
@@ -269,14 +317,22 @@ impl FunctionSignatureBuilder {
             name,
             range: Default::default(),
             scope: Default::default(),
-            arguments: TupleBuilder::new(module),
+            arguments: TupleBuilder::new(module.clone()),
             result,
+            elaborate_arguments: TupleBuilder::new(module),
+            elaborate_result: Default::default(),
         }
     }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
         self.range = range(pos, len);
+        self
+    }
+
+    /// Sets the elaborate result.
+    pub fn elaborate_result(&mut self, r: ElaborateTypeId) -> &mut Self {
+        self.elaborate_result = r;
         self
     }
 
@@ -300,15 +356,28 @@ impl FunctionSignatureBuilder {
         self
     }
 
+    /// Pushes an elaborate argument.
+    pub fn push_elaborate(&mut self, type_: ElaborateTypeId) -> &mut Self
+    {
+        self.elaborate_arguments.push(type_);
+        self
+    }
+
     /// Creates a FunctionSignature.
     pub fn build(&self) -> FunctionSignature {
+        let elaborate_result = self.build_elaborate_result(self.result);
+
         let arguments = self.arguments.build();
+        let elaborate_arguments = self.build_elaborate_arguments(arguments);
+
         let signature = FunctionSignature {
             name: self.name,
             range: self.range,
             scope: self.scope,
             arguments,
             result: self.result,
+            elaborate_arguments,
+            elaborate_result,
         };
 
         let id = self.module.borrow().lookup_function(self.name);
@@ -322,6 +391,63 @@ impl FunctionSignatureBuilder {
 
         signature
     }
+
+    fn build_elaborate_result(&self, result: TypeId) -> ElaborateTypeId {
+        if self.elaborate_result != ElaborateTypeId::default() {
+            return self.elaborate_result;
+        }
+
+        self.convert_type(result)
+    }
+
+    fn build_elaborate_arguments(&self, arguments: Tuple<TypeId>)
+        -> Tuple<ElaborateTypeId>
+    {
+        if !self.elaborate_arguments.fields.is_empty() {
+            let mut elaborate = self.elaborate_arguments.build();
+            elaborate.names = arguments.names;
+            return elaborate;
+        }
+
+        self.convert_tuple(arguments)
+    }
+
+    fn convert_type(&self, ty: TypeId) -> ElaborateTypeId {
+        use std::convert::TryInto;
+
+        if let Some(b) = ty.builtin() {
+            return ElaborateTypeId::from(b);
+        }
+
+        let type_ = self.module.borrow().get_type(ty);
+
+        let elaborate = if let Type::Tuple(tup) = type_ {
+            ElaborateType::Tuple(self.convert_tuple(tup))
+        } else {
+            type_.try_into().expect("Type")
+        };
+        self.module.borrow_mut().push_elaborate_type(elaborate)
+    }
+
+    fn convert_tuple(&self, tup: Tuple<TypeId>) -> Tuple<ElaborateTypeId> {
+        if tup.fields == Id::empty() {
+            return Tuple::unit();
+        }
+
+        let tys: Vec<_> = self.module.borrow()
+            .get_type_ids(tup.fields)
+            .iter()
+            .copied()
+            .collect();
+
+        let mut elaborate = TupleBuilder::new(self.module.clone());
+        for ty in tys {
+            elaborate.push(self.convert_type(ty));
+        }
+        let mut elaborate = elaborate.build();
+        elaborate.names = tup.names;
+        elaborate
+    }
 }
 
 impl ImplementationBuilder {
@@ -331,7 +457,7 @@ impl ImplementationBuilder {
         implemented_name: ItemIdentifier,
         extended_name: ItemIdentifier,
         implemented: InterfaceId,
-        extended: Type,
+        extended: TypeId,
     )
         -> Self
     {
@@ -342,12 +468,26 @@ impl ImplementationBuilder {
             range: Default::default(),
             implemented,
             extended,
+            elaborate_implemented: Default::default(),
+            elaborate_extended: Default::default(),
         }
     }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
         self.range = range(pos, len);
+        self
+    }
+
+    /// Sets the elaborate implemented interface.
+    pub fn elaborate_implemented(&mut self, i: ElaborateTypeId) -> &mut Self {
+        self.elaborate_implemented = i;
+        self
+    }
+
+    /// Sets the elaborate extended type.
+    pub fn elaborate_extended(&mut self, t: ElaborateTypeId) -> &mut Self {
+        self.elaborate_extended = t;
         self
     }
 
@@ -359,6 +499,8 @@ impl ImplementationBuilder {
             range: self.range,
             implemented: self.implemented,
             extended: self.extended,
+            elaborate_implemented: self.elaborate_implemented,
+            elaborate_extended: self.elaborate_extended,
         };
 
         let id = self.module.borrow().lookup_implementation(self.extended_name);
@@ -422,7 +564,8 @@ impl RecordBuilder {
             name,
             range: Default::default(),
             enum_: None,
-            definition: TupleBuilder::new(module),
+            definition: TupleBuilder::new(module.clone()),
+            elaborate_definition: TupleBuilder::new(module),
         }
     }
 
@@ -444,9 +587,16 @@ impl RecordBuilder {
         self
     }
 
+    /// Pushes an elaborate field.
+    pub fn push_elaborate(&mut self, t: ElaborateTypeId) -> &mut Self {
+        self.elaborate_definition.push(t);
+        self
+    }
+
     /// Overrides the name of the last field, if any.
     pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
         self.definition.name(name);
+        self.elaborate_definition.name(name);
         self
     }
 
@@ -457,6 +607,7 @@ impl RecordBuilder {
         let mut range = self.range;
         let enum_ = self.enum_;
         let definition = self.definition.build();
+        let elaborate_definition = self.elaborate_definition.build();
 
         let id = module.borrow().lookup_record(name);
         let id = if let Some(id) = id {
@@ -469,7 +620,7 @@ impl RecordBuilder {
             range = name.1;
         }
 
-        let record = Record { name, range, enum_, definition, };
+        let record = Record { name, range, enum_, definition, elaborate_definition, };
 
         let mut module = module.borrow_mut();
         module.set_record(id, record);
@@ -652,70 +803,34 @@ impl StatementFactory {
 pub struct TypeFactory<S>(Rc<S>);
 
 #[derive(Clone, Debug)]
-pub struct BuiltinTypeBuilder;
-
-#[derive(Clone, Debug)]
-pub struct TypeEnumBuilder<S> {
-    name: EnumId,
-    path: PathBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeInterfaceBuilder<S> {
-    name: InterfaceId,
-    path: PathBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeRecordBuilder<S> {
-    name: RecordId,
-    path: PathBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
 pub struct TypeTupleBuilder<S> {
     tuple: TupleBuilder<S, TypeId>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeUnresolvedBuilder<S> {
-    name: ItemIdentifier,
-    path: PathBuilder<S>,
 }
 
 impl<S> TypeFactory<S> {
     /// Creates an instance.
     pub fn new(store: Rc<S>) -> Self { TypeFactory(store) }
 
-    /// Creates a BuiltinTypeBuilder.
-    pub fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
-
     /// Shortcut: creates a Bool Type.
-    pub fn bool_(&self) -> Type { Type::Builtin(self.builtin().bool_()) }
+    pub fn bool_(&self) -> Type { Type::Builtin(BuiltinType::Bool) }
 
     /// Shortcut: creates a Int Type.
-    pub fn int(&self) -> Type { Type::Builtin(self.builtin().int()) }
+    pub fn int(&self) -> Type { Type::Builtin(BuiltinType::Int) }
 
     /// Shortcut: creates a String Type.
-    pub fn string(&self) -> Type { Type::Builtin(self.builtin().string()) }
+    pub fn string(&self) -> Type { Type::Builtin(BuiltinType::String) }
 
     /// Shortcut: creates a Void Type.
-    pub fn void(&self) -> Type { Type::Builtin(self.builtin().void()) }
+    pub fn void(&self) -> Type { Type::Builtin(BuiltinType::Void) }
 
-    /// Creates a TypeEnumBuilder.
-    pub fn enum_(&self, name: EnumId) -> TypeEnumBuilder<S> {
-        TypeEnumBuilder::new(self.0.clone(), name)
-    }
+    /// Shortcut: creates an Enum Type.
+    pub fn enum_(&self, e: EnumId) -> Type { Type::Enum(e) }
 
     /// Creates a TypeInterfaceBuilder.
-    pub fn interface(&self, name: InterfaceId) -> TypeInterfaceBuilder<S> {
-        TypeInterfaceBuilder::new(self.0.clone(), name)
-    }
+    pub fn interface(&self, i: InterfaceId) -> Type { Type::Int(i) }
 
     /// Creates a TypeRecordBuilder.
-    pub fn record(&self, name: RecordId) -> TypeRecordBuilder<S> {
-        TypeRecordBuilder::new(self.0.clone(), name)
-    }
+    pub fn record(&self, r: RecordId) -> Type { Type::Rec(r) }
 
     /// Creates a TupleBuilder.
     pub fn tuple(&self) -> TypeTupleBuilder<S> {
@@ -723,98 +838,7 @@ impl<S> TypeFactory<S> {
     }
 
     /// Creates a TypeUnresolvedBuilder.
-    pub fn unresolved(&self, name: ItemIdentifier) -> TypeUnresolvedBuilder<S> {
-        TypeUnresolvedBuilder::new(self.0.clone(), name)
-    }
-}
-
-impl BuiltinTypeBuilder {
-    /// Creates an instance.
-    pub fn new() -> Self { BuiltinTypeBuilder }
-
-    /// Creates a Bool BuiltinType.
-    pub fn bool_(&self) -> BuiltinType { BuiltinType::Bool }
-
-    /// Creates a Int BuiltinType.
-    pub fn int(&self) -> BuiltinType { BuiltinType::Int }
-
-    /// Creates a String BuiltinType.
-    pub fn string(&self) -> BuiltinType { BuiltinType::String }
-
-    /// Creates a Void BuiltinType.
-    pub fn void(&self) -> BuiltinType { BuiltinType::Void }
-}
-
-impl<S> TypeEnumBuilder<S> {
-    /// Creates a new instance.
-    pub fn new(store: Rc<S>, name: EnumId) -> Self {
-        TypeEnumBuilder {
-            name,
-            path: PathBuilder::new(store),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.path.push(item);
-        self
-    }
-
-    /// Builds a Type::Enum.
-    pub fn build(&self) -> Type
-        where
-            S: MultiStore<PathComponent>
-    {
-        Type::Enum(self.name, self.path.build())
-    }
-}
-
-impl<S> TypeInterfaceBuilder<S> {
-    /// Creates a new instance.
-    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
-        TypeInterfaceBuilder {
-            name,
-            path: PathBuilder::new(store),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.path.push(item);
-        self
-    }
-
-    /// Builds a Type::Int.
-    pub fn build(&self) -> Type
-        where
-            S: MultiStore<PathComponent>
-    {
-        Type::Int(self.name, self.path.build())
-    }
-}
-
-impl<S> TypeRecordBuilder<S> {
-    /// Creates an instance.
-    pub fn new(store: Rc<S>, name: RecordId) -> Self {
-        TypeRecordBuilder {
-            name,
-            path: PathBuilder::new(store),
-        }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.path.push(item);
-        self
-    }
-
-    /// Builds a Type::Rec.
-    pub fn build(&self) -> Type
-        where
-            S: MultiStore<PathComponent>
-    {
-        Type::Rec(self.name, self.path.build())
-    }
+    pub fn unresolved(&self) -> Type { Type::Unresolved }
 }
 
 impl<S> TypeTupleBuilder<S> {
@@ -844,10 +868,89 @@ impl<S> TypeTupleBuilder<S> {
     }
 }
 
-impl<S> TypeUnresolvedBuilder<S> {
+
+//
+//  Elaborate Type
+//
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeFactory<S>(Rc<S>);
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeEnumBuilder<S> {
+    name: EnumId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeInterfaceBuilder<S> {
+    name: InterfaceId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeRecordBuilder<S> {
+    name: RecordId,
+    path: PathBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeTupleBuilder<S> {
+    tuple: TupleBuilder<S, ElaborateTypeId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeUnresolvedBuilder<S> {
+    name: ItemIdentifier,
+    path: PathBuilder<S>,
+}
+
+impl<S> ElaborateTypeFactory<S> {
     /// Creates an instance.
-    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
-        TypeUnresolvedBuilder {
+    pub fn new(store: Rc<S>) -> Self { ElaborateTypeFactory(store) }
+
+    /// Shortcut: creates a Bool Elaborate.
+    pub fn bool_(&self) -> ElaborateType { ElaborateType::Builtin(BuiltinType::Bool) }
+
+    /// Shortcut: creates a Int ElaborateType.
+    pub fn int(&self) -> ElaborateType { ElaborateType::Builtin(BuiltinType::Int) }
+
+    /// Shortcut: creates a String ElaborateType.
+    pub fn string(&self) -> ElaborateType { ElaborateType::Builtin(BuiltinType::String) }
+
+    /// Shortcut: creates a Void ElaborateType.
+    pub fn void(&self) -> ElaborateType { ElaborateType::Builtin(BuiltinType::Void) }
+
+    /// Creates a ElaborateTypeEnumBuilder.
+    pub fn enum_(&self, name: EnumId) -> ElaborateTypeEnumBuilder<S> {
+        ElaborateTypeEnumBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeInterfaceBuilder.
+    pub fn interface(&self, name: InterfaceId) -> ElaborateTypeInterfaceBuilder<S> {
+        ElaborateTypeInterfaceBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeRecordBuilder.
+    pub fn record(&self, name: RecordId) -> ElaborateTypeRecordBuilder<S> {
+        ElaborateTypeRecordBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeTupleBuilder.
+    pub fn tuple(&self) -> ElaborateTypeTupleBuilder<S> {
+        ElaborateTypeTupleBuilder::new(self.0.clone())
+    }
+
+    /// Creates a ElaborateTypeUnresolvedBuilder.
+    pub fn unresolved(&self, name: ItemIdentifier) -> ElaborateTypeUnresolvedBuilder<S> {
+        ElaborateTypeUnresolvedBuilder::new(self.0.clone(), name)
+    }
+}
+
+impl<S> ElaborateTypeEnumBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: EnumId) -> Self {
+        ElaborateTypeEnumBuilder {
             name,
             path: PathBuilder::new(store),
         }
@@ -859,14 +962,111 @@ impl<S> TypeUnresolvedBuilder<S> {
         self
     }
 
-    /// Builds a Type::Unresolved.
-    pub fn build(&self) -> Type
+    /// Builds a ElaborateType::Enum.
+    pub fn build(&self) -> ElaborateType
         where
             S: MultiStore<PathComponent>
     {
-        Type::Unresolved(self.name, self.path.build())
+        ElaborateType::Enum(self.name, self.path.build())
     }
 }
+
+impl<S> ElaborateTypeInterfaceBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
+        ElaborateTypeInterfaceBuilder {
+            name,
+            path: PathBuilder::new(store),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.path.push(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Int.
+    pub fn build(&self) -> ElaborateType
+        where
+            S: MultiStore<PathComponent>
+    {
+        ElaborateType::Int(self.name, self.path.build())
+    }
+}
+
+impl<S> ElaborateTypeRecordBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>, name: RecordId) -> Self {
+        ElaborateTypeRecordBuilder {
+            name,
+            path: PathBuilder::new(store),
+        }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.path.push(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Rec.
+    pub fn build(&self) -> ElaborateType
+        where
+            S: MultiStore<PathComponent>
+    {
+        ElaborateType::Rec(self.name, self.path.build())
+    }
+}
+
+impl<S> ElaborateTypeTupleBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>) -> Self {
+        ElaborateTypeTupleBuilder { tuple: TupleBuilder::new(store) }
+    }
+
+    /// Appends a field.
+    pub fn push(&mut self, ty: ElaborateTypeId) -> &mut Self {
+        self.tuple.push(ty);
+        self
+    }
+
+    /// Names the last field.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.tuple.name(name);
+        self
+    }
+
+    /// Builds a ElaborateType::Tuple.
+    pub fn build(&self) -> ElaborateType
+        where
+            S: MultiStore<ValueIdentifier> + MultiStore<ElaborateTypeId>,
+    {
+        ElaborateType::Tuple(self.tuple.build())
+    }
+}
+
+impl<S> ElaborateTypeUnresolvedBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
+        Self { name, path: PathBuilder::new(store), }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.path.push(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Unresolved.
+    pub fn build(&self) -> ElaborateType
+        where
+            S: MultiStore<PathComponent>
+    {
+        ElaborateType::Unresolved(self.name, self.path.build())
+    }
+}
+
 
 //
 //  Implementation Details (Type)
@@ -876,28 +1076,8 @@ impl<S> TypeUnresolvedBuilder<S> {
 pub struct TypeIdFactory<S>(Rc<S>);
 
 #[derive(Clone, Debug)]
-pub struct TypeIdEnumBuilder<S>{
-    builder: TypeEnumBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdInterfaceBuilder<S>{
-    builder: TypeInterfaceBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdRecordBuilder<S> {
-    builder: TypeRecordBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
 pub struct TypeIdTupleBuilder<S> {
     builder: TypeTupleBuilder<S>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeIdUnresolvedBuilder<S> {
-    builder: TypeUnresolvedBuilder<S>,
 }
 
 impl<S> TypeIdFactory<S> {
@@ -905,54 +1085,39 @@ impl<S> TypeIdFactory<S> {
     pub fn new(store: Rc<S>) -> Self { TypeIdFactory(store) }
 
     /// Shortcut: creates a Bool Type.
-    pub fn bool_(&self) -> TypeId
-        where
-            S: Store<Type, TypeId>,
-    {
-        let ty = Type::Builtin(self.builtin().bool_());
-        self.0.borrow_mut().push(ty, Range::default())
-    }
+    pub fn bool_(&self) -> TypeId { TypeId::bool_() }
 
     /// Shortcut: creates a Int Type.
-    pub fn int(&self) -> TypeId
-        where
-            S: Store<Type, TypeId>,
-    {
-        let ty = Type::Builtin(self.builtin().int());
-        self.0.borrow_mut().push(ty, Range::default())
-    }
+    pub fn int(&self) -> TypeId { TypeId::int() }
 
     /// Shortcut: creates a String Type.
-    pub fn string(&self) -> TypeId
-        where
-            S: Store<Type, TypeId>,
-    {
-        let ty = Type::Builtin(self.builtin().string());    
-        self.0.borrow_mut().push(ty, Range::default())
-    }
+    pub fn string(&self) -> TypeId { TypeId::string() }
 
     /// Shortcut: creates a Void Type.
-    pub fn void(&self) -> TypeId
-        where
-            S: Store<Type, TypeId>,
-    {
-        let ty = Type::Builtin(self.builtin().void());
-        self.0.borrow_mut().push(ty, Range::default())
-    }
+    pub fn void(&self) -> TypeId { TypeId::void() }
 
     /// Creates a TypeIdEnumBuilder.
-    pub fn enum_(&self, name: EnumId) -> TypeIdEnumBuilder<S> {
-        TypeIdEnumBuilder::new(self.0.clone(), name)
+    pub fn enum_(&self, name: EnumId) -> TypeId
+        where
+            S: Store<Type, TypeId>
+    {
+        self.0.borrow_mut().push(Type::Enum(name), Range::default())
     }
 
     /// Creates a TypeIdInterfaceBuilder.
-    pub fn interface(&self, name: InterfaceId) -> TypeIdInterfaceBuilder<S> {
-        TypeIdInterfaceBuilder::new(self.0.clone(), name)
+    pub fn interface(&self, name: InterfaceId) -> TypeId
+        where
+            S: Store<Type, TypeId>
+    {
+        self.0.borrow_mut().push(Type::Int(name), Range::default())
     }
 
     /// Creates a TypeIdRecordBuilder.
-    pub fn record(&self, name: RecordId) -> TypeIdRecordBuilder<S> {
-        TypeIdRecordBuilder::new(self.0.clone(), name)
+    pub fn record(&self, name: RecordId) -> TypeId
+        where
+            S: Store<Type, TypeId>
+    {
+        self.0.borrow_mut().push(Type::Rec(name), Range::default())
     }
 
     /// Creates a TypeIdTupleBuilder.
@@ -965,82 +1130,7 @@ impl<S> TypeIdFactory<S> {
         where
             S: Store<Type, TypeId> + MultiStore<PathComponent>
     {
-        self.unresolved_named(ItemIdentifier::unresolved()).build()
-    }
-
-    /// Creates a TypeIdUnresolvedBuilder.
-    pub fn unresolved_named(&self, name: ItemIdentifier)
-        -> TypeIdUnresolvedBuilder<S>
-    {
-        TypeIdUnresolvedBuilder::new(self.0.clone(), name)
-    }
-
-    fn builtin(&self) -> BuiltinTypeBuilder { BuiltinTypeBuilder::new() }
-}
-
-impl<S> TypeIdEnumBuilder<S> {
-    /// Creates a new instance.
-    pub fn new(store: Rc<S>, name: EnumId) -> Self {
-        TypeIdEnumBuilder { builder: TypeEnumBuilder::new(store, name) }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.builder.push_component(item);
-        self
-    }
-
-    /// Builds a Type::Enum.
-    pub fn build(&self) -> TypeId
-        where
-            S: Store<Type, TypeId> + MultiStore<PathComponent>,
-    {
-        let ty = self.builder.build();
-        self.builder.path.store.borrow_mut().push(ty, Range::default())
-    }
-}
-
-impl<S> TypeIdInterfaceBuilder<S> {
-    /// Creates a new instance.
-    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
-        TypeIdInterfaceBuilder { builder: TypeInterfaceBuilder::new(store, name) }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.builder.push_component(item);
-        self
-    }
-
-    /// Builds a Type::Int.
-    pub fn build(&self) -> TypeId
-        where
-            S: Store<Type, TypeId> + MultiStore<PathComponent>,
-    {
-        let ty = self.builder.build();
-        self.builder.path.store.borrow_mut().push(ty, Range::default())
-    }
-}
-
-impl<S> TypeIdRecordBuilder<S> {
-    /// Creates an instance.
-    pub fn new(store: Rc<S>, name: RecordId) -> Self {
-        TypeIdRecordBuilder { builder: TypeRecordBuilder::new(store, name) }
-    }
-
-    /// Appends a component to the path.
-    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
-        self.builder.push_component(item);
-        self
-    }
-
-    /// Builds a Type::Rec.
-    pub fn build(&self) -> TypeId
-        where
-            S: Store<Type, TypeId> + MultiStore<PathComponent>,
-    {
-        let ty = self.builder.build();
-        self.builder.path.store.borrow_mut().push(ty, Range::default())
+        self.0.borrow_mut().push(Type::Unresolved, Range::default())
     }
 }
 
@@ -1072,10 +1162,95 @@ impl<S> TypeIdTupleBuilder<S> {
     }
 }
 
-impl<S> TypeIdUnresolvedBuilder<S> {
+
+//
+//  Implementation Details (Elaborate Type)
+//
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdFactory<S>(Rc<S>);
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdEnumBuilder<S>{
+    builder: ElaborateTypeEnumBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdInterfaceBuilder<S>{
+    builder: ElaborateTypeInterfaceBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdRecordBuilder<S> {
+    builder: ElaborateTypeRecordBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdTupleBuilder<S> {
+    builder: ElaborateTypeTupleBuilder<S>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ElaborateTypeIdUnresolvedBuilder<S> {
+    builder: ElaborateTypeUnresolvedBuilder<S>,
+}
+
+impl<S> ElaborateTypeIdFactory<S> {
     /// Creates an instance.
-    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
-        TypeIdUnresolvedBuilder { builder: TypeUnresolvedBuilder::new(store, name) }
+    pub fn new(store: Rc<S>) -> Self { ElaborateTypeIdFactory(store) }
+
+    /// Shortcut: creates a Bool ElaborateType.
+    pub fn bool_(&self) -> ElaborateTypeId { ElaborateTypeId::bool_() }
+
+    /// Shortcut: creates a Int ElaborateType.
+    pub fn int(&self) -> ElaborateTypeId { ElaborateTypeId::int() }
+
+    /// Shortcut: creates a String ElaborateType.
+    pub fn string(&self) -> ElaborateTypeId { ElaborateTypeId::string() }
+
+    /// Shortcut: creates a Void ElaborateType.
+    pub fn void(&self) -> ElaborateTypeId { ElaborateTypeId::void() }
+
+    /// Creates a ElaborateTypeIdEnumBuilder.
+    pub fn enum_(&self, name: EnumId) -> ElaborateTypeIdEnumBuilder<S> {
+        ElaborateTypeIdEnumBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeIdInterfaceBuilder.
+    pub fn interface(&self, name: InterfaceId) -> ElaborateTypeIdInterfaceBuilder<S> {
+        ElaborateTypeIdInterfaceBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeIdRecordBuilder.
+    pub fn record(&self, name: RecordId) -> ElaborateTypeIdRecordBuilder<S> {
+        ElaborateTypeIdRecordBuilder::new(self.0.clone(), name)
+    }
+
+    /// Creates a ElaborateTypeIdTupleBuilder.
+    pub fn tuple(&self) -> ElaborateTypeIdTupleBuilder<S> {
+        ElaborateTypeIdTupleBuilder::new(self.0.clone())
+    }
+
+    /// Shortcut: creates an unnamed Unresolved ElaborateType.
+    pub fn unresolved(&self) -> ElaborateTypeId
+        where
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<PathComponent>
+    {
+        self.unresolved_named(ItemIdentifier::unresolved()).build()
+    }
+
+    /// Creates a ElaborateTypeIdUnresolvedBuilder.
+    pub fn unresolved_named(&self, name: ItemIdentifier)
+        -> ElaborateTypeIdUnresolvedBuilder<S>
+    {
+        ElaborateTypeIdUnresolvedBuilder::new(self.0.clone(), name)
+    }
+}
+
+impl<S> ElaborateTypeIdEnumBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: EnumId) -> Self {
+        ElaborateTypeIdEnumBuilder { builder: ElaborateTypeEnumBuilder::new(store, name) }
     }
 
     /// Appends a component to the path.
@@ -1084,15 +1259,110 @@ impl<S> TypeIdUnresolvedBuilder<S> {
         self
     }
 
-    /// Builds a Type::Unresolved.
-    pub fn build(&self) -> TypeId
+    /// Builds a ElaborateType::Enum.
+    pub fn build(&self) -> ElaborateTypeId
         where
-            S: Store<Type, TypeId> + MultiStore<PathComponent>
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<PathComponent>,
     {
         let ty = self.builder.build();
         self.builder.path.store.borrow_mut().push(ty, Range::default())
     }
 }
+
+impl<S> ElaborateTypeIdInterfaceBuilder<S> {
+    /// Creates a new instance.
+    pub fn new(store: Rc<S>, name: InterfaceId) -> Self {
+        ElaborateTypeIdInterfaceBuilder { builder: ElaborateTypeInterfaceBuilder::new(store, name) }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.builder.push_component(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Int.
+    pub fn build(&self) -> ElaborateTypeId
+        where
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<PathComponent>,
+    {
+        let ty = self.builder.build();
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
+    }
+}
+
+impl<S> ElaborateTypeIdRecordBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>, name: RecordId) -> Self {
+        ElaborateTypeIdRecordBuilder { builder: ElaborateTypeRecordBuilder::new(store, name) }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.builder.push_component(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Rec.
+    pub fn build(&self) -> ElaborateTypeId
+        where
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<PathComponent>,
+    {
+        let ty = self.builder.build();
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
+    }
+}
+
+impl<S> ElaborateTypeIdTupleBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>) -> Self {
+        ElaborateTypeIdTupleBuilder { builder: ElaborateTypeTupleBuilder::new(store) }
+    }
+
+    /// Appends a field.
+    pub fn push(&mut self, typ: ElaborateTypeId) -> &mut Self {
+        self.builder.push(typ);
+        self
+    }
+
+    /// Names the last field.
+    pub fn name(&mut self, name: ValueIdentifier) -> &mut Self {
+        self.builder.name(name);
+        self
+    }
+
+    /// Builds a ElaborateType::Tuple.
+    pub fn build(&self) -> ElaborateTypeId
+        where
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<ElaborateTypeId> + MultiStore<ValueIdentifier>,
+    {
+        let ty = self.builder.build();
+        self.builder.tuple.store.borrow_mut().push(ty, Range::default())
+    }
+}
+
+impl<S> ElaborateTypeIdUnresolvedBuilder<S> {
+    /// Creates an instance.
+    pub fn new(store: Rc<S>, name: ItemIdentifier) -> Self {
+        ElaborateTypeIdUnresolvedBuilder { builder: ElaborateTypeUnresolvedBuilder::new(store, name) }
+    }
+
+    /// Appends a component to the path.
+    pub fn push_component(&mut self, item: PathComponent) -> &mut Self {
+        self.builder.push_component(item);
+        self
+    }
+
+    /// Builds a ElaborateType::Unresolved.
+    pub fn build(&self) -> ElaborateTypeId
+        where
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<PathComponent>
+    {
+        let ty = self.builder.build();
+        self.builder.path.store.borrow_mut().push(ty, Range::default())
+    }
+}
+
 
 //
 //  Implementation Details (Value)
@@ -1853,6 +2123,7 @@ impl RefBuilder {
 
 pub struct ConstructorBuilder<E, Id> {
     type_: Type,
+    elaborate_type: ElaborateType,
     tuple: TupleBuilder<Tree, Id>,
     transformer: Box<dyn Fn(Tuple<Id>) -> E>,
     range: Range,
@@ -1889,6 +2160,7 @@ impl<E, Id> ConstructorBuilder<E, Id> {
     {
         ConstructorBuilder {
             type_,
+            elaborate_type: ElaborateType::default(),
             tuple: TupleBuilder::new(tree),
             transformer,
             range: Range::default(),
@@ -1907,6 +2179,12 @@ impl<E, Id> ConstructorBuilder<E, Id> {
         self
     }
 
+    /// Specifies the elaborate type, if any.
+    pub fn elaborate(&mut self, ty: ElaborateType) -> &mut Self {
+        self.elaborate_type = ty;
+        self
+    }
+
     /// Specifies the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
         self.range = range(pos, len);
@@ -1917,15 +2195,25 @@ impl<E, Id> ConstructorBuilder<E, Id> {
     pub fn build(&self) -> Id
         where
             Tree: TypedStore<Id, Element = E> + MultiStore<Id>,
+            Id: Copy,
     {
-        use std::ops::DerefMut;
+        use std::convert::TryInto;
 
         let ty = self.type_;
+        let el = if self.elaborate_type == ElaborateType::default() {
+            ty.try_into().expect("Elaborate")
+        } else {
+            self.elaborate_type
+        };
         let range = self.range;
 
         let element: E = (self.transformer)(self.tuple.build());
 
-        TypedStore::push(self.tuple.store.borrow_mut().deref_mut(), ty, element, range)
+        let mut tree = self.tuple.store.borrow_mut();
+
+        let result = TypedStore::push(&mut *tree, ty, element, range);
+        TypedStore::set_elaborate_type(&mut *tree, result, el);
+        result
     }
 }
 
@@ -1968,7 +2256,8 @@ impl<S, T> TupleBuilder<S, T> {
 
     /// Appends the name of the last field, if any.
     fn name(&mut self, name: ValueIdentifier) -> &mut Self {
-        if self.names.len() == self.fields.len() - 1 {
+        let len = self.fields.len();
+        if len > 0 && self.names.len() == self.fields.len() - 1 {
             self.names.push(name);
         }
         self

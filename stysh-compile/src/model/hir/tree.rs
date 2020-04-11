@@ -54,6 +54,8 @@ pub struct Tree {
     expr_range: Table<ExpressionId, Range>,
     /// TypeId associated to a given expression.
     expr_type: Table<ExpressionId, TypeId>,
+    /// ElaborateTypeId associated to a given expression, if any.
+    expr_elaborate_type: Table<ExpressionId, ElaborateTypeId>,
     /// Expression.
     expression: Table<ExpressionId, Expression>,
 
@@ -63,17 +65,23 @@ pub struct Tree {
     pat_range: Table<PatternId, Range>,
     /// TypeId associated to a given pattern.
     pat_type: Table<PatternId, TypeId>,
+    /// ElaborateTypeId associated to a given pattern, if any.
+    pat_elaborate_type: Table<PatternId, ElaborateTypeId>,
     /// Pattern.
     pattern: Table<PatternId, Pattern>,
 
 
     //  Satellites.
 
+    /// Elaborate Types.
+    elaborate_types: Table<ElaborateTypeId, ElaborateType>,
     /// Types.
     tys: Table<TypeId, Type>,
 
     /// Unresolved callables.
     callables: KeyedMulti<Callable>,
+    /// Elaborate Types of enums and tuples.
+    elaborate_type_ids: KeyedMulti<ElaborateTypeId>,
     /// Expressions of calls, constructors and tuples.
     expression_ids: KeyedMulti<ExpressionId>,
     /// Names of constructors, records and tuples.
@@ -174,11 +182,40 @@ impl Tree {
     }
 
     /// Sets the type associated to a GVN.
-    pub fn set_gvn_type(&mut self, gvn: Gvn, ty: Type) {
+    pub fn set_gvn_type(&mut self, gvn: Gvn, ty: Type) -> TypeId {
         if let Some(e) = gvn.as_expression() {
             self.set_expression_type(e, ty)
         } else if let Some(p) = gvn.as_pattern() {
             self.set_pattern_type(p, ty)
+        } else {
+            unreachable!("Indeterminate {:?}", gvn)
+        }
+    }
+
+    /// Returns the elaborate type associated to a GVN, if any.
+    pub fn get_gvn_elaborate_type_id(&self, gvn: Gvn) -> Option<ElaborateTypeId> {
+        if let Some(e) = gvn.as_expression() {
+            self.get_expression_elaborate_type_id(e)
+        } else if let Some(p) = gvn.as_pattern() {
+            self.get_pattern_elaborate_type_id(p)
+        } else {
+            unreachable!("Indeterminate {:?}", gvn)
+        }
+    }
+
+    /// Returns the elaborate type associated to a GVN, if any.
+    pub fn get_gvn_elaborate_type(&self, gvn: Gvn) -> Option<ElaborateType> {
+        self.get_gvn_elaborate_type_id(gvn).map(|id| self.get_elaborate_type(id))
+    }
+
+    /// Sets the elaborate type associated to a GVN.
+    pub fn set_gvn_elaborate_type(&mut self, gvn: Gvn, ty: ElaborateType)
+        -> ElaborateTypeId
+    {
+        if let Some(e) = gvn.as_expression() {
+            self.set_expression_elaborate_type(e, ty)
+        } else if let Some(p) = gvn.as_pattern() {
+            self.set_pattern_elaborate_type(p, ty)
         } else {
             unreachable!("Indeterminate {:?}", gvn)
         }
@@ -212,6 +249,26 @@ impl Tree {
         self.get_type(ty)
     }
 
+    /// Returns the elaborate type ID associated to an expression, if any.
+    pub fn get_expression_elaborate_type_id(&self, id: ExpressionId)
+        -> Option<ElaborateTypeId>
+    {
+        let ty = *self.expr_elaborate_type.at(&id);
+        if ty != ElaborateTypeId::default() {
+            Some(ty)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the elaborate type associated to an expression, if any.
+    pub fn get_expression_elaborate_type(&self, id: ExpressionId)
+        -> Option<ElaborateType>
+    {
+        self.get_expression_elaborate_type_id(id)
+            .map(|id| self.get_elaborate_type(id))
+    }
+
     /// Returns the expression.
     pub fn get_expression(&self, id: ExpressionId) -> Expression {
         *self.expression.at(&id)
@@ -225,11 +282,13 @@ impl Tree {
     {
         debug_assert!(self.expression.len() == self.expr_range.len());
         debug_assert!(self.expression.len() == self.expr_type.len());
+        debug_assert!(self.expression.len() == self.expr_elaborate_type.len());
 
         let ty = self.push_type(typ);
 
         let id = self.expr_range.extend(range);
         self.expr_type.push(&id, ty);
+        self.expr_elaborate_type.push(&id, Default::default());
         self.expression.push(&id, expr);
 
         id
@@ -241,10 +300,27 @@ impl Tree {
     }
 
     /// Sets the type associated to an expression.
-    pub fn set_expression_type(&mut self, id: ExpressionId, typ: Type) {
+    pub fn set_expression_type(&mut self, id: ExpressionId, typ: Type)
+        -> TypeId
+    {
         let ty = *self.expr_type.at_mut(&id);
         let ty = self.set_type(ty, typ);
         *self.expr_type.at_mut(&id) = ty;
+        ty
+    }
+
+    /// Sets the elaborate type associated to an expression.
+    pub fn set_expression_elaborate_type(
+        &mut self,
+        id: ExpressionId,
+        typ: ElaborateType,
+    )
+        -> ElaborateTypeId
+    {
+        let ty = *self.expr_elaborate_type.at_mut(&id);
+        let ty = self.set_elaborate_type(ty, typ);
+        *self.expr_elaborate_type.at_mut(&id) = ty;
+        ty
     }
 
 
@@ -275,6 +351,26 @@ impl Tree {
         self.get_type(ty)
     }
 
+    /// Returns the elaborate type ID associated to a pattern, if any.
+    pub fn get_pattern_elaborate_type_id(&self, id: PatternId)
+        -> Option<ElaborateTypeId>
+    {
+        let ty = *self.pat_elaborate_type.at(&id);
+        if ty != ElaborateTypeId::default() {
+            Some(ty)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the elaborate type associated to a pattern, if any.
+    pub fn get_pattern_elaborate_type(&self, id: PatternId)
+        -> Option<ElaborateType>
+    {
+        self.get_pattern_elaborate_type_id(id)
+            .map(|id| self.get_elaborate_type(id))
+    }
+
     /// Returns the pattern associated to the id.
     pub fn get_pattern(&self, id: PatternId) -> Pattern {
         *self.pattern.at(&id)
@@ -288,11 +384,13 @@ impl Tree {
     {
         debug_assert!(self.pattern.len() == self.pat_range.len());
         debug_assert!(self.pattern.len() == self.pat_type.len());
+        debug_assert!(self.pattern.len() == self.pat_elaborate_type.len());
 
         let ty = self.push_type(typ);
 
         let id = self.pat_range.extend(range);
         self.pat_type.push(&id, ty);
+        self.pat_elaborate_type.push(&id, Default::default());
         self.pattern.push(&id, pattern);
 
         id
@@ -304,14 +402,82 @@ impl Tree {
     }
 
     /// Sets the type associated to a pattern.
-    pub fn set_pattern_type(&mut self, id: PatternId, typ: Type) {
+    pub fn set_pattern_type(&mut self, id: PatternId, typ: Type) -> TypeId {
         let ty = *self.pat_type.at_mut(&id);
         let ty = self.set_type(ty, typ);
         *self.pat_type.at_mut(&id) = ty;
+        ty
+    }
+
+    /// Sets the elaborate type associated to a pattern.
+    pub fn set_pattern_elaborate_type(
+        &mut self,
+        id: PatternId,
+        typ: ElaborateType,
+    )
+        -> ElaborateTypeId
+    {
+        let ty = *self.pat_elaborate_type.at_mut(&id);
+        let ty = self.set_elaborate_type(ty, typ);
+        *self.pat_elaborate_type.at_mut(&id) = ty;
+        ty
     }
 
 
     //  Satellites.
+
+    /// Returns the number of elaborate types.
+    pub fn len_elaborate_types(&self) -> usize { self.elaborate_types.len() }
+
+    /// Returns the elaborate type associated to the id.
+    pub fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        if let Some(b) = id.builtin() {
+            ElaborateType::Builtin(b)
+        } else {
+            *self.elaborate_types.at(&id)
+        }
+    }
+
+    /// Sets the elaborate type associated to the id.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if attempting to associate a non built-in ElaborateType to a
+    /// built-in ElaborateTypeId.
+    pub fn set_elaborate_type(&mut self, id: ElaborateTypeId, ty: ElaborateType)
+        -> ElaborateTypeId
+    {
+        if let Some(_) = id.builtin() {
+            if let ElaborateType::Builtin(b) = ty {
+                return ElaborateTypeId::from(b);
+            }
+
+            panic!("Cannot update a built-in to a non built-in");
+        }
+
+        let id = if id == Default::default() {
+            self.push_elaborate_type(ty)
+        } else {
+            *self.elaborate_types.at_mut(&id) = ty;
+            id
+        };
+
+        if let ElaborateType::Builtin(b) = ty {
+            ElaborateTypeId::from(b)
+        } else {
+            id
+        }
+    }
+
+    /// Inserts a new elaborate type.
+    ///
+    /// Returns the id created for it.
+    pub fn push_elaborate_type(&mut self, typ: ElaborateType)
+        -> ElaborateTypeId
+    {
+        Self::push_elaborate_type_impl(&mut self.elaborate_types, typ)
+    }
+
 
     /// Returns the number of types.
     pub fn len_types(&self) -> usize { self.tys.len() }
@@ -370,6 +536,44 @@ impl Tree {
             I: IntoIterator<Item = Callable>,
     {
         self.callables.create(callables).unwrap_or(Id::empty())
+    }
+
+
+    /// Returns the number of type ids.
+    pub fn len_elaborate_type_ids(&self) -> usize { self.elaborate_type_ids.len() }
+
+    /// Returns the type ids associated to the id.
+    pub fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>)
+        -> &[ElaborateTypeId]
+    {
+        if id.is_empty() { &[] } else { self.elaborate_type_ids.get(&id) }
+    }
+
+    /// Inserts a new array of type ids.
+    ///
+    /// Returns the id created for it.
+    pub fn push_elaborate_type_ids<I>(&mut self, types: I)
+        -> Id<[ElaborateTypeId]>
+        where
+            I: IntoIterator<Item = ElaborateTypeId>,
+    {
+        self.elaborate_type_ids.create(types).unwrap_or(Id::empty())
+    }
+
+    /// Inserts a new array of types.
+    ///
+    /// Returns the id created for it.
+    pub fn push_elaborate_types<I>(&mut self, types: I) -> Id<[ElaborateTypeId]>
+        where
+            I: IntoIterator<Item = ElaborateType>,
+    {
+        let tys = &mut self.elaborate_types;
+        self.elaborate_type_ids
+            .create(
+                types.into_iter()
+                    .map(|t| Self::push_elaborate_type_impl(tys, t))
+            )
+            .unwrap_or(Id::empty())
     }
 
 
@@ -495,6 +699,21 @@ impl Tree {
 }
 
 impl Tree {
+    fn push_elaborate_type_impl(
+        table: &mut Table<ElaborateTypeId, ElaborateType>,
+        typ: ElaborateType,
+    )
+        -> ElaborateTypeId
+    {
+        let id = table.extend(typ);
+
+        if let ElaborateType::Builtin(b) = typ {
+            ElaborateTypeId::from(b)
+        } else {
+            id
+        }
+    }
+
     fn push_type_impl(table: &mut Table<TypeId, Type>, typ: Type) -> TypeId {
         let id = table.extend(typ);
 
@@ -530,6 +749,9 @@ pub trait TypedStore<I> {
 
     /// Pushes a new element.
     fn push(&mut self, typ: Type, element: Self::Element, range: Range) -> I;
+
+    /// Sets the elaborate type of an element.
+    fn set_elaborate_type(&mut self, id: I, typ: ElaborateType) -> ElaborateTypeId;
 }
 
 impl TypedStore<ExpressionId> for Tree {
@@ -545,6 +767,12 @@ impl TypedStore<ExpressionId> for Tree {
 
     fn push(&mut self, typ: Type, element: Expression, range: Range) -> ExpressionId {
         self.push_expression(typ, element, range)
+    }
+
+    fn set_elaborate_type(&mut self, id: ExpressionId, typ: ElaborateType)
+        -> ElaborateTypeId
+    {
+        self.set_expression_elaborate_type(id, typ)
     }
 }
 
@@ -562,12 +790,34 @@ impl TypedStore<PatternId> for Tree {
     fn push(&mut self, typ: Type, element: Pattern, range: Range) -> PatternId {
         self.push_pattern(typ, element, range)
     }
+
+    fn set_elaborate_type(&mut self, id: PatternId, typ: ElaborateType)
+        -> ElaborateTypeId
+    {
+        self.set_pattern_elaborate_type(id, typ)
+    }
 }
 
 
 //
 //  Implementations of Store for Tree
 //
+
+impl Store<ElaborateType, ElaborateTypeId> for Tree {
+    fn len(&self) -> usize { self.len_elaborate_types() }
+
+    fn get(&self, id: ElaborateTypeId) -> ElaborateType {
+        self.get_elaborate_type(id)
+    }
+
+    fn get_range(&self, _: ElaborateTypeId) -> Range {
+        unimplemented!("<Tree as Store<ElaborateType>>::get_range")
+    }
+
+    fn push(&mut self, item: ElaborateType, _: Range) -> ElaborateTypeId {
+        self.push_elaborate_type(item)
+    }
+}
 
 impl Store<Type, TypeId> for Tree {
     fn len(&self) -> usize { self.len_types() }
@@ -595,6 +845,16 @@ impl MultiStore<Callable> for Tree {
 
     fn push_slice(&mut self, items: &[Callable]) -> Id<[Callable]> {
         self.push_callables(items.iter().copied())
+    }
+}
+
+impl MultiStore<ElaborateTypeId> for Tree {
+    fn get_slice(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
+        self.get_elaborate_type_ids(id)
+    }
+
+    fn push_slice(&mut self, items: &[ElaborateTypeId]) -> Id<[ElaborateTypeId]> {
+        self.push_elaborate_type_ids(items.iter().copied())
     }
 }
 

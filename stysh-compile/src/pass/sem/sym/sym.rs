@@ -54,7 +54,7 @@ impl<'a> SymbolMapper<'a> {
     }
 
     /// Translates a type into... a type!
-    pub fn type_of(&self, t: ast::TypeId) -> hir::Type {
+    pub fn type_of(&self, t: ast::TypeId) -> hir::ElaborateType {
         use self::ast::Type;
 
         match self.ast_tree.get_type(t) {
@@ -81,7 +81,10 @@ impl<'a> SymbolMapper<'a> {
     )
         -> hir::PatternId
     {
-        let typ = self.type_of(c.type_);
+        use std::convert::TryInto;
+
+        let elaborate = self.type_of(c.type_);
+        let typ = elaborate.try_into().expect("Non-Tuple");
         let range = self.ast_tree.get_type_range(c.type_).extend(c.arguments.span());
         let tuple = self.tuple_of(
             self.ast_tree.get_pattern_ids(c.arguments.fields),
@@ -92,6 +95,7 @@ impl<'a> SymbolMapper<'a> {
         let pattern = hir::Pattern::Constructor(tuple);
 
         let result = self.tree_mut().push_pattern(typ, pattern, range);
+        self.tree_mut().set_pattern_elaborate_type(result, elaborate);
         self.link_patterns(result.into(), tuple.fields);
         result
     }
@@ -214,22 +218,23 @@ impl<'a> SymbolMapper<'a> {
     }
 
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
-        -> hir::Type
+        -> hir::ElaborateType
     {
         let path = self.resolve_path(p);
-        hir::Type::Unresolved(t.into(), path)
+        hir::ElaborateType::Unresolved(t.into(), path)
     }
 
-    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::Type {
+    fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::ElaborateType {
         self.scope.lookup_type(t.into())
+            .elaborate(t.into(), hir::PathId::empty())
     }
 
-    fn type_of_tuple(&self, tup: ast::Tuple<ast::Type>) -> hir::Type {
-        hir::Type::Tuple(self.tuple_of(
+    fn type_of_tuple(&self, tup: ast::Tuple<ast::Type>) -> hir::ElaborateType {
+        hir::ElaborateType::Tuple(self.tuple_of(
             self.ast_tree.get_type_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
-            |t| self.tree_mut().push_type(self.type_of(t)),
-            |t| self.tree_mut().push_type_ids(t.iter().copied()),
+            |t| self.tree_mut().push_elaborate_type(self.type_of(t)),
+            |t| self.tree_mut().push_elaborate_type_ids(t.iter().copied()),
         ))
     }
 
@@ -334,6 +339,8 @@ impl<'a> SymbolMapper<'a> {
     fn value_of_constructor(&self, c: ast::Constructor<ast::Expression>, range: com::Range)
         -> hir::ExpressionId
     {
+        use std::convert::TryInto;
+
         let arguments = self.tuple_of(
             self.ast_tree.get_expression_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
@@ -341,10 +348,12 @@ impl<'a> SymbolMapper<'a> {
             |e| self.tree_mut().push_expression_ids(e.iter().copied()),
         );
 
-        let typ = self.type_of(c.type_);
+        let elaborate = self.type_of(c.type_);
+        let typ = elaborate.try_into().expect("Non-Tuple");
         let expr = hir::Expression::Constructor(arguments);
 
         let result = self.tree_mut().push_expression(typ, expr, range);
+        self.tree_mut().set_expression_elaborate_type(result, elaborate);
         self.link_expressions(result.into(), arguments.fields);
         result
     }
@@ -626,8 +635,8 @@ impl<'a> SymbolMapper<'a> {
 
         self.resolve_path_impl(path).last().copied()
             .map(|c| match c {
-                C::Enum(id, _) => T::Enum(id, Default::default()),
-                C::Rec(id, _) => T::Rec(id, Default::default()),
+                C::Enum(id, _) => T::Enum(id),
+                C::Rec(id, _) => T::Rec(id),
                 _ => unimplemented!("resolve_type - {:?}", c),
             })
     }
@@ -641,10 +650,10 @@ impl<'a> SymbolMapper<'a> {
         for &c in components {
             let range = c.span();
             let component = match self.scope.lookup_type(c.into()) {
-                Enum(id, _) => hir::PathComponent::Enum(id, range),
-                Int(id, _) => hir::PathComponent::Int(id, range),
-                Rec(id, _) => hir::PathComponent::Rec(id, range),
-                Unresolved(name, _) => hir::PathComponent::Unresolved(name),
+                Enum(id) => hir::PathComponent::Enum(id, range),
+                Int(id) => hir::PathComponent::Int(id, range),
+                Rec(id) => hir::PathComponent::Rec(id, range),
+                Unresolved => hir::PathComponent::Unresolved(c.into()),
                 Builtin(_) | Tuple(_) => hir::PathComponent::default(),
             };
             path.push(component);
@@ -874,7 +883,7 @@ mod tests {
 
             let n = env.item_id(0, 6);
             let nested = env.insert_record(i.unit(n), &[0]);
-            let nested = i.ext(n, hir::Type::Rec(nested, Default::default())).build();
+            let nested = i.ext(n, td.record(nested)).build();
 
             let basic = env.item_id(8, 5);
             let basic = env.insert_function(
@@ -943,7 +952,7 @@ mod tests {
             let name = env.item_id(6, 3);
             let rec = env.insert_record(i.rec(name).build(), &[0]);
 
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
             v.constructor(rec).range(0, 3).build()
         };
 
@@ -968,7 +977,7 @@ mod tests {
             let name = env.item_id(9, 3);
             let rec = env.insert_record(i.rec(name).build(), &[0]);
 
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
             v.constructor(rec).push(v.int(1, 4)).range(0, 6).build()
         };
 
@@ -977,6 +986,8 @@ mod tests {
 
     #[test]
     fn value_constructor_nested() {
+        use std::convert::TryInto;
+
         let mut env = Env::new(
             b":enum Simple { Unit }         Simple::Unit",
         );
@@ -990,7 +1001,7 @@ mod tests {
 
         let hir = {
             let f = env.hir();
-            let (i, t, v) = (f.item(), f.type_(), f.value());
+            let (i, t, v) = (f.item(), f.elaborate_type(), f.value());
 
             let (simple, unit) = (env.item_id(6, 6), env.item_id(38, 4));
             let enum_ = env.insert_enum(i.enum_(simple).build(), &[30]);
@@ -998,7 +1009,10 @@ mod tests {
                 .push_component(hir::PathComponent::Enum(enum_, range(30, 6)))
                 .build();
 
-            v.constructor(rec).range(30, 12).build()
+            v.constructor(rec.try_into().unwrap())
+                .elaborate(rec)
+                .range(30, 12)
+                .build()
         };
 
         assert_eq!(env.value_of(ast), env.expression(hir));
@@ -1060,7 +1074,7 @@ mod tests {
 
             let rec = i.rec(name).range(0, 14).push(hir::TypeId::int()).build();
             let rec = env.insert_record(rec, &[15]);
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
 
             v.field_access(
                 v.constructor(rec)
@@ -1357,7 +1371,7 @@ mod tests {
 
             let rec = f.item().rec(some).push(hir::TypeId::int()).build();
             let rec = env.insert_record(rec, &[23, 34]);
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
 
             let var = s.var(
                 p.constructor(rec)
@@ -1410,7 +1424,7 @@ mod tests {
 
             let rec = f.item().rec(some).push(hir::TypeId::int()).name(x).build();
             let rec = env.insert_record(rec, &[27, 42]);
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
 
             let var = s.var(
                 p.constructor(rec)
@@ -1530,10 +1544,7 @@ mod tests {
 
             for p in positions {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
-                self.scope.types.insert(
-                    id,
-                    hir::Type::Enum(enum_, hir::Id::empty()),
-                );
+                self.scope.types.insert(id, hir::Type::Enum(enum_));
             }
 
             enum_
@@ -1572,10 +1583,7 @@ mod tests {
 
             for p in positions {
                 let id = hir::ItemIdentifier(name.id(), range(*p, len));
-                self.scope.types.insert(
-                    id,
-                    hir::Type::Rec(rec, hir::Id::empty()),
-                );
+                self.scope.types.insert(id, hir::Type::Rec(rec));
             }
 
             rec

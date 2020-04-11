@@ -28,6 +28,10 @@ pub struct PatternId(com::CoreId);
 #[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TypeId(com::CoreId);
 
+/// Index of an ElaborateType in the Tree.
+#[derive(Clone, Copy, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct ElaborateTypeId(com::CoreId);
+
 /// A global value number.
 ///
 /// Defaults to 0, which is considered an invalid value.
@@ -146,6 +150,40 @@ impl TypeId {
     pub fn value(&self) -> u32 { self.0.raw() }
 }
 
+impl ElaborateTypeId {
+    /// Creates a new instance.
+    pub fn new(id: u32) -> Self { ElaborateTypeId(com::CoreId::new(id)) }
+
+    /// Creates a new instance of a Bool ElaborateTypeId.
+    pub fn bool_() -> Self { ElaborateTypeId::new(ElaborateTypeId::BOOL_ID) }
+
+    /// Creates a new instance of a Int ElaborateTypeId.
+    pub fn int() -> Self { ElaborateTypeId::new(ElaborateTypeId::INT_ID) }
+
+    /// Creates a new instance of a String ElaborateTypeId.
+    pub fn string() -> Self { ElaborateTypeId::new(ElaborateTypeId::STRING_ID) }
+
+    /// Creates a new instance of a Void ElaborateTypeId.
+    pub fn void() -> Self { ElaborateTypeId::new(ElaborateTypeId::VOID_ID) }
+
+    /// Returns whether the corresponding Type is a built-in.
+    pub fn is_builtin(&self) -> bool { self.builtin().is_some() }
+
+    /// Converts to a BuiltinType, if possible.
+    pub fn builtin(&self) -> Option<BuiltinType> {
+        match self.0.raw() {
+            t if t == ElaborateTypeId::BOOL_ID => Some(BuiltinType::Bool),
+            t if t == ElaborateTypeId::INT_ID => Some(BuiltinType::Int),
+            t if t == ElaborateTypeId::STRING_ID => Some(BuiltinType::String),
+            t if t == ElaborateTypeId::VOID_ID => Some(BuiltinType::Void),
+            _ => None
+        }
+    }
+
+    /// Returns the inner ID.
+    pub fn value(&self) -> u32 { self.0.raw() }
+}
+
 impl Gvn {
     /// Converts Gvn into an ExpressionId, if possible.
     pub fn as_expression(self) -> Option<ExpressionId> {
@@ -256,6 +294,13 @@ impl TypeId {
     const VOID_ID: u32 = std::u32::MAX - 6;
 }
 
+impl ElaborateTypeId {
+    const BOOL_ID: u32 = std::u32::MAX - 3;
+    const INT_ID: u32 = std::u32::MAX - 4;
+    const STRING_ID: u32 = std::u32::MAX - 5;
+    const VOID_ID: u32 = std::u32::MAX - 6;
+}
+
 
 //
 //  Traits Implementations
@@ -291,11 +336,28 @@ impl fmt::Debug for TypeId {
         } else if let Some(t) = self.builtin() {
             write!(f, "TypeId({:?})", t)
         } else if let Some(i) = self.get_tree() {
-            write!(f, "TypeId(T{})", i)
+            write!(f, "TypeId(T-{})", i)
         } else if let Some(i) = self.get_module() {
-            write!(f, "TypeId(M{})", i)
+            write!(f, "TypeId(M-{})", i)
         } else {
-            write!(f, "TypeId(R{})", self.get_repository().unwrap())
+            write!(f, "TypeId(R-{})", self.get_repository().unwrap())
+        }
+    }
+}
+
+impl fmt::Debug for ElaborateTypeId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        //  More compact representation for `{:#?}`.
+        if *self == Default::default() {
+            write!(f, "ElaborateTypeId(default)")
+        } else if let Some(t) = self.builtin() {
+            write!(f, "ElaborateTypeId({:?})", t)
+        } else if let Some(i) = self.get_tree() {
+            write!(f, "ElaborateTypeId(T-{})", i)
+        } else if let Some(i) = self.get_module() {
+            write!(f, "ElaborateTypeId(M-{})", i)
+        } else {
+            write!(f, "ElaborateTypeId(R-{})", self.get_repository().unwrap())
         }
     }
 }
@@ -362,6 +424,17 @@ impl convert::From<BuiltinType> for TypeId {
             BuiltinType::Int => TypeId::int(),
             BuiltinType::String => TypeId::string(),
             BuiltinType::Void => TypeId::void(),
+        }
+    }
+}
+
+impl convert::From<BuiltinType> for ElaborateTypeId {
+    fn from(b: BuiltinType) -> Self {
+        match b {
+            BuiltinType::Bool => ElaborateTypeId::bool_(),
+            BuiltinType::Int => ElaborateTypeId::int(),
+            BuiltinType::String => ElaborateTypeId::string(),
+            BuiltinType::Void => ElaborateTypeId::void(),
         }
     }
 }
@@ -448,6 +521,12 @@ impl TableIndex for PatternId {
 
 impl TableIndex for TypeId {
     fn from_index(index: usize) -> Self { TypeId::new(index as u32) }
+
+    fn index(&self) -> usize { self.0.raw() as usize }
+}
+
+impl TableIndex for ElaborateTypeId {
+    fn from_index(index: usize) -> Self { ElaborateTypeId::new(index as u32) }
 
     fn index(&self) -> usize { self.0.raw() as usize }
 }

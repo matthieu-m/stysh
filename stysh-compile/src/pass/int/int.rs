@@ -581,7 +581,7 @@ mod tests {
                 .push(t.int())
                 .push(t.int())
                 .build();
-            t.record(rec).build()
+            t.record(rec)
         };
 
         {

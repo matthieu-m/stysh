@@ -105,6 +105,20 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)];
 
+    /// Returns the Elaborate Type associated to the ID.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType;
+
+    /// Returns the Elaborate Type IDs associated to the ID.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId];
+
     /// Returns the names associated to the ID.
     ///
     /// #   Panics
@@ -179,6 +193,10 @@ pub struct MockRegistry {
     pub records: Vec<Record>,
     /// Functions for records.
     pub record_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Elaborate Types.
+    pub elaborate_types: Vec<ElaborateType>,
+    /// Elaborate Type IDs.
+    pub elaborate_type_ids: Vec<Vec<ElaborateTypeId>>,
     /// Names.
     pub names: Vec<Vec<ValueIdentifier>>,
     /// Path Components.
@@ -272,6 +290,16 @@ impl Registry for MockRegistry {
         -> &[(Identifier, FunctionId)]
     {
         &self.record_functions[Self::index_of(id)]
+    }
+
+    fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
+        self.elaborate_types[Self::index_of(id)]
+    }
+
+    fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>)
+        -> &[ElaborateTypeId]
+    {
+        &self.elaborate_type_ids[Self::index_of(id)]
     }
 
     fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

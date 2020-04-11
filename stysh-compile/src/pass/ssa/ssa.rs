@@ -831,7 +831,7 @@ impl<'a> GraphBuilderImpl<'a> {
                 } else {
                     self.registry.get_type_ids(tuple.fields)
                 },
-            Rec(rec, ..) => {
+            Rec(rec) => {
                 let fields = self.registry.get_record(rec).definition.fields;
                 self.registry.get_type_ids(fields)
             },
@@ -1051,7 +1051,7 @@ mod tests {
 
         let expr = {
             let (t, v) = (hir.type_(), hir.value());
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
             v.constructor(rec).push(v.int(42, 24)).range(19, 8).build()
         };
 
@@ -1082,7 +1082,7 @@ mod tests {
 
         let expr = {
             let (t, v) = (hir.type_(), hir.value());
-            let rec = t.record(rec).build();
+            let rec = t.record(rec);
             let c = v.constructor(rec)
                 .push(v.int(4, 28))
                 .push(v.int(42, 31))
@@ -1271,7 +1271,7 @@ mod tests {
 
         let (_, p, s, t, v) = env.hir();
 
-        let rec = t.record(rec).build();
+        let rec = t.record(rec);
         let (a, b) = (env.var_id(29, 1), env.var_id(32, 1));
 
         let binding =

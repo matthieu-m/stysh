@@ -39,9 +39,9 @@ impl<'a> TypeUnifier<'a> {
         use self::Type::*;
 
         match (ty, target) {
-            (Rec(r, ..), Enum(e, ..)) => self.finalize_enum(r, e),
-            (Int(a, ..), Int(b, ..)) if a == b => None,
-            (    _     , Int(i, ..)) => self.finalize_int(i),
+            (Rec(r), Enum(e)) => self.finalize_enum(r, e),
+            (Int(a), Int(b)) if a == b => None,
+            (  _   , Int(i)) => self.finalize_int(i),
             _ => None,
         }
     }
@@ -84,7 +84,7 @@ impl<'a> TypeUnifier<'a> {
                 registry.get_type_ids(tup.fields)
                     .iter()
                     .all(|id| self.is_determined(*id)),
-            Unresolved(..) => false,
+            Unresolved => false,
         }
     }
 
@@ -93,7 +93,7 @@ impl<'a> TypeUnifier<'a> {
         let record = self.core.registry.get_record(r);
 
         if record.enum_ == Some(e) {
-            Some(Action::Cast(Type::Enum(e, PathId::empty())))
+            Some(Action::Cast(Type::Enum(e)))
         } else {
             None
         }
@@ -101,7 +101,7 @@ impl<'a> TypeUnifier<'a> {
 
     /// Attempts to finalize a record with a super interface.
     fn finalize_int(&self, i: InterfaceId) -> Option<Action> {
-        Some(Action::Cast(Type::Int(i, PathId::empty())))
+        Some(Action::Cast(Type::Int(i)))
     }
 
     /// Attempts to unify a type based on its relation.
@@ -122,7 +122,7 @@ impl<'a> TypeUnifier<'a> {
         match self.registry().get_type(other) {
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::Identical),
-            Builtin(_) | Enum(..) | Int(..) | Rec(..) | Unresolved(..) =>
+            Builtin(_) | Enum(..) | Int(..) | Rec(..) | Unresolved =>
                 self.resolve(ty, other),
         }
     }
@@ -135,13 +135,13 @@ impl<'a> TypeUnifier<'a> {
             Builtin(_) =>
                 //  FIXME(matthieum): need to cater for Bool::True and Bool::False.
                 self.resolve(ty, other),
-            Enum(name, path) =>
-                self.unify_as_sub_type_of_enum(ty, name, path),
-            Int(name, path) =>
-                self.unify_as_sub_type_of_int(name, path),
+            Enum(name) =>
+                self.unify_as_sub_type_of_enum(ty, name),
+            Int(name) =>
+                self.unify_as_sub_type_of_int(name),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SubTypeOf),
-            Rec(..) | Unresolved(..) =>
+            Rec(..) | Unresolved =>
                 self.resolve(ty, other),
         }
     }
@@ -156,7 +156,7 @@ impl<'a> TypeUnifier<'a> {
                 self.resolve(ty, other),
             Tuple(tup) =>
                 self.unify_with_tuple(ty, tup, Relation::SuperTypeOf),
-            Enum(..) | Int(..) | Rec(..) | Unresolved(..) =>
+            Enum(..) | Int(..) | Rec(..) | Unresolved =>
                 self.resolve(ty, other),
         }
     }
@@ -166,17 +166,16 @@ impl<'a> TypeUnifier<'a> {
         &self,
         ty: TypeId,
         enum_: EnumId,
-        path: PathId,
     )
         -> Option<Action>
     {
         let registry = self.registry();
 
-        if let Type::Rec(rec, ..) = registry.get_type(ty) {
+        if let Type::Rec(rec) = registry.get_type(ty) {
             let record = registry.get_record(rec);
 
             if record.enum_ == Some(enum_) {
-                return Some(Action::Cast(Type::Enum(enum_, path)));
+                return Some(Action::Cast(Type::Enum(enum_)));
             }
         }
 
@@ -191,11 +190,10 @@ impl<'a> TypeUnifier<'a> {
     fn unify_as_sub_type_of_int(
         &self,
         int: InterfaceId,
-        path: PathId,
     )
         -> Option<Action>
     {
-        Some(Action::Cast(Type::Int(int, path)))
+        Some(Action::Cast(Type::Int(int)))
     }
 
     /// Attempts to unify a type with a tuple.
@@ -209,8 +207,8 @@ impl<'a> TypeUnifier<'a> {
         match self.registry().get_type(ty) {
             Tuple(current) =>
                 self.unify_tuples(current, other, relate),
-            Unresolved(name, ..) =>
-                self.resolve_unresolved(name, Type::Tuple(other)),
+            Unresolved =>
+                self.resolve_unresolved(Type::Tuple(other)),
             Builtin(..) | Enum(..) | Int(..) | Rec(..) =>
                 None,
         }
@@ -281,29 +279,25 @@ impl<'a> TypeUnifier<'a> {
     fn resolve(&self, ty: TypeId, other: TypeId) -> Option<Action> {
         let other_type = self.registry().get_type(other);
 
-        if let Type::Unresolved(..) = other_type {
+        if let Type::Unresolved = other_type {
             return None;
         }
 
         //  Always returns Unified, even if the unification does not happen, as
         //  the only way for unification to fail is for a conflict to occur,
         //  and such conflicts indicate a source code error.
-        if let Type::Unresolved(name, ..) = self.registry().get_type(ty) {
-            self.resolve_unresolved(name, other_type)
+        if let Type::Unresolved = self.registry().get_type(ty) {
+            self.resolve_unresolved(other_type)
         } else {
             None
         }
     }
 
     /// Resolves an unresolved type.
-    fn resolve_unresolved(&self, name: ItemIdentifier, other: Type)
+    fn resolve_unresolved(&self, other: Type)
         -> Option<Action>
     {
-        if name == ItemIdentifier::unresolved() {
-            Some(Action::Update(other))
-        } else {
-            None
-        }
+        Some(Action::Update(other))
     }
 
     /// Returns a reference to the unified Registry/Tree view.
@@ -382,8 +376,8 @@ mod tests {
         let t = hir.type_id();
 
         let ty = t.unresolved();
-        let rel = Relation::Identical(t.record(rec).build());
-        let rec = Type::Rec(rec, Id::empty());
+        let rel = Relation::Identical(t.record(rec));
+        let rec = Type::Rec(rec);
 
         assert_eq!(
             unify(&local, ty, rel),
@@ -540,7 +534,7 @@ mod tests {
         let typ = local.source().borrow().get_type(ty);
 
         let tup = match typ {
-            Type::Rec(id, _) => local.module().borrow().get_record(id).definition,
+            Type::Rec(id) => local.module().borrow().get_record(id).definition,
             Type::Tuple(tup) => tup,
             _ => panic!("No fields in {:?}", typ),
         };

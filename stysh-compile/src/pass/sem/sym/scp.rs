@@ -37,8 +37,8 @@ pub trait Scope: fmt::Debug {
     }
 
     /// Returns an unresolved reference.
-    fn unresolved_type(&self, name: ItemIdentifier) -> Type {
-        Type::Unresolved(name, PathId::empty())
+    fn unresolved_type(&self, _: ItemIdentifier) -> Type {
+        Type::Unresolved
     }
 }
 
@@ -125,14 +125,14 @@ impl<'a> TypeScope<'a> {
 
         let (constructor, functions) = match self.type_ {
             //  No extensions on those.
-            Tuple(..) | Unresolved(..) =>
+            Tuple(..) | Unresolved =>
                 return self.unresolved_function(name),
             //  Always a method call, resolved at run-time.
-            Int(i, ..) => (method, registry.get_interface_functions(i)),
+            Int(i) => (method, registry.get_interface_functions(i)),
             //  Always a function call, resolve at compile-time.
             Builtin(ty) => (function, registry.get_builtin_functions(ty)),
-            Enum(e, ..) => (function, registry.get_enum_functions(e)),
-            Rec(r, ..) => (function, registry.get_record_functions(r)),
+            Enum(e) => (function, registry.get_enum_functions(e)),
+            Rec(r) => (function, registry.get_record_functions(r)),
         };
 
         self.lookup_associated_among(constructor, name, functions)
@@ -237,7 +237,7 @@ impl<'a> BlockScope<'a> {
     pub fn add_enum(&mut self, name: ItemIdentifier, id: EnumId) {
         debug_assert!(!self.types.contains_key(&name.id()));
 
-        self.types.insert(name.id(), Type::Enum(id, PathId::empty()));
+        self.types.insert(name.id(), Type::Enum(id));
     }
 
     /// Adds a new function identifier to the scope.
@@ -258,7 +258,7 @@ impl<'a> BlockScope<'a> {
     pub fn add_interface(&mut self, name: ItemIdentifier, id: InterfaceId) {
         debug_assert!(!self.types.contains_key(&name.id()));
 
-        self.types.insert(name.id(), Type::Int(id, PathId::empty()));
+        self.types.insert(name.id(), Type::Int(id));
     }
 
     /// Adds a methods to an interface.
@@ -292,7 +292,7 @@ impl<'a> BlockScope<'a> {
     pub fn add_record(&mut self, name: ItemIdentifier, id: RecordId) {
         debug_assert!(!self.types.contains_key(&name.id()));
 
-        self.types.insert(name.id(), Type::Rec(id, PathId::empty()));
+        self.types.insert(name.id(), Type::Rec(id));
     }
 
     /// Adds a new value identifier to the scope.
@@ -751,6 +751,8 @@ mod tests {
         //      :fun foo() { bar(); }
         //      :fun bar() { baz(); }
         //  }
+        use std::convert::TryInto;
+
         let interner = mem::Interner::new();
         let bar = var_id(interner.insert(b"bar"), 45, 3);
         let baz = var_id(interner.insert(b"baz"), 71, 3);
@@ -762,25 +764,30 @@ mod tests {
             let range = Default::default();
 
             let rec = item_id(interner.insert(b"Simple"), 5, 6);
-            let extended = Type::Rec(module.push_record_name(rec), Default::default());
+            let ext = Type::Rec(module.push_record_name(rec));
+            let elaborate_extended = ext.try_into().expect("Record");
 
-            let ext = module.push_extension_name(name);
+            let ext_id = module.push_extension_name(name);
+            let extended = module.push_type(ext);
+            let elaborate_extended = module.push_elaborate_type(elaborate_extended);
 
-            module.set_extension(ext, Extension { name, range, extended, });
+            module.set_extension(ext_id, Extension { name, range, extended, elaborate_extended, });
 
             let bar = item_id(bar.id(), 63, 3);
             let fun = module.push_function_name(bar);
             let signature = FunctionSignature {
                 name: bar,
                 range: Default::default(),
-                scope: hir::Scope::Ext(ext),
+                scope: hir::Scope::Ext(ext_id),
                 arguments: Tuple::default(),
                 result: TypeId::void(),
+                elaborate_arguments: Tuple::default(),
+                elaborate_result: ElaborateTypeId::void(),
             };
 
             module.set_function(fun, signature);
 
-            (module, extended, fun)
+            (module, ext, fun)
         };
 
         let builtin = BuiltinScope::new();
@@ -810,7 +817,7 @@ mod tests {
             let mut module = Module::new(Default::default());
 
             let rec = item_id(interner.insert(b"Simple"), 5, 6);
-            let extended = Type::Rec(module.push_record_name(rec), Default::default());
+            let extended = Type::Rec(module.push_record_name(rec));
 
             (module, extended)
         };
@@ -818,7 +825,7 @@ mod tests {
         let builtin = BuiltinScope::new();
         let mut scope = TypeScope::new(&builtin, extended);
 
-        assert_eq!(scope.lookup_type(self_), Type::Unresolved(self_, Id::empty()));
+        assert_eq!(scope.lookup_type(self_), Type::Unresolved);
 
         scope.enable_self();
 

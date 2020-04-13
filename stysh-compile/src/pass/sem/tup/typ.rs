@@ -249,7 +249,7 @@ impl<'a> TypeUnifier<'a> {
 
             for other_name in other_names {
                 for (position, current_name) in current_names.iter().enumerate() {
-                    if other_name.0 == current_name.0 {
+                    if other_name == current_name {
                         current_reordered.push(current_fields[position]);
                         break;
                     }

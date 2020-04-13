@@ -105,6 +105,9 @@ pub struct Repository {
     //  Components
     //
 
+    /// Arguments
+    arguments: JaggedMultiArray<ValueIdentifier>,
+
     /// ElaborateTypes
     elaborate_type: JaggedArray<ElaborateType>,
 
@@ -112,7 +115,7 @@ pub struct Repository {
     elaborate_type_ids: JaggedMultiArray<ElaborateTypeId>,
 
     /// Names
-    names: JaggedMultiArray<ValueIdentifier>,
+    names: JaggedMultiArray<Identifier>,
 
     /// Path
     path_components: JaggedMultiArray<PathComponent>,
@@ -159,6 +162,7 @@ impl Repository {
             record: JaggedArray::new(5),
             record_functions: JaggedArray::new(5),
 
+            arguments: JaggedMultiArray::new(5),
             elaborate_type: JaggedArray::new(5),
             elaborate_type_ids: JaggedMultiArray::new(5),
             names: JaggedMultiArray::new(5),
@@ -227,6 +231,7 @@ impl Repository {
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
             record_functions: self.record_functions.snapshot(),
+            arguments: self.arguments.snapshot(),
             elaborate_type: self.elaborate_type.snapshot(),
             elaborate_type_ids: self.elaborate_type_ids.snapshot(),
             names: self.names.snapshot(),
@@ -358,10 +363,14 @@ impl Repository {
             Scope::Imp(i) => Scope::Imp(mapper.map_implementation(i)),
             Scope::Int(i) => Scope::Int(mapper.map_interface(i)),
         };
-        let arguments = self.insert_tuple(signature.arguments, module, mapper);
+        let arguments = self.arguments.push(module.get_arguments(signature.arguments))
+            .map(|index| Id::new_repository(index as u32))
+            .unwrap_or(Id::empty());
+        let argument_types =
+            self.insert_type_ids(signature.argument_types, module, mapper);
         let result = self.insert_type(signature.result, module, mapper);
-        let elaborate_arguments =
-            self.insert_elaborate_tuple(signature.elaborate_arguments, module, mapper);
+        let elaborate_argument_types =
+            self.insert_elaborate_type_ids(signature.elaborate_argument_types, module, mapper);
         let elaborate_result =
             self.insert_elaborate_type(signature.elaborate_result, module, mapper);
 
@@ -370,8 +379,9 @@ impl Repository {
             scope,
             range,
             arguments,
+            argument_types,
             result,
-            elaborate_arguments,
+            elaborate_argument_types,
             elaborate_result,
         };
 
@@ -522,14 +532,7 @@ impl Repository {
     )
         -> Tuple<ElaborateTypeId>
     {
-        let mut fields = vec!();
-        for &id in module.get_elaborate_type_ids(tuple.fields) {
-            fields.push(self.insert_elaborate_type(id, module, &mapper));
-        }
-
-        let fields = self.elaborate_type_ids.push(&fields)
-            .map(|index| Id::new_repository(index as u32))
-            .unwrap_or(Id::empty());
+        let fields = self.insert_elaborate_type_ids(tuple.fields, module, mapper);
 
         let names = self.names.push(module.get_names(tuple.names))
             .map(|index| Id::new_repository(index as u32))
@@ -575,6 +578,25 @@ impl Repository {
         }
     }
 
+    fn insert_elaborate_type_ids(
+        &mut self,
+        tys: Id<[ElaborateTypeId]>,
+        module: &Module,
+        mapper: &IdMapper
+    )
+        -> Id<[ElaborateTypeId]>
+    {
+        let mut type_ids = vec!();
+
+        for &id in module.get_elaborate_type_ids(tys) {
+            type_ids.push(self.insert_elaborate_type(id, module, mapper));
+        }
+
+        self.elaborate_type_ids.push(&type_ids)
+            .map(|index| Id::new_repository(index as u32))
+            .unwrap_or(Id::empty())
+    }
+
     fn insert_path_components(
         &mut self,
         path: PathId,
@@ -595,14 +617,7 @@ impl Repository {
     )
         -> Tuple<TypeId>
     {
-        let mut fields = vec!();
-        for &id in module.get_type_ids(tuple.fields) {
-            fields.push(self.insert_type(id, module, &mapper));
-        }
-
-        let fields = self.type_ids.push(&fields)
-            .map(|index| Id::new_repository(index as u32))
-            .unwrap_or(Id::empty());
+        let fields = self.insert_type_ids(tuple.fields, module, mapper);
 
         let names = self.names.push(module.get_names(tuple.names))
             .map(|index| Id::new_repository(index as u32))
@@ -646,6 +661,20 @@ impl Repository {
             Tuple(tuple) => Tuple(self.insert_tuple(tuple, module, mapper)),
             Unresolved => unreachable!("Cannot insert Unresolved"),
         }
+    }
+
+    fn insert_type_ids(&mut self, tys: Id<[TypeId]>, module: &Module, mapper: &IdMapper)
+        -> Id<[TypeId]>
+    {
+        let mut type_ids = vec!();
+
+        for &id in module.get_type_ids(tys) {
+            type_ids.push(self.insert_type(id, module, mapper));
+        }
+
+        self.type_ids.push(&type_ids)
+            .map(|index| Id::new_repository(index as u32))
+            .unwrap_or(Id::empty())
     }
 }
 
@@ -694,9 +723,10 @@ pub struct RepositorySnapshot {
     record_functions: JaggedArraySnapshot<Functions>,
 
     //  Components
+    arguments: JaggedMultiArraySnapshot<ValueIdentifier>,
     elaborate_type: JaggedArraySnapshot<ElaborateType>,
     elaborate_type_ids: JaggedMultiArraySnapshot<ElaborateTypeId>,
-    names: JaggedMultiArraySnapshot<ValueIdentifier>,
+    names: JaggedMultiArraySnapshot<Identifier>,
     path_components: JaggedMultiArraySnapshot<PathComponent>,
     record_ids: JaggedMultiArraySnapshot<RecordId>,
     type_: JaggedArraySnapshot<Type>,
@@ -788,6 +818,10 @@ impl Registry for RepositorySnapshot {
         self.record_functions.at(index_of(id))
     }
 
+    fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+        self.arguments.get_slice(index_of(id))
+    }
+
     fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
         *self.elaborate_type.at(index_of(id))
     }
@@ -796,7 +830,7 @@ impl Registry for RepositorySnapshot {
         self.elaborate_type_ids.get_slice(index_of(id))
     }
 
-    fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+    fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier] {
         self.names.get_slice(index_of(id))
     }
 

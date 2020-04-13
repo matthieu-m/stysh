@@ -78,7 +78,7 @@ pub struct Tuple<T> {
     /// The tuple fields.
     pub fields: Id<[T]>,
     /// The name of the fields, empty if unnamed, otherwise of equal length.
-    pub names: Id<[ValueIdentifier]>,
+    pub names: Id<[Identifier]>,
 }
 
 //

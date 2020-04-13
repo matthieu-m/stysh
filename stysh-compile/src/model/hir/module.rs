@@ -112,12 +112,14 @@ pub struct Module {
     //  Components
     //
 
+    /// Arguments of functions.
+    arguments: KeyedMulti<ValueIdentifier>,
     /// Elaborate Types
     elaborate_type: Table<ElaborateTypeId, ElaborateType>,
     /// Elaborate Type Ids
     elaborate_type_ids: KeyedMulti<ElaborateTypeId>,
     /// Names
-    names: KeyedMulti<ValueIdentifier>,
+    names: KeyedMulti<Identifier>,
     /// Path
     path_components: KeyedMulti<PathComponent>,
     /// Path
@@ -414,6 +416,18 @@ impl Module {
     //  Components
     //
 
+    /// Pushes a new slice of arguments.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_arguments<I>(&mut self, arguments: I) -> Id<[ValueIdentifier]>
+        where
+            I: IntoIterator<Item = ValueIdentifier>
+    {
+        self.arguments.create(arguments)
+            .map(Self::modularize)
+            .unwrap_or(Id::empty())
+    }
+
     /// Sets the elaborate type associated to the id.
     ///
     /// #   Panics
@@ -472,9 +486,9 @@ impl Module {
     /// Pushes a new slice of names.
     ///
     /// Returns the ID created for it.
-    pub fn push_names<I>(&mut self, names: I) -> Id<[ValueIdentifier]>
+    pub fn push_names<I>(&mut self, names: I) -> Id<[Identifier]>
         where
-            I: IntoIterator<Item = ValueIdentifier>
+            I: IntoIterator<Item = Identifier>
     {
         self.names.create(names)
             .map(Self::modularize)
@@ -679,6 +693,14 @@ impl Registry for Module {
         self.record_functions.at(&id)
     }
 
+    fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.arguments.get(&Self::localize(id))
+        }
+    }
+
     fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
         if let Some(b) = id.builtin() {
             ElaborateType::Builtin(b)
@@ -691,25 +713,37 @@ impl Registry for Module {
     fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>)
         -> &[ElaborateTypeId]
     {
-        let id = Self::localize(id);
-        self.elaborate_type_ids.get(&id)
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.elaborate_type_ids.get(&Self::localize(id))
+        }
     }
 
-    fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
-        let id = Self::localize(id);
-        self.names.get(&id)
+    fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier] {
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.names.get(&Self::localize(id))
+        }
     }
 
     fn get_path_components(&self, id: Id<[PathComponent]>)
         -> &[PathComponent]
     {
-        let id = Self::localize(id);
-        self.path_components.get(&id)
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.path_components.get(&Self::localize(id))
+        }
     }
 
     fn get_record_ids(&self, id: Id<[RecordId]>) -> &[RecordId] {
-        let id = Self::localize(id);
-        self.record_ids.get(&id)
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.record_ids.get(&Self::localize(id))
+        }
     }
 
     fn get_type(&self, id: TypeId) -> Type {
@@ -722,8 +756,11 @@ impl Registry for Module {
     }
 
     fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        let id = Self::localize(id);
-        self.type_ids.get(&id)
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.type_ids.get(&Self::localize(id))
+        }
     }
 }
 
@@ -767,12 +804,12 @@ impl MultiStore<ElaborateTypeId> for Module {
     }
 }
 
-impl MultiStore<ValueIdentifier> for Module {
-    fn get_slice(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+impl MultiStore<Identifier> for Module {
+    fn get_slice(&self, id: Id<[Identifier]>) -> &[Identifier] {
         if id.is_empty() { &[] } else { self.get_names(id) }
     }
 
-    fn push_slice(&mut self, items: &[ValueIdentifier]) -> Id<[ValueIdentifier]> {
+    fn push_slice(&mut self, items: &[Identifier]) -> Id<[Identifier]> {
         self.push_names(items.iter().cloned())
     }
 }

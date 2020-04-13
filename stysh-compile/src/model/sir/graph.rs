@@ -40,7 +40,7 @@ pub struct Graph {
     type_: Table<hir::TypeId, hir::Type>,
 
     /// Names of constructors, records and tuples.
-    names: KeyedMulti<hir::ValueIdentifier>,
+    names: KeyedMulti<hir::Identifier>,
     /// Path components.
     paths: KeyedMulti<hir::PathComponent>,
     /// Types of enums and tuples.
@@ -114,7 +114,7 @@ impl Graph {
     }
 
     /// Returns the names associated to the id.
-    pub fn get_names(&self, id: Id<[hir::ValueIdentifier]>) -> &[hir::ValueIdentifier] {
+    pub fn get_names(&self, id: Id<[hir::Identifier]>) -> &[hir::Identifier] {
         if id.is_empty() { &[] } else { self.names.get(&id) }
     }
 

@@ -110,9 +110,10 @@ impl<'a> FieldFetcher<'a> {
 
         let types = registry.get_type_ids(definition.fields);
         let names = registry.get_names(definition.names);
+        debug_assert!(names.len() == types.len());
 
         names.iter()
-            .position(|n| n.id() == name.id())
+            .position(|n| *n == name.id())
             .map(|i| (Field::Index(i as u16, name.span()), types[i]))
     }
 

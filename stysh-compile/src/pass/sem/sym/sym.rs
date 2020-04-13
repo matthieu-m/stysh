@@ -734,7 +734,7 @@ impl<'a> SymbolMapper<'a> {
         let fields = self.array_of(fields, |&id| transformer(id));
         let fields = inserter(&fields);
 
-        let names = self.array_of(names, |&id| id.into());
+        let names = self.array_of(names, |&id| id.0);
         let names = self.tree_mut().push_names(names);
 
         hir::Tuple { fields, names }
@@ -742,7 +742,7 @@ impl<'a> SymbolMapper<'a> {
 
     fn tuple_type_of<T, A, E>(
         &self,
-        names: hir::Id<[hir::ValueIdentifier]>,
+        names: hir::Id<[hir::Identifier]>,
         accessor: A,
         mut extractor: E,
     )

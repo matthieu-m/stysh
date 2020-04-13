@@ -44,7 +44,7 @@ pub struct Tree {
     /// the patterns formed by its arguments.
     ///
     /// The body itself is found in expr_root.
-    function: Option<(FunctionSignature, Tuple<PatternId>)>,
+    function: Option<(FunctionSignature, Id<[PatternId]>)>,
     /// Expression the Tree represents.
     root: Option<ExpressionId>,
 
@@ -85,7 +85,7 @@ pub struct Tree {
     /// Expressions of calls, constructors and tuples.
     expression_ids: KeyedMulti<ExpressionId>,
     /// Names of constructors, records and tuples.
-    names: KeyedMulti<ValueIdentifier>,
+    names: KeyedMulti<Identifier>,
     /// Path components.
     paths: KeyedMulti<PathComponent>,
     /// Patterns of constructors and tuples.
@@ -116,43 +116,41 @@ impl Tree {
     }
 
     /// Returns the function arguments, if any.
-    pub fn get_function_arguments(&self) -> Option<Tuple<PatternId>> {
+    pub fn get_function_arguments(&self) -> Option<Id<[PatternId]>> {
         self.function.map(|(_, p)| p)
     }
 
     /// Sets the function signature.
     pub fn set_function(&mut self, fun: FunctionSignature, registry: &dyn Registry) {
-        let names = if fun.arguments.names.is_empty() {
+        let arguments = if fun.arguments.is_empty() {
             &[]
         } else {
-            registry.get_names(fun.arguments.names)
+            registry.get_arguments(fun.arguments)
         };
-        let types = if fun.arguments.fields.is_empty() {
+        let types = if fun.argument_types.is_empty() {
             &[]
         } else {
-            registry.get_type_ids(fun.arguments.fields)
+            registry.get_type_ids(fun.argument_types)
         };
-        debug_assert!(names.len() == types.len());
+        debug_assert!(arguments.len() == types.len());
 
         let mut fields = Vec::with_capacity(types.len());
-        for (&name, &ty) in names.iter().zip(types) {
+        for (&argument, &ty) in arguments.iter().zip(types) {
             let ty = if let Some(b) = ty.builtin() {
                 Type::Builtin(b)
             } else {
                 registry.get_type(ty)
             };
 
-            let pattern = Pattern::Var(name);
-            let pattern = self.push_pattern(ty, pattern, name.1);
+            let pattern = Pattern::Var(argument);
+            let pattern = self.push_pattern(ty, pattern, argument.1);
 
             fields.push(pattern);
         }
 
-        let fields = self.push_pattern_ids(fields);
-        let names = self.push_names(names.iter().copied());
-        let arguments = Tuple { fields, names, };
+        let patterns = self.push_pattern_ids(fields);
 
-        self.function = Some((fun, arguments));
+        self.function = Some((fun, patterns));
     }
 
     /// Returns the expression, if any.
@@ -597,16 +595,16 @@ impl Tree {
     pub fn len_names(&self) -> usize { self.names.len() }
 
     /// Returns the names associated to the id.
-    pub fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+    pub fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier] {
         if id.is_empty() { &[] } else { self.names.get(&id) }
     }
 
     /// Inserts a new array of names.
     ///
     /// Returns the id created for it.
-    pub fn push_names<I>(&mut self, names: I) -> Id<[ValueIdentifier]>
+    pub fn push_names<I>(&mut self, names: I) -> Id<[Identifier]>
         where
-            I: IntoIterator<Item = ValueIdentifier>,
+            I: IntoIterator<Item = Identifier>,
     {
         self.names.create(names).unwrap_or(Id::empty())
     }
@@ -868,12 +866,12 @@ impl MultiStore<ExpressionId> for Tree {
     }
 }
 
-impl MultiStore<ValueIdentifier> for Tree {
-    fn get_slice(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+impl MultiStore<Identifier> for Tree {
+    fn get_slice(&self, id: Id<[Identifier]>) -> &[Identifier] {
         self.get_names(id)
     }
 
-    fn push_slice(&mut self, items: &[ValueIdentifier]) -> Id<[ValueIdentifier]> {
+    fn push_slice(&mut self, items: &[Identifier]) -> Id<[Identifier]> {
         self.push_names(items.iter().copied())
     }
 }

@@ -107,13 +107,14 @@ impl<'a> GraphBuilder<'a> {
             body.borrow_mut().set_function(signature, &registry);
 
             {
+                let module = self.hir_module.borrow();
                 let body = body.borrow();
-                let arguments = body.get_function_arguments().expect("Arguments");
+                let patterns = body.get_function_arguments().expect("Arguments");
     
-                let patterns = body.get_pattern_ids(arguments.fields);
-                let names = body.get_names(arguments.names);
+                let patterns = body.get_pattern_ids(patterns);
+                let names = module.get_arguments(signature.arguments);
                 debug_assert!(patterns.len() == names.len());
-    
+
                 for (&name, &pattern) in names.iter().zip(patterns) {
                     self.context.insert_value(name, pattern.into());
                 }
@@ -259,33 +260,34 @@ impl<'a> GraphBuilder<'a> {
 
         let scope = self.resolve_scope(self.ast_module.get_function_scope(f));
 
-        let (arguments, elaborate_arguments) = self.within_scope(scope, |scope| {
-            let ast_arguments = self.ast_module.get_arguments(fun.arguments);
+        let (arguments, argument_types, elaborate_argument_types) =
+            self.within_scope(scope, |scope| {
+                let ast_arguments = self.ast_module.get_arguments(fun.arguments);
 
-            let mut elaborate_fields = Vec::with_capacity(ast_arguments.len());
-            let mut fields = Vec::with_capacity(ast_arguments.len());
-            let mut names = Vec::with_capacity(ast_arguments.len());
+                let mut elaborate_argument_types = Vec::with_capacity(ast_arguments.len());
+                let mut argument_types = Vec::with_capacity(ast_arguments.len());
+                let mut arguments: Vec<hir::ValueIdentifier> =
+                    Vec::with_capacity(ast_arguments.len());
 
-            for a in ast_arguments {
-                let type_ = self
-                    .type_mapper(scope, self.ast_module, self.hir_module)
-                    .type_of(a.type_);
+                for a in ast_arguments {
+                    let type_ = self
+                        .type_mapper(scope, self.ast_module, self.hir_module)
+                        .type_of(a.type_);
 
-                names.push(hir::ValueIdentifier(a.name.id(), a.name.span()));
-                fields.push(self.simplify(type_));
-                elaborate_fields.push(type_);
-            }
+                    arguments.push(a.name.into());
+                    argument_types.push(self.simplify(type_));
+                    elaborate_argument_types.push(type_);
+                }
 
-            let names = self.hir_module.borrow_mut().push_names(names);
-            let fields = self.hir_module.borrow_mut().push_type_ids(fields);
-            let elaborate_fields = self.hir_module.borrow_mut()
-                .push_elaborate_type_ids(elaborate_fields);
+                let arguments = self.hir_module.borrow_mut()
+                    .push_arguments(arguments);
+                let argument_types = self.hir_module.borrow_mut()
+                    .push_type_ids(argument_types);
+                let elaborate_argument_types = self.hir_module.borrow_mut()
+                    .push_elaborate_type_ids(elaborate_argument_types);
 
-            (
-                hir::Tuple { fields, names, },
-                hir::Tuple { fields: elaborate_fields, names, },
-            )
-        });
+                (arguments, argument_types, elaborate_argument_types)
+            });
 
         let elaborate_result = self.within_scope(scope, |scope| {
             self.type_mapper(scope, self.ast_module, self.hir_module)
@@ -298,8 +300,9 @@ impl<'a> GraphBuilder<'a> {
             range,
             scope,
             arguments,
+            argument_types,
             result,
-            elaborate_arguments,
+            elaborate_argument_types,
             elaborate_result,
         };
 

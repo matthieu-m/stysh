@@ -105,6 +105,13 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)];
 
+    /// Returns the arguments associated to the ID.
+    ///
+    /// #   Panics
+    ///
+    /// Panics if the ID is incorrect.
+    fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier];
+
     /// Returns the Elaborate Type associated to the ID.
     ///
     /// #   Panics
@@ -124,7 +131,7 @@ pub trait Registry: fmt::Debug {
     /// #   Panics
     ///
     /// Panics if the ID is incorrect.
-    fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier];
+    fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier];
 
     /// Returns the path components associated to the ID.
     ///
@@ -193,12 +200,14 @@ pub struct MockRegistry {
     pub records: Vec<Record>,
     /// Functions for records.
     pub record_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Arguments.
+    pub arguments: Vec<Vec<ValueIdentifier>>,
     /// Elaborate Types.
     pub elaborate_types: Vec<ElaborateType>,
     /// Elaborate Type IDs.
     pub elaborate_type_ids: Vec<Vec<ElaborateTypeId>>,
     /// Names.
-    pub names: Vec<Vec<ValueIdentifier>>,
+    pub names: Vec<Vec<Identifier>>,
     /// Path Components.
     pub path_components: Vec<Vec<PathComponent>>,
     /// Record IDs.
@@ -292,6 +301,10 @@ impl Registry for MockRegistry {
         &self.record_functions[Self::index_of(id)]
     }
 
+    fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+        &self.arguments[Self::index_of(id)]
+    }
+
     fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
         self.elaborate_types[Self::index_of(id)]
     }
@@ -302,7 +315,7 @@ impl Registry for MockRegistry {
         &self.elaborate_type_ids[Self::index_of(id)]
     }
 
-    fn get_names(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
+    fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier] {
         &self.names[Self::index_of(id)]
     }
 

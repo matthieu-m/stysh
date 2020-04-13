@@ -49,7 +49,7 @@ impl<'a> GraphBuilder<'a> {
     {
         let expr = tree.get_root().expect("Expression Id");
         let patterns = tree.get_function_arguments().expect("Function Arguments");
-        let patterns = tree.get_pattern_ids(patterns.fields);
+        let patterns = tree.get_pattern_ids(patterns);
         let mut arguments = Vec::with_capacity(patterns.len());
 
         for &p in patterns {

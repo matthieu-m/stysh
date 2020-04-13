@@ -144,11 +144,13 @@ pub struct FunctionSignature {
     /// The scope.
     pub scope: Scope,
     /// The function arguments.
-    pub arguments: Tuple<TypeId>,
+    pub arguments: Id<[ValueIdentifier]>,
+    /// The function argument types.
+    pub argument_types: Id<[TypeId]>,
     /// The return type of the function.
     pub result: TypeId,
     /// The specified function arguments.
-    pub elaborate_arguments: Tuple<ElaborateTypeId>,
+    pub elaborate_argument_types: Id<[ElaborateTypeId]>,
     /// The specified return type.
     pub elaborate_result: ElaborateTypeId,
 }

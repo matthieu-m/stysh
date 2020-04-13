@@ -47,7 +47,7 @@ impl<'a> ExprUnifier<'a> {
             Tuple(arguments) => {
                 let ty = self.core.tree().get_type(ty);
                 if let Type::Tuple(target) = ty {
-                    self.finalize_tuple(arguments, target, 0);
+                    self.finalize_tuple(arguments, target.fields, 0);
                 } else {
                     unimplemented!("Expected tuple type for {:?}", ty);
                 }
@@ -164,13 +164,13 @@ impl<'a> ExprUnifier<'a> {
             Builtin(_) | Unknown(_) | Unresolved(_) => return,
             Function(fun) | Method(fun) => {
                 let signature = self.core.registry.get_function(fun);
-                signature.arguments
+                signature.argument_types
             }
         };
 
         let offset = if let Some(receiver) = receiver {
             let target = self.core.registry()
-                .get_type_ids(targets.fields)[0];
+                .get_type_ids(targets)[0];
             self.finalize_expression_with(receiver, target);
             1
         } else {
@@ -184,7 +184,7 @@ impl<'a> ExprUnifier<'a> {
     fn finalize_constructor(&self, target: TypeId, arguments: Tuple<ExpressionId>) {
         if let Type::Rec(r, ..) = self.core.registry().get_type(target) {
             let r = self.core.registry().get_record(r);
-            self.finalize_tuple(arguments, r.definition, 0);
+            self.finalize_tuple(arguments, r.definition.fields, 0);
         } else {
             unimplemented!("Unexpected type: {:?}", target);
         }
@@ -208,7 +208,7 @@ impl<'a> ExprUnifier<'a> {
     fn finalize_tuple(
         &self,
         e: Tuple<ExpressionId>,
-        target: Tuple<TypeId>,
+        targets: Id<[TypeId]>,
         offset: usize,
     )
     {
@@ -219,7 +219,7 @@ impl<'a> ExprUnifier<'a> {
             .collect();
 
         let targets: Vec<_> = self.core.registry()
-            .get_type_ids(target.fields)
+            .get_type_ids(targets)
             .iter()
             .copied()
             .skip(offset)

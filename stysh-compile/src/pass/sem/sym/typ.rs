@@ -32,7 +32,7 @@ impl<'a, A, H> TypeMapper<'a, A, H> {
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::ValueIdentifier>
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::Identifier>
             + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
 {
     /// Translates a type into... a type!
@@ -55,7 +55,7 @@ impl<'a, A, H> TypeMapper<'a, A, H>
         debug_assert!(names.is_empty() || names.len() == fields.len());
 
         let fields = self.array_of(fields, |&t| self.type_of(t));
-        let names = self.array_of(names, |&id| id.into());
+        let names = self.array_of(names, |&id| id.0);
 
         hir::Tuple { fields, names }
     }
@@ -67,7 +67,7 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::ValueIdentifier>
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::Identifier>
             + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
 {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)

@@ -95,9 +95,10 @@ pub struct FunctionSignatureBuilder {
     name: ItemIdentifier,
     range: Range,
     scope: Scope,
-    arguments: TupleBuilder<Module, TypeId>,
+    arguments: Vec<ValueIdentifier>,
+    argument_types: Vec<TypeId>,
     result: TypeId,
-    elaborate_arguments: TupleBuilder<Module, ElaborateTypeId>,
+    elaborate_argument_types: Vec<ElaborateTypeId>,
     elaborate_result: ElaborateTypeId,
 }
 
@@ -317,9 +318,10 @@ impl FunctionSignatureBuilder {
             name,
             range: Default::default(),
             scope: Default::default(),
-            arguments: TupleBuilder::new(module.clone()),
+            arguments: Default::default(),
+            argument_types: Default::default(),
             result,
-            elaborate_arguments: TupleBuilder::new(module),
+            elaborate_argument_types: Default::default(),
             elaborate_result: Default::default(),
         }
     }
@@ -351,15 +353,15 @@ impl FunctionSignatureBuilder {
     /// Pushes an argument.
     pub fn push(&mut self, name: ValueIdentifier, type_: TypeId) -> &mut Self
     {
-        self.arguments.push(type_);
-        self.arguments.name(name);
+        self.arguments.push(name);
+        self.argument_types.push(type_);
         self
     }
 
     /// Pushes an elaborate argument.
     pub fn push_elaborate(&mut self, type_: ElaborateTypeId) -> &mut Self
     {
-        self.elaborate_arguments.push(type_);
+        self.elaborate_argument_types.push(type_);
         self
     }
 
@@ -367,16 +369,18 @@ impl FunctionSignatureBuilder {
     pub fn build(&self) -> FunctionSignature {
         let elaborate_result = self.build_elaborate_result(self.result);
 
-        let arguments = self.arguments.build();
-        let elaborate_arguments = self.build_elaborate_arguments(arguments);
+        let arguments = self.build_arguments();
+        let argument_types = self.build_argument_types();
+        let elaborate_argument_types = self.build_elaborate_argument_types();
 
         let signature = FunctionSignature {
             name: self.name,
             range: self.range,
             scope: self.scope,
             arguments,
+            argument_types,
             result: self.result,
-            elaborate_arguments,
+            elaborate_argument_types,
             elaborate_result,
         };
 
@@ -400,16 +404,24 @@ impl FunctionSignatureBuilder {
         self.convert_type(result)
     }
 
-    fn build_elaborate_arguments(&self, arguments: Tuple<TypeId>)
-        -> Tuple<ElaborateTypeId>
-    {
-        if !self.elaborate_arguments.fields.is_empty() {
-            let mut elaborate = self.elaborate_arguments.build();
-            elaborate.names = arguments.names;
-            return elaborate;
-        }
+    fn build_arguments(&self) -> Id<[ValueIdentifier]> {
+        self.module.borrow_mut()
+            .push_arguments(self.arguments.iter().copied())
+    }
 
-        self.convert_tuple(arguments)
+    fn build_argument_types(&self) -> Id<[TypeId]> {
+        self.module.borrow_mut()
+            .push_type_ids(self.argument_types.iter().copied())
+    }
+
+    fn build_elaborate_argument_types(&self) -> Id<[ElaborateTypeId]> {
+        let elaborate = if !self.elaborate_argument_types.is_empty() {
+            self.elaborate_argument_types.clone()
+        } else {
+            self.argument_types.iter().map(|&ty| self.convert_type(ty)).collect()
+        };
+
+        self.module.borrow_mut().push_elaborate_type_ids(elaborate.into_iter())
     }
 
     fn convert_type(&self, ty: TypeId) -> ElaborateTypeId {
@@ -862,7 +874,7 @@ impl<S> TypeTupleBuilder<S> {
     /// Builds a Type::Tuple.
     pub fn build(&self) -> Type
         where
-            S: MultiStore<ValueIdentifier> + MultiStore<TypeId>,
+            S: MultiStore<Identifier> + MultiStore<TypeId>,
     {
         Type::Tuple(self.tuple.build())
     }
@@ -1040,7 +1052,7 @@ impl<S> ElaborateTypeTupleBuilder<S> {
     /// Builds a ElaborateType::Tuple.
     pub fn build(&self) -> ElaborateType
         where
-            S: MultiStore<ValueIdentifier> + MultiStore<ElaborateTypeId>,
+            S: MultiStore<Identifier> + MultiStore<ElaborateTypeId>,
     {
         ElaborateType::Tuple(self.tuple.build())
     }
@@ -1155,7 +1167,7 @@ impl<S> TypeIdTupleBuilder<S> {
     /// Builds a Type::Tuple.
     pub fn build(&self) -> TypeId
         where
-            S: Store<Type, TypeId> + MultiStore<TypeId> + MultiStore<ValueIdentifier>,
+            S: Store<Type, TypeId> + MultiStore<TypeId> + MultiStore<Identifier>,
     {
         let ty = self.builder.build();
         self.builder.tuple.store.borrow_mut().push(ty, Range::default())
@@ -1334,7 +1346,7 @@ impl<S> ElaborateTypeIdTupleBuilder<S> {
     /// Builds a ElaborateType::Tuple.
     pub fn build(&self) -> ElaborateTypeId
         where
-            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<ElaborateTypeId> + MultiStore<ValueIdentifier>,
+            S: Store<ElaborateType, ElaborateTypeId> + MultiStore<ElaborateTypeId> + MultiStore<Identifier>,
     {
         let ty = self.builder.build();
         self.builder.tuple.store.borrow_mut().push(ty, Range::default())
@@ -2139,7 +2151,7 @@ pub struct PathBuilder<S> {
 pub struct TupleBuilder<S, T> {
     store: Rc<S>,
     fields: Vec<T>,
-    names: Vec<ValueIdentifier>,
+    names: Vec<Identifier>,
 }
 
 #[derive(Clone, Debug)]
@@ -2258,22 +2270,22 @@ impl<S, T> TupleBuilder<S, T> {
     fn name(&mut self, name: ValueIdentifier) -> &mut Self {
         let len = self.fields.len();
         if len > 0 && self.names.len() == self.fields.len() - 1 {
-            self.names.push(name);
+            self.names.push(name.id());
         }
         self
     }
 
     fn build(&self) -> Tuple<T>
         where
-            S: MultiStore<T> + MultiStore<ValueIdentifier>,
+            S: MultiStore<T> + MultiStore<Identifier>,
     {
         let names = self.store.borrow_mut().push_slice(&self.names);
         self.build_named(names)
     }
 
-    fn build_named(&self, names: Id<[ValueIdentifier]>) -> Tuple<T>
+    fn build_named(&self, names: Id<[Identifier]>) -> Tuple<T>
         where
-            S: MultiStore<T> + MultiStore<ValueIdentifier>,
+            S: MultiStore<T> + MultiStore<Identifier>,
     {
         let fields = self.store.borrow_mut().push_slice(&self.fields);
         Tuple { fields, names, }

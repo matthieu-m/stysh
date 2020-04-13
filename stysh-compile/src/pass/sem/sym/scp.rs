@@ -779,9 +779,10 @@ mod tests {
                 name: bar,
                 range: Default::default(),
                 scope: hir::Scope::Ext(ext_id),
-                arguments: Tuple::default(),
+                arguments: Default::default(),
+                argument_types: Default::default(),
                 result: TypeId::void(),
-                elaborate_arguments: Tuple::default(),
+                elaborate_argument_types: Default::default(),
                 elaborate_result: ElaborateTypeId::void(),
             };
 

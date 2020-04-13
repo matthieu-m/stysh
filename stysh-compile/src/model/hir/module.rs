@@ -19,10 +19,11 @@
 //! Note:   this layout is inspired by the realization that ECS are a great fit
 //!         for Rust.
 
+use std::cmp;
 use std::collections::BTreeMap;
 
 use crate::basic::com::{Range, Store, MultiStore};
-use crate::basic::sea::{MultiTable, Table};
+use crate::basic::sea::{MultiTable, Table, TableIndex};
 
 use crate::model::com::ModuleId;
 use crate::model::hir::*;
@@ -120,14 +121,17 @@ pub struct Module {
     elaborate_type_ids: KeyedMulti<ElaborateTypeId>,
     /// Names
     names: KeyedMulti<Identifier>,
+    canonical_names: CanonicalMulti<Identifier>,
     /// Path
     path_components: KeyedMulti<PathComponent>,
     /// Path
     record_ids: KeyedMulti<RecordId>,
     /// Types
     type_: Table<TypeId, Type>,
+    canonical_types: Canonical<Type, TypeId>,
     /// TypeIds
     type_ids: KeyedMulti<TypeId>,
+    canonical_type_ids: CanonicalMulti<TypeId>,
 }
 
 impl Module {
@@ -490,9 +494,11 @@ impl Module {
         where
             I: IntoIterator<Item = Identifier>
     {
-        self.names.create(names)
-            .map(Self::modularize)
-            .unwrap_or(Id::empty())
+        Self::canonicalize_multi(
+            names,
+            &mut self.names,
+            &mut self.canonical_names
+        )
     }
 
     /// Pushes a new slice of path components.
@@ -520,42 +526,22 @@ impl Module {
             .unwrap_or(Id::empty())
     }
 
-    /// Sets the type associated to the id.
-    ///
-    /// #   Panics
-    ///
-    /// Panics if attempting to associate a non built-in Type to a
-    /// built-in TypeId.
-    pub fn set_type(&mut self, id: TypeId, ty: Type) -> TypeId {
-        if let Some(_) = id.builtin() {
-            if let Type::Builtin(b) = ty {
-                return TypeId::from(b);
-            }
-
-            panic!("Cannot update a built-in to a non built-in");
-        }
-
-        let local_id = Self::localize(id);
-        *self.type_.at_mut(&local_id) = ty;
-
-        if let Type::Builtin(b) = ty {
-            TypeId::from(b)
-        } else {
-            id
-        }
-    }
-
     /// Inserts a new type.
     ///
     /// Returns the ID created for it.
     pub fn push_type(&mut self, typ: Type) -> TypeId {
-        let ty = Self::modularize(self.type_.extend(typ));
-
-        if let Type::Builtin(b) = typ {
-            TypeId::from(b)
-        } else {
-            ty
-        }
+        match typ {
+            Type::Builtin(b) => return TypeId::from(b),
+            Type::Tuple(tup) =>
+                //  FIXME(matthieum): replace with `is_sorted` when stable.
+                debug_assert!(
+                    self.get_names(tup.names)
+                        .windows(2)
+                        .all(|w| w[0] <= w[1])
+                ),
+            _ => (),
+        };
+        Self::canonicalize(typ, &mut self.type_, &mut self.canonical_types)
     }
 
     /// Pushes a new slice of Type IDs.
@@ -565,9 +551,11 @@ impl Module {
         where
             I: IntoIterator<Item = TypeId>
     {
-        self.type_ids.create(type_ids)
-            .map(Self::modularize)
-            .unwrap_or(Id::empty())
+        Self::canonicalize_multi(
+            type_ids,
+            &mut self.type_ids,
+            &mut self.canonical_type_ids
+        )
     }
 }
 
@@ -578,6 +566,43 @@ impl Module {
 
     fn modularize<I: ItemId>(id: I) -> I {
         I::new_module(id.get_tree().expect("tree"))
+    }
+
+    fn canonicalize<I, T>(
+        element: T,
+        keyed: &mut Table<I, T>,
+        canonical: &mut BTreeMap<T, I>,
+    )
+        -> I
+        where
+            I: Copy + ItemId + TableIndex,
+            T: Copy + cmp::Ord,
+    {
+        *canonical.entry(element)
+            .or_insert_with(|| Self::modularize(keyed.extend(element)))
+    }
+
+    fn canonicalize_multi<T>(
+        elements: impl IntoIterator<Item = T>,
+        keyed: &mut KeyedMulti<T>,
+        canonical: &mut BTreeMap<Vec<T>, Id<[T]>>,
+    )
+        -> Id<[T]>
+        where
+            T: Copy + cmp::Ord,
+    {
+        let elements: Vec<_> = elements.into_iter().collect();
+
+        if elements.is_empty() {
+            return Id::empty();
+        }
+
+        *canonical.entry(elements.clone())
+            .or_insert_with(|| {
+                keyed.create(elements.into_iter())
+                    .map(Self::modularize)
+                    .unwrap_or(Id::empty())
+            })
     }
 
     fn push_type_function(&mut self, ty: TypeId, name: Identifier, id: FunctionId) {
@@ -838,4 +863,259 @@ impl MultiStore<TypeId> for Module {
 //  Private Type
 //
 
+type Canonical<T, I> = BTreeMap<T, I>;
+type CanonicalMulti<T> = BTreeMap<Vec<T>, Id<[T]>>;
 type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
+
+#[cfg(test)]
+mod tests {
+    use std::rc;
+
+    use crate::basic::{com, mem};
+
+    use super::*;
+
+    #[test]
+    fn canonicalize_names() {
+        let env = Env::new(b"a b c");
+        let (a, b, c) = (env.id(0, 1), env.id(2, 1), env.id(4, 1));
+
+        {
+            let mut local = env.local();
+            let one = local.push_names(&[]);
+
+            assert_eq!(Id::empty(), one);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_names(&[a]);
+            let two = local.push_names(&[a]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_names(&[a, b]);
+            let two = local.push_names(&[a, b]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_names(&[a]);
+            let two = local.push_names(&[b]);
+
+            assert!(one != two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_names(&[a, b]);
+            let two = local.push_names(&[a, c]);
+
+            assert!(one != two);
+        }
+    }
+
+    #[test]
+    fn canonicalize_types_builtin() {
+        let facts = [
+            (TypeId::bool_(), Type::bool_()),
+            (TypeId::int(), Type::int()),
+            (TypeId::string(), Type::string()),
+            (TypeId::void(), Type::void()),
+        ];
+
+        for &(id, type_) in &facts {
+            let mut module = Module::default();
+            let ty = module.push_type(type_);
+
+            assert_eq!(id, ty, "Expected {:?}, got {:?} for {:?}", id, ty, type_);
+        }
+    }
+
+    #[test]
+    fn canonicalize_types_mashup() {
+        let env = Env::new(b"");
+        let (e, ee) = (Type::Enum(EnumId::new(0)), Type::Enum(EnumId::new(1)));
+        let r = Type::Rec(RecordId::new(0));
+
+        {
+            let mut local = env.local();
+            let one = local.push_type(e);
+            let two = local.push_type(e);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type(e);
+            let two = local.push_type(ee);
+
+            assert!(one != two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type(e);
+            let two = local.push_type(r);
+
+            assert!(one != two);
+        }
+    }
+
+    #[test]
+    fn canonicalize_types_tuple_named() {
+        let env = Env::new(b"a b c");
+        let (a, b, c) = (env.id(0, 1), env.id(2, 1), env.id(4, 1));
+        let (t, u, v) = (TypeId::new(0), TypeId::new(1), TypeId::new(2));
+
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[a, b]);
+            let two = local.push_tuple(&[t, u], &[a, b]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[a, b]);
+            let two = local.push_tuple(&[t, v], &[a, b]);
+
+            assert!(one != two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[a, b]);
+            let two = local.push_tuple(&[t, u], &[a, c]);
+
+            assert!(one != two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[a, b]);
+            let two = local.push_tuple(&[t, v], &[a, c]);
+
+            assert!(one != two);
+        }
+    }
+
+    #[test]
+    fn canonicalize_types_tuple_unnamed() {
+        let env = Env::new(b"a b c");
+        let (t, u, v) = (TypeId::new(0), TypeId::new(1), TypeId::new(2));
+
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[], &[]);
+            let two = local.push_tuple(&[], &[]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[]);
+            let two = local.push_tuple(&[t, u], &[]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_tuple(&[t, u], &[]);
+            let two = local.push_tuple(&[t, v], &[]);
+
+            assert!(one != two);
+        }
+    }
+
+    #[test]
+    fn canonicalize_type_ids() {
+        let env = Env::new(b"");
+        let (a, b, c) = (TypeId::new(0), TypeId::new(1), TypeId::new(2));
+
+        {
+            let mut local = env.local();
+            let one = local.push_type_ids(&[]);
+
+            assert_eq!(Id::empty(), one);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type_ids(&[a]);
+            let two = local.push_type_ids(&[a]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type_ids(&[a, b]);
+            let two = local.push_type_ids(&[a, b]);
+
+            assert_eq!(one, two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type_ids(&[a]);
+            let two = local.push_type_ids(&[c]);
+
+            assert!(one != two);
+        }
+        {
+            let mut local = env.local();
+            let one = local.push_type_ids(&[b, a]);
+            let two = local.push_type_ids(&[b, c]);
+
+            assert!(one != two);
+        }
+    }
+
+    struct Env {
+        resolver: super::interning::Resolver,
+    }
+
+    struct LocalEnv {
+        module: Module,
+    }
+
+    impl Env {
+        fn new(fragment: &[u8]) -> Env {
+            let interner = rc::Rc::new(mem::Interner::new());
+            Env {
+                resolver: interning::Resolver::new(fragment, interner),
+            }
+        }
+
+        fn local(&self) -> LocalEnv { LocalEnv::new() }
+
+        fn id(&self, pos: usize, len: usize) -> Identifier {
+            let range = com::Range::new(pos, len);
+            self.resolver.from_range(range)
+        }
+    }
+
+    impl LocalEnv {
+        fn new() -> LocalEnv { Self { module: Module::default() } }
+
+        fn push_names(&mut self, names: &[Identifier]) -> Id<[Identifier]> {
+            self.module.push_names(names.iter().copied())
+        }
+
+        fn push_tuple(&mut self, fields: &[TypeId], names: &[Identifier])
+            -> TypeId
+        {
+            let fields = self.push_type_ids(fields);
+            let names = self.push_names(names);
+
+            let ty = Type::Tuple(Tuple { fields, names, });
+            self.push_type(ty)
+        }
+
+        fn push_type(&mut self, ty: Type) -> TypeId {
+            self.module.push_type(ty)
+        }
+
+        fn push_type_ids(&mut self, type_ids: &[TypeId])
+            -> Id<[TypeId]>
+        {
+            self.module.push_type_ids(type_ids.iter().copied())
+        }
+    }
+}

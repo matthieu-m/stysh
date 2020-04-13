@@ -1,6 +1,7 @@
 //! A process repository of all items.
 
-use std::ops;
+use std::{cell, ops};
+use std::collections::BTreeMap;
 
 use crate::basic::mem::{JaggedArray, JaggedArraySnapshot, JaggedHashMap, JaggedHashMapSnapshot};
 
@@ -116,6 +117,7 @@ pub struct Repository {
 
     /// Names
     names: JaggedMultiArray<Identifier>,
+    canonical_names: CanonicalMulti<Identifier>,
 
     /// Path
     path_components: JaggedMultiArray<PathComponent>,
@@ -125,9 +127,11 @@ pub struct Repository {
 
     /// Types
     type_: JaggedArray<Type>,
+    canonical_type: Canonical<Type, TypeId>,
 
     /// TypeIds
     type_ids: JaggedMultiArray<TypeId>,
+    canonical_type_ids: CanonicalMulti<TypeId>,
 }
 
 impl Repository {
@@ -166,10 +170,13 @@ impl Repository {
             elaborate_type: JaggedArray::new(5),
             elaborate_type_ids: JaggedMultiArray::new(5),
             names: JaggedMultiArray::new(5),
+            canonical_names: Default::default(),
             path_components: JaggedMultiArray::new(5),
             record_ids: JaggedMultiArray::new(5),
             type_: JaggedArray::new(5),
+            canonical_type: Default::default(),
             type_ids: JaggedMultiArray::new(5),
+            canonical_type_ids: Default::default(),
         }
     }
 
@@ -597,6 +604,28 @@ impl Repository {
             .unwrap_or(Id::empty())
     }
 
+    fn insert_names(
+        &mut self,
+        names: Id<[Identifier]>,
+        module: &Module,
+    )
+        -> Id<[Identifier]>
+    {
+        if names == Id::empty() {
+            return Id::empty();
+        }
+
+        let names = module.get_names(names);
+        let canonical: Vec<_> = names.iter().copied().collect();
+
+        *self.canonical_names.borrow_mut().entry(canonical)
+            .or_insert_with(|| {
+                self.names.push(names)
+                .map(|index| Id::new_repository(index as u32))
+                .unwrap_or(Id::empty())
+            })
+    }
+
     fn insert_path_components(
         &mut self,
         path: PathId,
@@ -618,10 +647,7 @@ impl Repository {
         -> Tuple<TypeId>
     {
         let fields = self.insert_type_ids(tuple.fields, module, mapper);
-
-        let names = self.names.push(module.get_names(tuple.names))
-            .map(|index| Id::new_repository(index as u32))
-            .unwrap_or(Id::empty());
+        let names = self.insert_names(tuple.names, module);
 
         Tuple { fields, names, }
     }
@@ -643,9 +669,12 @@ impl Repository {
 
         let ty = self.insert_type_impl(ty, module, mapper);
 
-        let index = self.type_.len();
-        self.type_.push(ty);
-        TypeId::new_repository(index as u32)
+        *self.canonical_type.borrow_mut().entry(ty)
+            .or_insert_with(|| {
+                let index = self.type_.len();
+                self.type_.push(ty);
+                TypeId::new_repository(index as u32)
+            })
     }
 
     fn insert_type_impl(&mut self, type_: Type, module: &Module, mapper: &IdMapper)
@@ -666,15 +695,21 @@ impl Repository {
     fn insert_type_ids(&mut self, tys: Id<[TypeId]>, module: &Module, mapper: &IdMapper)
         -> Id<[TypeId]>
     {
-        let mut type_ids = vec!();
-
-        for &id in module.get_type_ids(tys) {
-            type_ids.push(self.insert_type(id, module, mapper));
+        if tys == Id::empty() {
+            return Id::empty();
         }
 
-        self.type_ids.push(&type_ids)
-            .map(|index| Id::new_repository(index as u32))
-            .unwrap_or(Id::empty())
+        let tys = module.get_type_ids(tys);
+        let type_ids: Vec<_> = tys.iter()
+            .map(|&id| self.insert_type(id, module, mapper))
+            .collect();
+
+        *self.canonical_type_ids.borrow_mut().entry(type_ids)
+            .or_insert_with(|| {
+                self.type_ids.push(tys)
+                    .map(|index| Id::new_repository(index as u32))
+                    .unwrap_or(Id::empty())
+            })
     }
 }
 
@@ -866,6 +901,8 @@ fn index_of<T: ItemId>(id: T) -> usize {
 //  Private Types
 //
 
+type Canonical<T, I> = cell::RefCell<BTreeMap<T, I>>;
+type CanonicalMulti<T> = cell::RefCell<BTreeMap<Vec<T>, Id<[T]>>>;
 type Functions = Vec<(Identifier, FunctionId)>;
 
 /// JaggedMultiArray

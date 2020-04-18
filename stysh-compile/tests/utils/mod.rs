@@ -7,17 +7,14 @@ use stysh_compile::model::{ast, hir, sir};
 use stysh_compile::pass::int;
 use stysh_compile::pass::sem::{self, scp};
 
-use self::hir::Registry;
-
 pub fn interpret(raw: &[u8]) -> int::Value {
     let interner = mem::Interner::new();
     let builtin = scp::BuiltinScope::new();
-    let mut scope = scp::BlockScope::new(&builtin);
     let mut cfg_registry = int::SimpleRegistry::new();
 
     interpret_impl(
         raw,
-        &mut scope,
+        &builtin,
         &mut cfg_registry,
         &interner,
     )
@@ -26,9 +23,9 @@ pub fn interpret(raw: &[u8]) -> int::Value {
 //
 //  Implementation Details
 //
-fn interpret_impl<'a>(
+fn interpret_impl(
     raw: &[u8],
-    scope: &mut scp::BlockScope<'a>,
+    builtin: &scp::BuiltinScope,
     cfg_registry: &mut int::SimpleRegistry,
     interner: &mem::Interner,
 )
@@ -37,11 +34,20 @@ fn interpret_impl<'a>(
     let (ast_module, tree) = create_ast(raw, interner);
     let hir_module = cell::RefCell::new(hir::Module::default());
 
-    //  Create names
-    create_names(&ast_module, &tree, scope, &hir_module);
+    {
+        let mut scope = scp::BlockScope::new(builtin);
 
-    //  Create items
-    create_items(&ast_module, &tree, scope, &hir_module);
+        //  Create names
+        create_names(&ast_module, &tree, &mut scope, &hir_module);
+
+        //  Create items
+        create_items(&ast_module, &tree, &scope, &hir_module);
+    }
+
+    let repository = hir::Repository::default();
+    repository.internalize_module(&hir_module.borrow());
+
+    let scope = create_scope(builtin, &repository.snapshot());
 
     //  Create CFGs for functions.
     for id in ast_module.functions() {
@@ -52,10 +58,12 @@ fn interpret_impl<'a>(
             continue;
         }
 
-        let body = create_function(id, &ast_module, &tree, scope, &hir_module);
+        let fun = hir::FunctionId::new_repository(id.value());
+        let body = create_function(id, fun, &ast_module, &tree, &scope, &repository, &hir_module);
 
-        let fun = hir::FunctionId::new_module(id.value());
-        let cfg = create_cfg_from_function(&hir_module.borrow(), &body, fun);
+        let snapshot = repository.snapshot();
+
+        let cfg = create_cfg_from_function(&snapshot, &body, fun);
         cfg_registry.insert(cfg.source(), cfg);
     }
 
@@ -64,12 +72,15 @@ fn interpret_impl<'a>(
         tree.get_root_expression().expect("One expression is necessary!"),
         &ast_module,
         &tree,
-        scope,
+        &scope,
+        &repository,
         &hir_module,
     );
 
-    let cfg = create_cfg_from_value(&hir_module.borrow(), &value);
-    return evaluate(&cfg, interner.snapshot(), &hir_module.borrow(), cfg_registry);
+    let snapshot = repository.snapshot();
+
+    let cfg = create_cfg_from_value(&snapshot, &value);
+    return evaluate(&cfg, interner.snapshot(), &snapshot, cfg_registry);
 }
 
 fn create_ast(
@@ -220,22 +231,67 @@ fn create_item(
     result
 }
 
+fn create_scope<'a>(
+    builtin: &'a scp::BuiltinScope,
+    registry: &dyn hir::Registry
+)
+    -> scp::BlockScope<'a>
+{
+    let mut scope = scp::BlockScope::new(builtin);
+
+    for id in registry.enums() {
+        let e = registry.get_enum(id);
+        scope.add_enum(e.name, id);
+    }
+
+    for id in registry.records() {
+        let r = registry.get_record(id);
+        scope.add_record(r.name, id);
+    }
+
+    for id in registry.interfaces() {
+        let i = registry.get_interface(id);
+        scope.add_interface(i.name, id);
+    }
+
+    for id in registry.functions() {
+        use hir::Scope::*;
+
+        let f = registry.get_function(id);
+
+        match f.scope {
+            Module => scope.add_function(f.name, id),
+            Int(_) => scope.add_method(f.name.id(), id),
+            Ext(_) | Imp(_) => (),
+        }
+    }
+
+    println!("create_scope - {:#?}", scope);
+    println!("");
+
+    scope
+}
+
 fn create_function(
     function: ast::FunctionId,
+    hir_function: hir::FunctionId,
     ast_module: &ast::Module,
     tree: &ast::Tree,
     scope: &dyn scp::Scope,
+    repository: &hir::Repository,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Tree
 {
     use self::sem::{Context, GraphBuilder};
 
-    let repository = hir::RepositorySnapshot::default();
+    let snapshot = repository.snapshot();
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, &repository, &context, ast_module, tree, &hir_module)
-        .function(function);
+    let mut result = GraphBuilder::new(scope, &snapshot, &context, ast_module, tree, &hir_module)
+        .function(function, hir_function);
+
+    repository.internalize_tree(&mut result);
 
     println!("create_function - {:#?}", result);
     println!("");
@@ -248,17 +304,20 @@ fn create_value(
     ast_module: &ast::Module,
     tree: &ast::Tree,
     scope: &dyn scp::Scope,
+    repository: &hir::Repository,
     hir_module: &cell::RefCell<hir::Module>,
 )
     -> hir::Tree
 {
     use self::sem::{Context, GraphBuilder};
 
-    let repository = hir::RepositorySnapshot::default();
+    let snapshot = repository.snapshot();
 
     let context = Context::default();
-    let result = GraphBuilder::new(scope, &repository, &context, ast_module, tree, hir_module)
+    let mut result = GraphBuilder::new(scope, &snapshot, &context, ast_module, tree, hir_module)
         .expression(expr);
+
+    repository.internalize_tree(&mut result);
 
     println!("create_value - {:#?}", result);
     println!("");
@@ -266,30 +325,30 @@ fn create_value(
     result
 }
 
-fn create_cfg_from_value(module: &hir::Module, tree: &hir::Tree)
+fn create_cfg_from_value(registry: &dyn hir::Registry, tree: &hir::Tree)
     -> sir::Graph
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result = GraphBuilder::new(module).from_expression(tree);
+    let result = GraphBuilder::new(registry).from_expression(tree);
 
     println!("create_cfg_from_value =>");
-    println!("{}", sir::display_graph(&result, module));
+    println!("{}", sir::display_graph(&result, registry));
     println!("");
 
     result
 }
 
-fn create_cfg_from_function(module: &hir::Module, tree: &hir::Tree, fun: hir::FunctionId)
+fn create_cfg_from_function(registry: &dyn hir::Registry, tree: &hir::Tree, fun: hir::FunctionId)
     -> sir::Graph
 {
     use stysh_compile::pass::ssa::GraphBuilder;
 
-    let result = GraphBuilder::new(module).from_function(tree, fun);
+    let result = GraphBuilder::new(registry).from_function(tree, fun);
 
     println!("create_cfg_from_function - {:?} ({:?}) =>",
-        fun, module.get_function(fun).name);
-    println!("{}", sir::display_graph(&result, module));
+        fun, registry.get_function(fun).name);
+    println!("{}", sir::display_graph(&result, registry));
     println!("");
 
     result
@@ -298,14 +357,14 @@ fn create_cfg_from_function(module: &hir::Module, tree: &hir::Tree, fun: hir::Fu
 fn evaluate(
     cfg: &sir::Graph,
     interner: mem::InternerSnapshot,
-    module: &hir::Module,
+    hir_registry: &dyn hir::Registry,
     registry: &dyn int::Registry,
 )
     -> int::Value
 {
     use stysh_compile::pass::int::Interpreter;
 
-    let result = Interpreter::new(interner, module, registry)
+    let result = Interpreter::new(interner, hir_registry, registry)
         .evaluate(cfg, vec!());
 
     result

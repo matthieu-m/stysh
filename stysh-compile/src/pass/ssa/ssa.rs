@@ -9,7 +9,6 @@ use crate::basic::com::{CoreId, Range};
 use crate::basic::sea::{Table, TableIndex};
 
 use crate::model::{hir, sir};
-use crate::model::hir::ItemId;
 
 use super::proto::*;
 
@@ -37,7 +36,6 @@ impl<'a> GraphBuilder<'a> {
         );
 
         let mut graph = sir::Graph::new(hir::FunctionId::default());
-        graph.initialize_types(tree);
         imp.into_blocks(&mut graph);
 
         graph
@@ -64,7 +62,6 @@ impl<'a> GraphBuilder<'a> {
         imp.from_expression(first, expr);
 
         let mut graph = sir::Graph::new(fun);
-        graph.initialize_types(tree);
         imp.into_blocks(&mut graph);
 
         graph
@@ -814,11 +811,7 @@ impl<'a> GraphBuilderImpl<'a> {
     }
 
     fn fields_of(&self, ty: hir::TypeId) -> &'a [hir::TypeId] {
-        if ty.is_tree() {
-            self.fields_of_type(self.tree.get_type(ty))
-        } else {
-            self.fields_of_type(self.registry.get_type(ty))
-        }
+        self.fields_of_type(self.registry.get_type(ty))
     }
 
     fn fields_of_type(&self, type_: hir::Type) -> &'a [hir::TypeId] {
@@ -826,11 +819,7 @@ impl<'a> GraphBuilderImpl<'a> {
 
         match type_ {
             Tuple(tuple) =>
-                if tuple.fields.is_tree() {
-                    self.tree.get_type_ids(tuple.fields)
-                } else {
-                    self.registry.get_type_ids(tuple.fields)
-                },
+                self.registry.get_type_ids(tuple.fields),
             Rec(rec) => {
                 let fields = self.registry.get_record(rec).definition.fields;
                 self.registry.get_type_ids(fields)
@@ -1042,16 +1031,16 @@ mod tests {
         let env = Env::new(b":rec Args(Int);    Args(42)");
         let hir = env.factory();
 
-        let rec = {
+        {
             let (i, t) = (hir.item(), hir.type_module());
             i.rec(env.item_id(5, 4))
                 .push(t.int())
-                .build()
-        };
+                .build();
+        }
 
         let expr = {
             let (t, v) = (hir.type_(), hir.value());
-            let rec = t.record(rec);
+            let rec = t.record(RecordId::new_repository(0));
             v.constructor(rec).push(v.int(42, 24)).range(19, 8).build()
         };
 
@@ -1072,23 +1061,23 @@ mod tests {
         let env = Env::new(b":rec Args(Int, Int);   Args(4, 42).1");
         let hir = env.factory();
 
-        let rec = {
+        {
             let (i, t) = (hir.item(), hir.type_module());
             i.rec(env.item_id(5, 4))
                 .push(t.int())
                 .push(t.int())
-                .build()
-        };
+                .build();
+        }
 
         let expr = {
             let (t, v) = (hir.type_(), hir.value());
-            let rec = t.record(rec);
+            let rec = t.record(RecordId::new_repository(0));
             let c = v.constructor(rec)
                 .push(v.int(4, 28))
                 .push(v.int(42, 31))
                 .range(23, 11)
                 .build();
-            v.field_access(c).index(1).build()
+            v.field_access(c).index(1).type_(t.int()).build()
         };
 
         assert_eq!(
@@ -1221,7 +1210,7 @@ mod tests {
         let block =
             v.block(a_ref(48))
                 .push(s.var(
-                    p.tuple().push(p.var(a)).push(p.var(b)).range(7, 6).build(),
+                    p.tuple().push(p.int(a)).push(p.int(b)).range(7, 6).build(),
                     v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).range(17, 6).build(),
                 ))
                 .push(s.set(
@@ -1261,23 +1250,23 @@ mod tests {
         let env = Env::new(b":rec X(Int, Int);   { :var X(a, b) := X(1, 2); a }");
         let hir = env.factory();
 
-        let rec = {
+        {
             let (i, t) = (hir.item(), hir.type_module());
             i.rec(env.item_id(5, 1))
                 .push(t.int())
                 .push(t.int())
-                .build()
-        };
+                .build();
+        }
 
         let (_, p, s, t, v) = env.hir();
 
-        let rec = t.record(rec);
+        let rec = t.record(RecordId::new_repository(0));
         let (a, b) = (env.var_id(29, 1), env.var_id(32, 1));
 
         let binding =
             p.constructor(rec)
-                .push(p.var(a))
-                .push(p.var(b))
+                .push(p.int(a))
+                .push(p.int(b))
                 .range(27, 7)
                 .build();
         let value =
@@ -1333,7 +1322,7 @@ mod tests {
 
         let (a, b) = (env.var_id(8, 1), env.var_id(11, 1));
 
-        let binding = p.tuple().push(p.var(a)).push(p.var(b)).range(7, 6).build();
+        let binding = p.tuple().push(p.int(a)).push(p.int(b)).range(7, 6).build();
         let value = v.tuple().push(v.int(1, 18)).push(v.int(2, 21)).range(17, 6).build();
 
         let block =
@@ -1481,7 +1470,7 @@ mod tests {
                         .range(0, 61)
                         .build();
                 env.insert_function(signature);
-            };
+            }
 
             let (_, _, _, t, v) = env.hir();
 
@@ -1892,22 +1881,28 @@ mod tests {
         }
 
         fn exprit(&self, expr: ExpressionId) -> String {
-            use std::ops::Deref;
-
             let mut tree = self.tree.borrow().clone();
             tree.set_root(expr);
 
             println!("exprit - {:#?}", tree);
             println!("");
 
-            let guard = self.module.borrow();
-            let graph = super::GraphBuilder::new(guard.deref())
+            let repository = Repository::default();
+            repository.internalize_module(&*self.module.borrow());
+            repository.internalize_tree(&mut tree);
+
+            println!("exprit - {:#?}", tree);
+            println!("");
+
+            let snapshot = repository.snapshot();
+
+            let graph = super::GraphBuilder::new(&snapshot)
                 .from_expression(&tree);
 
             println!("exprit - {:#?}", graph);
             println!();
 
-            sir::display_graph(&graph, guard.deref())
+            sir::display_graph(&graph, &snapshot)
         }
     }
 

@@ -3,7 +3,9 @@
 use std::{cell, ops};
 use std::collections::BTreeMap;
 
+use crate::basic::com::{Store, MultiStore};
 use crate::basic::mem::{JaggedArray, JaggedArraySnapshot, JaggedHashMap, JaggedHashMapSnapshot};
+use crate::basic::sea::Table;
 
 use crate::model::hir::*;
 
@@ -184,7 +186,7 @@ impl Repository {
     ///
     /// The Module may contain content that has already been internalized, if
     /// this is the case the items are skipped.
-    pub fn internalize(&mut self, module: &Module) {
+    pub fn internalize_module(&self, module: &Module) {
         //  Only named items need be inserted, they will recursively lead to
         //  inserting the components that they need.
         let mapper = self.create_id_mapper(module);
@@ -212,6 +214,25 @@ impl Repository {
         for function in module.functions() {
             self.insert_function(function, module, &mapper);
         }
+    }
+
+    /// Copies the content of a Tree.
+    ///
+    /// The Tree cannot contain definitions of items, however it can contain
+    /// tuple types, from literals, not present anywhere else.
+    pub fn internalize_tree(&self, tree: &mut Tree) {
+        let mapper = IdMapper::default();
+
+        //  Mapping from tree to repository Id.
+        let mut translation = Table::new();
+
+        for id in 0..tree.len_types() {
+            let id = TypeId::new(id as u32);
+            let result = self.insert_type(id, tree, &mapper);
+            translation.push(&id, result);
+        }
+
+        tree.retype(&translation);
     }
 
     /// Creates a snapshot of the repository.
@@ -288,7 +309,7 @@ impl Repository {
     }
 
     fn insert_enum(
-        &mut self,
+        &self,
         e: EnumId,
         module: &Module,
         mapper: &IdMapper,
@@ -299,7 +320,8 @@ impl Repository {
 
         let id = mapper.map_enum(e);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.enum_.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.enum_.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.enum_.len());
 
         let enum_ = module.get_enum(e);
         let functions = mapper.map_functions(module.get_enum_functions(e));
@@ -321,7 +343,7 @@ impl Repository {
     }
 
     fn insert_extension(
-        &mut self,
+        &self,
         extension: ExtensionId,
         module: &Module,
         mapper: &IdMapper,
@@ -331,7 +353,8 @@ impl Repository {
 
         let id = mapper.map_extension(extension);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.extension.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.extension.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.extension.len());
 
         let ext = module.get_extension(extension);
 
@@ -348,17 +371,30 @@ impl Repository {
     }
 
     fn insert_function(
-        &mut self,
+        &self,
         function: FunctionId,
         module: &Module,
         mapper: &IdMapper,
     )
     {
-        debug_assert!(self.function_lookup.len() == self.function.len());
+        debug_assert!(self.function_lookup.len() <= self.function.len());
 
         let id = mapper.map_function(function);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.function.len() as u32 + 1);
+
+        //  Interfaces may have functions with empty bodies.
+        if let Some(index) = id.get_repository() {
+            debug_assert!(index >= self.function.len() as u32,
+                "{:?} == {:?}", index, self.function.len());
+
+            let missing = index - self.function.len() as u32;
+            for _ in 0..missing {
+                self.function.push(Default::default());
+            }
+        }
+
+        debug_assert!(id.get_repository().unwrap() == self.function.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.function.len());
 
         let signature = module.get_function(function);
 
@@ -397,7 +433,7 @@ impl Repository {
     }
 
     fn insert_implementation(
-        &mut self,
+        &self,
         implementation: ImplementationId,
         module: &Module,
         mapper: &IdMapper,
@@ -410,7 +446,8 @@ impl Repository {
 
         let id = mapper.map_implementation(implementation);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.implementation.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.implementation.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.implementation.len());
 
         let imp = module.get_implementation(implementation);
         let functions = mapper.map_functions(module.get_implementation_functions(implementation));
@@ -439,7 +476,7 @@ impl Repository {
         self.implementation_functions.push(functions);
         self.implementation_lookup.insert(extended_name, id);
 
-        match module.get_type(imp.extended) {
+        match self.snapshot().get_type(imp.extended) {
             Builtin(ty) =>
                 { self.implementation_of_builtin.insert((implemented, ty), id); },
             Enum(e) =>
@@ -454,7 +491,7 @@ impl Repository {
     }
 
     fn insert_interface(
-        &mut self,
+        &self,
         interface: InterfaceId,
         module: &Module,
         mapper: &IdMapper,
@@ -465,7 +502,8 @@ impl Repository {
 
         let id = mapper.map_interface(interface);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.interface.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.interface.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.interface.len());
 
         let int = module.get_interface(interface);
         let functions = mapper.map_functions(module.get_interface_functions(interface));
@@ -481,7 +519,7 @@ impl Repository {
     }
 
     fn insert_record(
-        &mut self,
+        &self,
         r: RecordId,
         module: &Module,
         mapper: &IdMapper,
@@ -492,7 +530,8 @@ impl Repository {
 
         let id = mapper.map_record(r);
         debug_assert!(id.is_repository());
-        debug_assert!(id.get_repository().unwrap() == self.record.len() as u32 + 1);
+        debug_assert!(id.get_repository().unwrap() == self.record.len() as u32,
+            "{:?} == {:?}", id.get_repository(), self.record.len());
 
         let record = module.get_record(r);
         let functions = mapper.map_functions(module.get_record_functions(r));
@@ -510,7 +549,7 @@ impl Repository {
     }
 
     fn insert_elaborate_type(
-        &mut self,
+        &self,
         ty: ElaborateTypeId,
         module: &Module,
         mapper: &IdMapper,
@@ -532,7 +571,7 @@ impl Repository {
     }
 
     fn insert_elaborate_tuple(
-        &mut self,
+        &self,
         tuple: Tuple<ElaborateTypeId>,
         module: &Module,
         mapper: &IdMapper,
@@ -549,7 +588,7 @@ impl Repository {
     }
 
     fn insert_elaborate_type_impl(
-        &mut self,
+        &self,
         type_: ElaborateType,
         module: &Module,
         mapper: &IdMapper,
@@ -586,7 +625,7 @@ impl Repository {
     }
 
     fn insert_elaborate_type_ids(
-        &mut self,
+        &self,
         tys: Id<[ElaborateTypeId]>,
         module: &Module,
         mapper: &IdMapper
@@ -604,30 +643,32 @@ impl Repository {
             .unwrap_or(Id::empty())
     }
 
-    fn insert_names(
-        &mut self,
+    fn insert_names<S>(
+        &self,
         names: Id<[Identifier]>,
-        module: &Module,
+        store: &S,
     )
         -> Id<[Identifier]>
+        where
+            S: MultiStore<Identifier>
     {
         if names == Id::empty() {
             return Id::empty();
         }
 
-        let names = module.get_names(names);
-        let canonical: Vec<_> = names.iter().copied().collect();
+        let names = store.get_slice(names);
+        let names: Vec<_> = names.iter().copied().collect();
 
-        *self.canonical_names.borrow_mut().entry(canonical)
+        *self.canonical_names.borrow_mut().entry(names.clone())
             .or_insert_with(|| {
-                self.names.push(names)
+                self.names.push(&names)
                 .map(|index| Id::new_repository(index as u32))
                 .unwrap_or(Id::empty())
             })
     }
 
     fn insert_path_components(
-        &mut self,
+        &self,
         path: PathId,
         module: &Module,
     )
@@ -638,36 +679,40 @@ impl Repository {
             .unwrap_or(Id::empty())
     }
 
-    fn insert_tuple(
-        &mut self,
+    fn insert_tuple<S>(
+        &self,
         tuple: Tuple<TypeId>,
-        module: &Module,
+        store: &S,
         mapper: &IdMapper,
     )
         -> Tuple<TypeId>
+        where
+            S: Store<Type, TypeId> + MultiStore<Identifier> + MultiStore<TypeId>
     {
-        let fields = self.insert_type_ids(tuple.fields, module, mapper);
-        let names = self.insert_names(tuple.names, module);
+        let fields = self.insert_type_ids(tuple.fields, store, mapper);
+        let names = self.insert_names(tuple.names, store);
 
         Tuple { fields, names, }
     }
 
-    fn insert_type(
-        &mut self,
+    fn insert_type<S>(
+        &self,
         ty: TypeId,
-        module: &Module,
+        store: &S,
         mapper: &IdMapper,
     )
         -> TypeId
+        where
+            S: Store<Type, TypeId> + MultiStore<Identifier> + MultiStore<TypeId>
     {
         use self::Type::*;
 
-        let ty = match module.get_type(ty) {
+        let ty = match store.get(ty) {
             Builtin(b) => return TypeId::from(b),
             ty => ty,
         };
 
-        let ty = self.insert_type_impl(ty, module, mapper);
+        let ty = self.insert_type_impl(ty, store, mapper);
 
         *self.canonical_type.borrow_mut().entry(ty)
             .or_insert_with(|| {
@@ -677,8 +722,15 @@ impl Repository {
             })
     }
 
-    fn insert_type_impl(&mut self, type_: Type, module: &Module, mapper: &IdMapper)
+    fn insert_type_impl<S>(
+        &self,
+        type_: Type,
+        store: &S,
+        mapper: &IdMapper,
+    )
         -> Type
+        where
+            S: Store<Type, TypeId> + MultiStore<Identifier> + MultiStore<TypeId>
     {
         use self::Type::*;
 
@@ -687,26 +739,33 @@ impl Repository {
             Enum(e) => Enum(mapper.map_enum(e)),
             Int(i) => Int(mapper.map_interface(i)),
             Rec(r) => Rec(mapper.map_record(r)),
-            Tuple(tuple) => Tuple(self.insert_tuple(tuple, module, mapper)),
+            Tuple(tuple) => Tuple(self.insert_tuple(tuple, store, mapper)),
             Unresolved => unreachable!("Cannot insert Unresolved"),
         }
     }
 
-    fn insert_type_ids(&mut self, tys: Id<[TypeId]>, module: &Module, mapper: &IdMapper)
+    fn insert_type_ids<S>(
+        &self,
+        tys: Id<[TypeId]>,
+        store: &S,
+        mapper: &IdMapper,
+    )
         -> Id<[TypeId]>
+        where
+            S: Store<Type, TypeId> + MultiStore<Identifier> + MultiStore<TypeId>
     {
         if tys == Id::empty() {
             return Id::empty();
         }
 
-        let tys = module.get_type_ids(tys);
-        let type_ids: Vec<_> = tys.iter()
-            .map(|&id| self.insert_type(id, module, mapper))
+        let tys = store.get_slice(tys);
+        let tys: Vec<_> = tys.iter()
+            .map(|&id| self.insert_type(id, store, mapper))
             .collect();
 
-        *self.canonical_type_ids.borrow_mut().entry(type_ids)
+        *self.canonical_type_ids.borrow_mut().entry(tys.clone())
             .or_insert_with(|| {
-                self.type_ids.push(tys)
+                self.type_ids.push(&tys)
                     .map(|index| Id::new_repository(index as u32))
                     .unwrap_or(Id::empty())
             })
@@ -854,37 +913,69 @@ impl Registry for RepositorySnapshot {
     }
 
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
-        self.arguments.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.arguments.get_slice(index_of(id))
+        }
     }
 
     fn get_elaborate_type(&self, id: ElaborateTypeId) -> ElaborateType {
-        *self.elaborate_type.at(index_of(id))
+        if let Some(b) = id.builtin() {
+            ElaborateType::Builtin(b)
+        } else {
+            *self.elaborate_type.at(index_of(id))
+        }
     }
   
     fn get_elaborate_type_ids(&self, id: Id<[ElaborateTypeId]>) -> &[ElaborateTypeId] {
-        self.elaborate_type_ids.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.elaborate_type_ids.get_slice(index_of(id))
+        }
     }
 
     fn get_names(&self, id: Id<[Identifier]>) -> &[Identifier] {
-        self.names.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.names.get_slice(index_of(id))
+        }
     }
 
     fn get_path_components(&self, id: Id<[PathComponent]>)
         -> &[PathComponent]
     {
-        self.path_components.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.path_components.get_slice(index_of(id))
+        }
     }
 
     fn get_record_ids(&self, id: Id<[RecordId]>) -> &[RecordId] {
-        self.record_ids.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.record_ids.get_slice(index_of(id))
+        }
     }
 
     fn get_type(&self, id: TypeId) -> Type {
-        *self.type_.at(index_of(id))
+        if let Some(b) = id.builtin() {
+            Type::Builtin(b)
+        } else {
+            *self.type_.at(index_of(id))
+        }
     }
-  
+
     fn get_type_ids(&self, id: Id<[TypeId]>) -> &[TypeId] {
-        self.type_ids.get_slice(index_of(id))
+        if id == Id::empty() {
+            &[]
+        } else {
+            self.type_ids.get_slice(index_of(id))
+        }
     }
 }
 
@@ -987,7 +1078,7 @@ impl<T> JaggedMultiArraySnapshot<T> {
     fn get_slice(&self, i: usize) -> &[T] {
         let range = self.index.get(i).cloned().expect("Valid index");
         let slice = self.slices.get_slice(range.start as usize);
-        &slice[0..(range.end as usize)]
+        &slice[0..((range.end - range.start) as usize)]
     } 
 }
 
@@ -1026,21 +1117,15 @@ impl IdMapper {
     }
 
     fn map_enum(&self, id: EnumId) -> EnumId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        EnumId::new_repository((local + self.enum_offset) as u32)
+        Self::map_item_id(id, self.enum_offset)
     }
 
     fn map_extension(&self, id: ExtensionId) -> ExtensionId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        ExtensionId::new_repository((local + self.extension_offset) as u32)
+        Self::map_item_id(id, self.extension_offset)
     }
 
     fn map_function(&self, id: FunctionId) -> FunctionId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        FunctionId::new_repository((local + self.function_offset) as u32)
+        Self::map_item_id(id, self.function_offset)
     }
 
     fn map_functions(&self, functions: &[(Identifier, FunctionId)])
@@ -1052,21 +1137,33 @@ impl IdMapper {
     }
 
     fn map_implementation(&self, id: ImplementationId) -> ImplementationId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        ImplementationId::new_repository((local + self.implementation_offset) as u32)
+        Self::map_item_id(id, self.implementation_offset)
     }
 
     fn map_interface(&self, id: InterfaceId) -> InterfaceId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        InterfaceId::new_repository((local + self.interface_offset) as u32)
+        Self::map_item_id(id, self.interface_offset)
     }
 
     fn map_record(&self, id: RecordId) -> RecordId {
-        debug_assert!(id.is_module());
-        let local = id.get_module().expect("module") as i64;
-        RecordId::new_repository((local + self.record_offset) as u32)
+        Self::map_item_id(id, self.record_offset)
+    }
+
+    fn map_item_id<I: ItemId>(id: I, offset: i64) -> I {
+        if let Some(id) = id.get_module() {
+            let local = id as i64;
+            I::new_repository((local + offset) as u32)
+        } else {
+            debug_assert!(id.is_repository());
+            id
+        }
+    }
+}
+
+impl Default for IdMapper {
+    fn default() -> Self {
+        //  Force an error if the offset is ever used.
+        let offset = u32::max_value() as i64 / 2;
+        IdMapper::new(offset, offset, offset, offset, offset, offset)
     }
 }
 

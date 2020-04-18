@@ -107,7 +107,6 @@ impl Tree {
     /// Creates a new instance.
     pub fn new() -> Self { Tree::default() }
 
-
     //  Root.
 
     /// Returns the function signature, if any.
@@ -693,6 +692,45 @@ impl Tree {
                     .map(|t| Self::push_type_impl(tys, t))
             )
             .unwrap_or(Id::empty())
+    }
+
+    //  Finalization
+
+    /// Replaces all TypeIds by their corresponding TypeIds.
+    ///
+    /// This operation is used to replace all local TypeId by their Module or
+    /// Repository counterparts.
+    ///
+    /// Once executed:
+    /// -   There are no reference to local TypeId within the Tree.
+    /// -   The local Tables of Types and TypesIds are cleared.
+    pub fn retype(&mut self, translation: &Table<TypeId, TypeId>) {
+        //
+        //  Translation
+        //
+        for ty in &mut self.expr_type {
+            if ty.is_builtin() {
+                continue;
+            }
+
+            let replacement = translation.at(ty);
+            *ty = *replacement;
+        }
+
+        for ty in &mut self.pat_type {
+            if ty.is_builtin() {
+                continue;
+            }
+
+            let replacement = translation.at(ty);
+            *ty = *replacement;
+        }
+
+        //
+        //  Clear
+        //
+        self.tys.clear();
+        self.type_ids.clear();
     }
 }
 

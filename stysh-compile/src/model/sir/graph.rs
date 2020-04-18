@@ -23,7 +23,7 @@ use std::fmt;
 use crate::basic::com::{IdIterator, Range};
 use crate::basic::sea::{MultiTable, Table};
 
-use crate::model::hir::{self, ItemId};
+use crate::model::hir;
 
 use super::*;
 
@@ -35,16 +35,6 @@ pub struct Graph {
 
     /// Blocks.
     block: Table<BlockId, Block>,
-
-    /// Types.
-    type_: Table<hir::TypeId, hir::Type>,
-
-    /// Names of constructors, records and tuples.
-    names: KeyedMulti<hir::Identifier>,
-    /// Path components.
-    paths: KeyedMulti<hir::PathComponent>,
-    /// Types of enums and tuples.
-    type_ids: KeyedMulti<hir::TypeId>,
 }
 
 impl Graph {
@@ -87,62 +77,6 @@ impl Graph {
     pub fn push_block(&mut self, block: Block) -> BlockId {
         self.block.extend(block)
     }
-
-
-    //
-    //  Types
-    //
-
-    /// Initializes all types.
-    pub fn initialize_types(&mut self, tree: &hir::Tree) {
-        for ty in 0..tree.len_types() as u32 {
-            let ty = hir::TypeId::new(ty);
-            self.type_.extend(tree.get_type(ty));
-        }
-
-        for n in 0..tree.len_names() as u32 {
-            self.names.create(tree.get_names(Id::new(n)).iter().cloned());
-        }
-
-        for p in 0..tree.len_paths() as u32 {
-            self.paths.create(tree.get_path(Id::new(p)).iter().cloned());
-        }
-
-        for t in 0..tree.len_type_ids() as u32 {
-            self.type_ids.create(tree.get_type_ids(Id::new(t)).iter().cloned());
-        }
-    }
-
-    /// Returns the names associated to the id.
-    pub fn get_names(&self, id: Id<[hir::Identifier]>) -> &[hir::Identifier] {
-        if id.is_empty() { &[] } else { self.names.get(&id) }
-    }
-
-    /// Returns the path associated to the id.
-    pub fn get_path(&self, id: Id<[hir::PathComponent]>) -> &[hir::PathComponent] {
-        if id.is_empty() { &[] } else { self.paths.get(&id) }
-    }
-
-    /// Returns the number of types.
-    pub fn len_types(&self) -> usize { self.type_.len() }
-
-    /// Returns the type.
-    pub fn get_type(&self, id: hir::TypeId) -> hir::Type { *self.type_.at(&id) }
-
-    /// Returns the types associated to the id.
-    pub fn get_type_ids(&self, id: Id<[hir::TypeId]>) -> &[hir::TypeId] {
-        if id.is_empty() { &[] } else { self.type_ids.get(&id) }
-    }
-
-    /// Inserts a new array of types.
-    ///
-    /// Returns the id created for it.
-    pub fn push_type_ids<I>(&mut self, type_ids: I) -> Id<[hir::TypeId]>
-        where
-            I: IntoIterator<Item = hir::TypeId>,
-    {
-        self.type_ids.create(type_ids).unwrap_or(Id::empty())
-    }
 }
 
 
@@ -154,7 +88,7 @@ pub struct Block {
     //
 
     /// Arguments.
-    arguments: Id<[hir::TypeId]>,
+    arguments: Vec<hir::TypeId>,
     /// Instructions.
     instruction: Table<ValueId, Instruction>,
     /// Range associated to a given instruction.
@@ -195,10 +129,10 @@ impl Block {
     //
 
     /// Returns the arguments.
-    pub fn get_arguments(&self) -> Id<[hir::TypeId]> { self.arguments }
+    pub fn get_arguments(&self) -> &[hir::TypeId] { &self.arguments }
 
     /// Sets the arguments.
-    pub fn set_arguments(&mut self, arguments: Id<[hir::TypeId]>) {
+    pub fn set_arguments(&mut self, arguments: Vec<hir::TypeId>) {
         self.arguments = arguments;
     }
 
@@ -327,10 +261,10 @@ struct GraphDisplayer<'a> {
 
 impl<'a> fmt::Display for GraphDisplayer<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let (graph, registry) = (self.graph, self.registry);
+        let registry = self.registry;
 
-        for (index, block) in graph.block.iter().enumerate() {
-            let block = BlockDisplayer { block, graph, registry };
+        for (index, block) in self.graph.block.iter().enumerate() {
+            let block = BlockDisplayer { block, registry };
             write!(f, "{} ", index)?;
             block.display(f)?;
             write!(f, "\n")?;
@@ -342,13 +276,12 @@ impl<'a> fmt::Display for GraphDisplayer<'a> {
 
 struct BlockDisplayer<'a> {
     block: &'a Block,
-    graph: &'a Graph,
     registry: &'a dyn hir::Registry,
 }
 
 impl<'a> BlockDisplayer<'a> {
     fn display(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        self.display_tuple_types(self.block.arguments, f)?;
+        self.display_types(&self.block.arguments, f)?;
         write!(f, ":")?;
         self.display_instructions(f)?;
         write!(f, "\n")
@@ -466,11 +399,7 @@ impl<'a> BlockDisplayer<'a> {
             return write!(f, "{}", b);
         }
 
-        let type_ = if ty.is_tree() {
-            self.graph.get_type(ty)
-        } else {
-            self.registry.get_type(ty)
-        };
+        let type_ = self.registry.get_type(ty);
 
         match type_ {
             Builtin(b) => write!(f, "{}", b),
@@ -485,9 +414,15 @@ impl<'a> BlockDisplayer<'a> {
     fn display_tuple_types(&self, tuple: Id<[hir::TypeId]>, f: &mut fmt::Formatter)
         -> Result<(), fmt::Error>
     {
+        self.display_types(self.registry.get_type_ids(tuple), f)
+    }
+
+    fn display_types(&self, types: &[hir::TypeId], f: &mut fmt::Formatter)
+        -> Result<(), fmt::Error>
+    {
         write!(f, "(")?;
 
-        for (index, &ty) in self.graph.get_type_ids(tuple).iter().enumerate() {
+        for (index, &ty) in types.iter().enumerate() {
             if index > 0 { write!(f, ", ")?; }
             self.display_type(ty, f)?;
         }

@@ -90,29 +90,24 @@ impl<'a> GraphBuilder<'a> {
     }
 
     /// Translates a function body.
-    pub fn function(&mut self, f: ast::FunctionId) -> hir::Tree {
+    pub fn function(&mut self, f: ast::FunctionId, id: hir::FunctionId) -> hir::Tree {
         let function = self.ast_module.get_function(f);
-        let id = self.hir_module.borrow().lookup_function(function.name.into())
-            .expect("Function to be registered");
 
-        let signature = self.hir_module.borrow().get_function(id);
+        let module = self.hir_module.borrow();
+        let registry = Reg::new(&self.repository, &*module);
+
+        let signature = registry.get_function(id);
         let body = cell::RefCell::new(hir::Tree::default());
 
         self.within_scope(signature.scope, |scope| {
-            use std::ops::Deref;
-
-            let module = self.hir_module.borrow();
-            let registry = Reg::new(&self.repository, module.deref());
-
             body.borrow_mut().set_function(signature, &registry);
 
             {
-                let module = self.hir_module.borrow();
                 let body = body.borrow();
                 let patterns = body.get_function_arguments().expect("Arguments");
     
                 let patterns = body.get_pattern_ids(patterns);
-                let names = module.get_arguments(signature.arguments);
+                let names = registry.get_arguments(signature.arguments);
                 debug_assert!(patterns.len() == names.len());
 
                 for (&name, &pattern) in names.iter().zip(patterns) {
@@ -425,15 +420,23 @@ impl<'a> GraphBuilder<'a> {
         match s {
             hir::Scope::Module => fun(self.scope),
             hir::Scope::Ext(ext) => {
-                let extended = self.hir_module.borrow().get_extension(ext).extended;
-                let extended = self.hir_module.borrow().get_type(extended);
+                let extended = {
+                    let module = self.hir_module.borrow();
+                    let registry = Reg::new(&self.repository, &*module);
+                    let extended = registry.get_extension(ext).extended;
+                    registry.get_type(extended)
+                };
                 let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
             },
             hir::Scope::Imp(imp) => {
-                let extended = self.hir_module.borrow().get_implementation(imp).extended;
-                let extended = self.hir_module.borrow().get_type(extended);
+                let extended = {
+                    let module = self.hir_module.borrow();
+                    let registry = Reg::new(&self.repository, &*module);
+                    let extended = registry.get_implementation(imp).extended;
+                    registry.get_type(extended)
+                };
                 let mut scope = scp::TypeScope::new(self.scope, extended);
                 scope.enable_self();
                 fun(&scope)
@@ -957,9 +960,12 @@ mod tests {
                 let ast_tree = self.ast_tree.borrow();
                 let hir_module = cell::RefCell::default();
                 let mut builder = self.builder(&ast_module, &ast_tree, &hir_module);
-                builder.name(fun.into());
-                builder.item(fun.into());
-                builder.function(fun)
+                if let hir::Item::Fun(id) = builder.name(fun.into()) {
+                    builder.item(fun.into());
+                    builder.function(fun, id)
+                } else {
+                    unreachable!()
+                }
             };
 
             println!("function_of - {:#?}", result);

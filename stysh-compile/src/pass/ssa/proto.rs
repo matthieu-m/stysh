@@ -78,10 +78,7 @@ impl ProtoBlock {
         -> sir::BlockId
     {
         let mut block = self.block;
-        let arguments = graph.push_type_ids(
-            self.arguments.iter().map(|&(_, ty)| ty)
-        );
-        block.set_arguments(arguments);
+        block.set_arguments(self.arguments.iter().map(|&(_, ty)| ty).collect());
 
         let exit = self.exit.into_terminator(&mut block, map);
         block.set_terminator(exit, self.exit_range);

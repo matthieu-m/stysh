@@ -629,7 +629,7 @@ impl Registry for Module {
     }
 
     fn enums(&self) -> Vec<EnumId> {
-        self.enum_lookup.values().copied().collect()
+        create_ids(self.enum_.len())
     }
 
     fn get_enum(&self, id: EnumId) -> Enum {
@@ -643,7 +643,7 @@ impl Registry for Module {
     }
 
     fn extensions(&self) -> Vec<ExtensionId> {
-        self.extension_lookup.values().copied().collect()
+        create_ids(self.extension.len())
     }
 
     fn get_extension(&self, id: ExtensionId) -> Extension {
@@ -652,7 +652,7 @@ impl Registry for Module {
     }
 
     fn functions(&self) -> Vec<FunctionId> {
-        self.function_lookup.values().copied().collect()
+        create_ids(self.function.len())
     }
 
     fn get_function(&self, id: FunctionId) -> FunctionSignature {
@@ -661,7 +661,7 @@ impl Registry for Module {
     }
 
     fn implementations(&self) -> Vec<ImplementationId> {
-        self.implementation_lookup.values().copied().collect()
+        create_ids(self.implementation.len())
     }
 
     fn get_implementation(&self, id: ImplementationId) -> Implementation {
@@ -691,7 +691,7 @@ impl Registry for Module {
     }
 
     fn interfaces(&self) -> Vec<InterfaceId> {
-        self.interface_lookup.values().copied().collect()
+        create_ids(self.interface.len())
     }
 
     fn get_interface(&self, id: InterfaceId) -> Interface {
@@ -705,7 +705,7 @@ impl Registry for Module {
     }
 
     fn records(&self) -> Vec<RecordId> {
-        self.record_lookup.values().copied().collect()
+        create_ids(self.record.len())
     }
 
     fn get_record(&self, id: RecordId) -> Record {
@@ -860,12 +860,16 @@ impl MultiStore<TypeId> for Module {
 }
 
 //
-//  Private Type
+//  Private
 //
 
 type Canonical<T, I> = BTreeMap<T, I>;
 type CanonicalMulti<T> = BTreeMap<Vec<T>, Id<[T]>>;
 type KeyedMulti<T> = MultiTable<Id<[T]>, T>;
+
+fn create_ids<I: ItemId>(n: usize) -> Vec<I> {
+    (0..n).map(|i| I::new_module(i as u32)).collect()
+}
 
 #[cfg(test)]
 mod tests {

@@ -686,6 +686,11 @@ impl PatternFactory {
     }
 
     /// Shortcut: creates a typed var Pattern.
+    pub fn int(&self, id: ValueIdentifier) -> PatternId {
+        self.var_typed(id, Type::int())
+    }
+
+    /// Shortcut: creates a typed var Pattern.
     pub fn var_typed(&self, id: ValueIdentifier, typ: Type) -> PatternId {
         self.simple().var(id).type_(typ).build()
     }

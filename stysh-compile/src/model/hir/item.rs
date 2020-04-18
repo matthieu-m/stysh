@@ -315,19 +315,19 @@ const SPECIAL_OFFSET: u32 = REPOSITORY_OFFSET + MODULE_OFFSET;
 
 impl<T: ?Sized> ItemId for Id<T> {
     fn new_tree(id: u32) -> Self {
-        debug_assert!(id < MODULE_OFFSET);
+        debug_assert!(id < MODULE_OFFSET, "{}", id);
 
         Id::new(id)
     }
 
     fn new_module(id: u32) -> Self {
-        debug_assert!(id < REPOSITORY_OFFSET - MODULE_OFFSET);
+        debug_assert!(id < REPOSITORY_OFFSET - MODULE_OFFSET, "{}", id);
 
         Id::new(id + MODULE_OFFSET)
     }
 
     fn new_repository(id: u32) -> Self {
-        debug_assert!(id < SPECIAL_OFFSET - REPOSITORY_OFFSET);
+        debug_assert!(id < SPECIAL_OFFSET - REPOSITORY_OFFSET, "{}", id);
 
         Id::new(id + REPOSITORY_OFFSET)
     }

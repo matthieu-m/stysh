@@ -4,7 +4,6 @@
 
 use crate::basic::mem::InternerSnapshot;
 use crate::model::{hir, sir};
-use crate::model::hir::ItemId;
 use super::reg;
 
 /// Stysh Interpreter.
@@ -123,7 +122,6 @@ impl<'a> FrameInterpreter<'a> {
 
 struct BlockInterpreter<'a> {
     external: External<'a>,
-    graph: &'a sir::Graph,
     block: &'a sir::Block,
     arguments: Vec<Value>,
     bindings: Vec<Value>,
@@ -140,7 +138,7 @@ impl<'a> BlockInterpreter<'a> {
     {
         let block = graph.get_block(block_index);
         let bindings = Default::default();
-        BlockInterpreter { external, graph, block, arguments, bindings }
+        BlockInterpreter { external, block, arguments, bindings }
     }
 
     fn evaluate(&mut self) -> BlockResult  {
@@ -390,8 +388,6 @@ impl<'a> BlockInterpreter<'a> {
     fn get_type(&self, ty: hir::TypeId) -> hir::Type {
         if let Some(b) = ty.builtin() {
             hir::Type::Builtin(b)
-        } else if ty.is_tree() {
-            self.graph.get_type(ty)
         } else {
             self.external.hir_registry.get_type(ty)
         }
@@ -723,8 +719,7 @@ mod tests {
 
         fn push_block(&mut self, arguments: &[hir::TypeId]) {
             let mut block = mem::replace(&mut self.block, sir::Block::default());
-            let arguments = self.graph.push_type_ids(arguments.iter().cloned());
-            block.set_arguments(arguments);
+            block.set_arguments(arguments.to_vec());
             self.graph.push_block(block);
         }
 

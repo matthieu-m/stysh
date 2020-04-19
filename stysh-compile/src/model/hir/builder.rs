@@ -2292,6 +2292,15 @@ impl<S, T> TupleBuilder<S, T> {
         where
             S: MultiStore<T> + MultiStore<Identifier>,
     {
+        {
+            let store = self.store.borrow();
+            let ns = store.get_slice(names);
+
+            //  FIXME(matthieu-m): use is_sorted_by_key.
+            debug_assert!(ns.windows(2).all(|w| w[0] <= w[1]),
+                "{:?} ({:?}) is not sorted", names, ns);
+        }
+
         let fields = self.store.borrow_mut().push_slice(&self.fields);
         Tuple { fields, names, }
     }

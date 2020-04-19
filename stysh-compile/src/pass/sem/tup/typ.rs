@@ -240,31 +240,13 @@ impl<'a> TypeUnifier<'a> {
             return None;
         }
 
-        //  In case of named tuples, reorder fields to match by name.
-        let mut current_reordered = vec!();
+        let current_names = registry.get_names(current.names);
+        let other_names = registry.get_names(other.names);
 
-        let current_fields = if !current.names.is_empty() {
-            let current_names = registry.get_names(current.names);
-            let other_names = registry.get_names(other.names);
-
-            for other_name in other_names {
-                for (position, current_name) in current_names.iter().enumerate() {
-                    if other_name == current_name {
-                        current_reordered.push(current_fields[position]);
-                        break;
-                    }
-                }
-            }
-
-            //  Cannot unify named tuples with different names.
-            if current_reordered.len() != other_names.len() {
-                return None;
-            }
-
-            &current_reordered
-        } else {
-            current_fields
-        };
+        //  Cannot unify named tuples with different names.
+        if current_names != other_names {
+            return None;
+        }
 
         //  Link fields.
         for (&current, &other) in current_fields.iter().zip(other_fields.iter()) {
@@ -430,18 +412,18 @@ mod tests {
     #[test]
     fn tuple_of_unresolved_identical_to_tuple_of_named() {
         let env = Env::default();
-        let local = env.local(b"(.first: Int, .second: Int)");
+        let local = env.local(b"(.first: Bool, .second: Int)");
 
         let (_, _, _, _, t, _) = env.source_factories();
         let (b, i) = (t.bool_(), t.int());
-        let (first, second) = (local.value_id(1, 6), local.value_id(14, 7));
+        let (first, second) = (local.value_id(1, 6), local.value_id(15, 7));
 
         let ty = t.tuple()
             .push(t.unresolved()).name(first)
             .push(t.unresolved()).name(second)
             .build();
         let rel = Relation::Identical(
-            t.tuple().push(i).name(second).push(b).name(first).build()
+            t.tuple().push(b).name(first).push(i).name(second).build()
         );
 
         assert_eq!(unify(&local, ty, rel), Some(Action::Unified));

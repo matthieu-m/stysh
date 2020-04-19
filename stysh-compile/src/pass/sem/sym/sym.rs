@@ -90,7 +90,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_pattern_ids(p.iter().copied()),
+            |p| self.tree_mut().push_pattern_ids(p.copied()),
         );
         let pattern = hir::Pattern::Constructor(tuple);
 
@@ -115,7 +115,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_pattern_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |p| self.pattern_of(p),
-            |p| self.tree_mut().push_pattern_ids(p.iter().copied()),
+            |p| self.tree_mut().push_pattern_ids(p.copied()),
         );
         let typ = self.tuple_type_of(
             pat.names,
@@ -151,13 +151,13 @@ impl<'a> SymbolMapper<'a> {
         -> hir::Id<[hir::Statement]>
     {
         let stmts = self.ast_tree.get_statement_ids(stmts);
-        let stmts = self.array_of(stmts, |&s| {
+        let stmts: Vec<_> = stmts.iter().map(|&s| {
             match self.ast_tree.get_statement(s) {
                 ast::Statement::Return(r) => self.stmt_of_return(r, scope),
                 ast::Statement::Set(set) => self.stmt_of_set(set, scope),
                 ast::Statement::Var(var) => self.stmt_of_var(var, scope),
             }
-        });
+        }).collect();
 
         self.tree_mut().push_statements(stmts)
     }
@@ -234,7 +234,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_type_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |t| self.tree_mut().push_elaborate_type(self.type_of(t)),
-            |t| self.tree_mut().push_elaborate_type_ids(t.iter().copied()),
+            |t| self.tree_mut().push_elaborate_type_ids(t.copied()),
         ))
     }
 
@@ -345,7 +345,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(c.arguments.fields),
             self.ast_tree.get_identifiers(c.arguments.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
+            |e| self.tree_mut().push_expression_ids(e.copied()),
         );
 
         let elaborate = self.type_of(c.type_);
@@ -379,7 +379,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(fun.arguments.fields),
             self.ast_tree.get_identifiers(fun.arguments.names),
             |a| self.value_of(a),
-            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
+            |e| self.tree_mut().push_expression_ids(e.copied()),
         );
 
         let typ = hir::Type::unresolved();
@@ -513,7 +513,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(met.arguments.fields),
             self.ast_tree.get_identifiers(met.arguments.names),
             |a| self.value_of(a),
-            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
+            |e| self.tree_mut().push_expression_ids(e.copied()),
         );
 
         let typ = hir::Type::unresolved();
@@ -563,7 +563,7 @@ impl<'a> SymbolMapper<'a> {
             self.ast_tree.get_expression_ids(tup.fields),
             self.ast_tree.get_identifiers(tup.names),
             |v| self.value_of(v),
-            |e| self.tree_mut().push_expression_ids(e.iter().copied()),
+            |e| self.tree_mut().push_expression_ids(e.copied()),
         );
         let typ = self.tuple_type_of(
             expr.names,
@@ -704,23 +704,7 @@ impl<'a> SymbolMapper<'a> {
         }
     }
 
-    fn array_of<'b, T: 'b, U, F: FnMut(&'b T) -> U>(
-        &self,
-        input: &'b [T],
-        mut transformer: F,
-    )
-        -> Vec<U>
-    {
-        let mut result = Vec::with_capacity(input.len());
-
-        for i in input {
-            result.push(transformer(i));
-        }
-
-        result
-    }
-
-    fn tuple_of<T, U, F: FnMut(ast::Id<T>) -> U, I: FnOnce(&[U]) -> hir::Id<[U]>>(
+    fn tuple_of<T, U, F, I>(
         &self,
         fields: &[ast::Id<T>],
         names: &[ast::Identifier],
@@ -728,16 +712,35 @@ impl<'a> SymbolMapper<'a> {
         inserter: I,
     )
         -> hir::Tuple<U>
+        where
+            F: FnMut(ast::Id<T>) -> U,
+            I: for<'b> FnOnce(std::slice::Iter<'b, U>) -> hir::Id<[U]>,
     {
         debug_assert!(names.is_empty() || names.len() == fields.len());
 
-        let fields = self.array_of(fields, |&id| transformer(id));
-        let fields = inserter(&fields);
+        //  FIXME(matthieu-m): names.is_sorted_by_key(|n| n.0)
+        if names.is_empty() || names.windows(2).all(|w| w[0].0 <= w[1].0) {
+            let fields: Vec<_> = fields.iter().map(|&f| transformer(f)).collect();
+            let fields = inserter(fields.iter());
 
-        let names = self.array_of(names, |&id| id.0);
-        let names = self.tree_mut().push_names(names);
+            let names = names.iter().map(|&n| n.0);
+            let names = self.tree_mut().push_names(names);
 
-        hir::Tuple { fields, names }
+            hir::Tuple { fields, names }
+        } else {
+            let mut sorter: Vec<_> =
+                names.iter().zip(fields).map(|(&n, &f)| (n, f)).collect();
+            sorter.sort_by_key(|&(n, _)| n.0);
+
+            let fields: Vec<_> =
+                sorter.iter().map(|&(_, f)| transformer(f)).collect();
+            let fields = inserter(fields.iter());
+
+            let names = sorter.iter().map(|&(n, _)| n.0);
+            let names = self.tree_mut().push_names(names);
+
+            hir::Tuple { fields, names }
+        }
     }
 
     fn tuple_type_of<T, A, E>(

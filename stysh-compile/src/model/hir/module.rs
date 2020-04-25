@@ -26,6 +26,7 @@ use crate::basic::com::{Range, Store, MultiStore};
 use crate::basic::sea::{MultiTable, Table, TableIndex};
 
 use crate::model::com::ModuleId;
+use crate::model::ast;
 use crate::model::hir::*;
 
 /// Module.
@@ -43,8 +44,6 @@ pub struct Module {
     //  Enums
     //
 
-    /// Enum canonical name to EnumId.
-    enum_lookup: BTreeMap<ItemIdentifier, EnumId>,
     /// Definition of a given Enum.
     enum_: Table<EnumId, Enum>,
     /// Functions associated to a given Enum.
@@ -54,8 +53,6 @@ pub struct Module {
     //  Extensions
     //
 
-    /// Extension canonical name to ExtensionId.
-    extension_lookup: BTreeMap<ItemIdentifier, ExtensionId>,
     /// Definition of a given Extension.
     extension: Table<ExtensionId, Extension>,
 
@@ -63,8 +60,6 @@ pub struct Module {
     //  Functions
     //
 
-    /// Function canonical name to FunctionId.
-    function_lookup: BTreeMap<ItemIdentifier, FunctionId>,
     /// Signature of a given Function.
     function: Table<FunctionId, FunctionSignature>,
 
@@ -72,8 +67,6 @@ pub struct Module {
     //  Implementations
     //
 
-    /// Implementation's extended canonical name to ImplementationId.
-    implementation_lookup: BTreeMap<ItemIdentifier, ImplementationId>,
     /// Definition of a given Implementation.
     implementation: Table<ImplementationId, Implementation>,
     /// Functions associated to a given Implementation.
@@ -91,8 +84,6 @@ pub struct Module {
     //  Interfaces.
     //
 
-    /// Interface canonical name to InterfaceId.
-    interface_lookup: BTreeMap<ItemIdentifier, InterfaceId>,
     /// Definition of a given Interface.
     interface: Table<InterfaceId, Interface>,
     /// Functions associated to a given Interface.
@@ -102,8 +93,6 @@ pub struct Module {
     //  Records
     //
 
-    /// Record canonical name to RecordId.
-    record_lookup: BTreeMap<ItemIdentifier, RecordId>,
     /// Definition of a given Record.
     record: Table<RecordId, Record>,
     /// Functions associated to a given Record.
@@ -148,25 +137,17 @@ impl Module {
     //  Enum
     //
 
-    /// Returns the EnumId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_enum(&self, name: ItemIdentifier) -> Option<EnumId> {
-        self.enum_lookup.get(&name).copied()
-    }
-
     /// Inserts an Enum name.
     ///
     /// Returns the EnumId created for it.
-    pub fn push_enum_name(&mut self, name: ItemIdentifier) -> EnumId {
-        debug_assert!(self.enum_.len() == self.enum_lookup.len());
+    pub fn push_enum_name(&mut self, name: ast::EnumId) -> EnumId {
         debug_assert!(self.enum_.len() == self.enum_functions.len());
-        debug_assert!(!self.enum_lookup.contains_key(&name));
 
-        let id = EnumId::new_module(self.enum_.len() as u32);
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.enum_.push(&local_id, Default::default());
         self.enum_functions.push(&local_id, Default::default());
-        self.enum_lookup.insert(name, id);
 
         id
     }
@@ -176,7 +157,6 @@ impl Module {
     /// Overrides any existing definition for this ID.
     pub fn set_enum(&mut self, id: EnumId, enum_: Enum) {
         debug_assert!(id.is_module());
-        debug_assert!(self.enum_.len() == self.enum_lookup.len());
         debug_assert!(self.enum_.len() == self.enum_functions.len());
 
         let id = Self::localize(id);
@@ -188,23 +168,14 @@ impl Module {
     //  Extensions
     //
 
-    /// Returns the ExtensionId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_extension(&self, name: ItemIdentifier) -> Option<ExtensionId> {
-        self.extension_lookup.get(&name).copied()
-    }
-
     /// Inserts an Extension name.
     ///
     /// Returns the ExtensionId created for it.
-    pub fn push_extension_name(&mut self, name: ItemIdentifier) -> ExtensionId {
-        debug_assert!(self.extension.len() == self.extension_lookup.len());
-        debug_assert!(!self.extension_lookup.contains_key(&name));
-
-        let id = ExtensionId::new_module(self.extension.len() as u32);
+    pub fn push_extension_name(&mut self, name: ast::ExtensionId) -> ExtensionId {
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.extension.push(&local_id, Default::default());
-        self.extension_lookup.insert(name, id);
 
         id
     }
@@ -214,7 +185,6 @@ impl Module {
     /// Overrides any existing definition for this ID.
     pub fn set_extension(&mut self, id: ExtensionId, ext: Extension) {
         debug_assert!(id.is_module());
-        debug_assert!(self.extension.len() == self.extension_lookup.len());
 
         let id = Self::localize(id);
         *self.extension.at_mut(&id) = ext;
@@ -225,23 +195,14 @@ impl Module {
     //  Functions
     //
 
-    /// Returns the FunctionId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_function(&self, name: ItemIdentifier) -> Option<FunctionId> {
-        self.function_lookup.get(&name).copied()
-    }
-
     /// Inserts a Function name.
     ///
     /// Returns the FunctionId created for it.
-    pub fn push_function_name(&mut self, name: ItemIdentifier) -> FunctionId {
-        debug_assert!(self.function.len() == self.function_lookup.len());
-        debug_assert!(!self.function_lookup.contains_key(&name));
-
-        let id = FunctionId::new_module(self.function.len() as u32);
+    pub fn push_function_name(&mut self, name: ast::FunctionId) -> FunctionId {
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.function.push(&local_id, Default::default());
-        self.function_lookup.insert(name, id);
 
         id
     }
@@ -251,7 +212,6 @@ impl Module {
     /// Overrides any existing definition for this ID.
     pub fn set_function(&mut self, id: FunctionId, function: FunctionSignature) {
         debug_assert!(id.is_module());
-        debug_assert!(self.function.len() == self.function_lookup.len());
 
         let local_id = Self::localize(id);
         *self.function.at_mut(&local_id) = function;
@@ -288,25 +248,17 @@ impl Module {
     //  Implementations
     //
 
-    /// Returns the ImplementationId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_implementation(&self, name: ItemIdentifier) -> Option<ImplementationId> {
-        self.implementation_lookup.get(&name).copied()
-    }
-
     /// Inserts an Implementation name.
     ///
     /// Returns the ImplementationId created for it.
-    pub fn push_implementation_name(&mut self, name: ItemIdentifier) -> ImplementationId {
-        debug_assert!(self.implementation.len() == self.implementation_lookup.len());
+    pub fn push_implementation_name(&mut self, name: ast::ImplementationId) -> ImplementationId {
         debug_assert!(self.implementation.len() == self.implementation_functions.len());
-        debug_assert!(!self.implementation_lookup.contains_key(&name));
 
-        let id = ImplementationId::new_module(self.implementation.len() as u32);
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.implementation.push(&local_id, Default::default());
         self.implementation_functions.push(&local_id, Default::default());
-        self.implementation_lookup.insert(name, id);
 
         id
     }
@@ -318,7 +270,6 @@ impl Module {
         use self::Type::*;
 
         debug_assert!(id.is_module());
-        debug_assert!(self.implementation.len() == self.implementation_lookup.len());
 
         let local_id = Self::localize(id);
         *self.implementation.at_mut(&local_id) = imp;
@@ -340,25 +291,17 @@ impl Module {
     //  Interfaces
     //
 
-    /// Returns the InterfaceId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_interface(&self, name: ItemIdentifier) -> Option<InterfaceId> {
-        self.interface_lookup.get(&name).copied()
-    }
-
     /// Inserts an Interface name.
     ///
     /// Returns the InterfaceId created for it.
-    pub fn push_interface_name(&mut self, name: ItemIdentifier) -> InterfaceId {
-        debug_assert!(self.interface.len() == self.interface_lookup.len());
+    pub fn push_interface_name(&mut self, name: ast::InterfaceId) -> InterfaceId {
         debug_assert!(self.interface.len() == self.interface_functions.len());
-        debug_assert!(!self.interface_lookup.contains_key(&name));
 
-        let id = InterfaceId::new_module(self.interface.len() as u32);
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.interface.push(&local_id, Default::default());
         self.interface_functions.push(&local_id, Default::default());
-        self.interface_lookup.insert(name, id);
 
         id
     }
@@ -368,7 +311,6 @@ impl Module {
     /// Overrides any existing definition for this ID.
     pub fn set_interface(&mut self, id: InterfaceId, int: Interface) {
         debug_assert!(id.is_module());
-        debug_assert!(self.interface.len() == self.interface_lookup.len());
         debug_assert!(self.interface.len() == self.interface_functions.len());
 
         let id = Self::localize(id);
@@ -380,25 +322,17 @@ impl Module {
     //  Records
     //
 
-    /// Returns the RecordId corresponding to the ItemIdentifier, if any.
-    pub fn lookup_record(&self, name: ItemIdentifier) -> Option<RecordId> {
-        self.record_lookup.get(&name).copied()
-    }
-
     /// Inserts a Record name.
     ///
     /// Returns the RecordId created for it.
-    pub fn push_record_name(&mut self, name: ItemIdentifier) -> RecordId {
-        debug_assert!(self.record.len() == self.record_lookup.len());
+    pub fn push_record_name(&mut self, name: ast::RecordId) -> RecordId {
         debug_assert!(self.record.len() == self.record_functions.len());
-        debug_assert!(!self.record_lookup.contains_key(&name));
 
-        let id = RecordId::new_module(self.record.len() as u32);
+        let id = name.into();
         let local_id = Self::localize(id);
 
         self.record.push(&local_id, Default::default());
         self.record_functions.push(&local_id, Default::default());
-        self.record_lookup.insert(name, id);
 
         id
     }
@@ -408,7 +342,6 @@ impl Module {
     /// Overrides any existing definition for this ID.
     pub fn set_record(&mut self, id: RecordId, record: Record) {
         debug_assert!(id.is_module());
-        debug_assert!(self.record.len() == self.record_lookup.len());
         debug_assert!(self.record.len() == self.record_functions.len());
 
         let id = Self::localize(id);

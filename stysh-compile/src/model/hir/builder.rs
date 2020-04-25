@@ -5,6 +5,7 @@ use std::{self, cell, rc};
 use crate::basic::mem;
 use crate::basic::com::{Range, Span, Store, MultiStore};
 
+use crate::model::ast;
 use crate::model::hir::*;
 
 //
@@ -75,6 +76,7 @@ pub struct ItemFactory(RcModule);
 #[derive(Clone, Debug)]
 pub struct EnumBuilder {
     module: RcModule,
+    id: EnumId,
     name: ItemIdentifier,
     range: Range,
     variants: Vec<RecordId>,
@@ -83,6 +85,7 @@ pub struct EnumBuilder {
 #[derive(Clone, Debug)]
 pub struct ExtensionBuilder {
     module: RcModule,
+    id: ExtensionId,
     name: ItemIdentifier,
     range: Range,
     extended: TypeId,
@@ -92,6 +95,7 @@ pub struct ExtensionBuilder {
 #[derive(Clone, Debug)]
 pub struct FunctionSignatureBuilder {
     module: RcModule,
+    id: FunctionId,
     name: ItemIdentifier,
     range: Range,
     scope: Scope,
@@ -105,6 +109,7 @@ pub struct FunctionSignatureBuilder {
 #[derive(Clone, Debug)]
 pub struct ImplementationBuilder {
     module: RcModule,
+    id: ImplementationId,
     implemented_name: ItemIdentifier,
     extended_name: ItemIdentifier,
     range: Range,
@@ -117,12 +122,14 @@ pub struct ImplementationBuilder {
 #[derive(Clone, Debug)]
 pub struct InterfaceBuilder {
     module: RcModule,
+    id: InterfaceId,
     name: ItemIdentifier,
     range: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct RecordBuilder {
+    id: RecordId,
     name: ItemIdentifier,
     range: Range,
     enum_: Option<EnumId>,
@@ -210,13 +217,21 @@ impl ItemFactory {
 impl EnumBuilder {
     /// Creates an instance.
     pub fn new(module: RcModule, name: ItemIdentifier) -> Self {
+        let id = module.borrow().enums().len();
+        let id = ast::EnumId::new(id as u32);
+        let id = module.borrow_mut().push_enum_name(id);
+
         EnumBuilder {
             module,
+            id,
             name,
             range: Default::default(),
             variants: vec!(),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> EnumId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -235,20 +250,13 @@ impl EnumBuilder {
         let name = self.name;
         let range = self.range;
 
-        let id = self.module.borrow().lookup_enum(name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            self.module.borrow_mut().push_enum_name(name)
-        };
-
         let mut module = self.module.borrow_mut();
         let variants = module.push_record_ids(self.variants.iter().copied());
 
         let enum_ = Enum { name, range, variants, };
 
-        module.set_enum(id, enum_);
-        id
+        module.set_enum(self.id, enum_);
+        self.id
     }
 }
 
@@ -261,14 +269,22 @@ impl ExtensionBuilder {
     )
         -> Self
     {
+        let id = module.borrow().extensions().len();
+        let id = ast::ExtensionId::new(id as u32);
+        let id = module.borrow_mut().push_extension_name(id);
+
         ExtensionBuilder {
             module,
+            id,
             name,
             range: Default::default(),
             extended,
             elaborate_extended: Default::default(),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> ExtensionId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -291,16 +307,9 @@ impl ExtensionBuilder {
             elaborate_extended: self.elaborate_extended,
         };
 
-        let id = self.module.borrow().lookup_extension(self.name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            self.module.borrow_mut().push_extension_name(self.name)
-        };
+        self.module.borrow_mut().set_extension(self.id, extension);
 
-        self.module.borrow_mut().set_extension(id, extension);
-
-        id
+        self.id
     }
 }
 
@@ -313,8 +322,13 @@ impl FunctionSignatureBuilder {
     )
         -> Self
     {
+        let id = module.borrow().functions().len();
+        let id = ast::FunctionId::new(id as u32);
+        let id = module.borrow_mut().push_function_name(id);
+
         FunctionSignatureBuilder {
             module: module.clone(),
+            id,
             name,
             range: Default::default(),
             scope: Default::default(),
@@ -325,6 +339,9 @@ impl FunctionSignatureBuilder {
             elaborate_result: Default::default(),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> FunctionId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -365,8 +382,8 @@ impl FunctionSignatureBuilder {
         self
     }
 
-    /// Creates a FunctionSignature.
-    pub fn build(&self) -> FunctionSignature {
+    /// Creates a FunctionId.
+    pub fn build(&self) -> FunctionId {
         let elaborate_result = self.build_elaborate_result(self.result);
 
         let arguments = self.build_arguments();
@@ -384,16 +401,9 @@ impl FunctionSignatureBuilder {
             elaborate_result,
         };
 
-        let id = self.module.borrow().lookup_function(self.name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            self.module.borrow_mut().push_function_name(self.name)
-        };
+        self.module.borrow_mut().set_function(self.id, signature);
 
-        self.module.borrow_mut().set_function(id, signature);
-
-        signature
+        self.id
     }
 
     fn build_elaborate_result(&self, result: TypeId) -> ElaborateTypeId {
@@ -473,8 +483,13 @@ impl ImplementationBuilder {
     )
         -> Self
     {
+        let id = module.borrow().implementations().len();
+        let id = ast::ImplementationId::new(id as u32);
+        let id = module.borrow_mut().push_implementation_name(id);
+
         ImplementationBuilder {
             module,
+            id,
             implemented_name,
             extended_name,
             range: Default::default(),
@@ -484,6 +499,9 @@ impl ImplementationBuilder {
             elaborate_extended: Default::default(),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> ImplementationId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -515,16 +533,9 @@ impl ImplementationBuilder {
             elaborate_extended: self.elaborate_extended,
         };
 
-        let id = self.module.borrow().lookup_implementation(self.extended_name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            self.module.borrow_mut().push_implementation_name(self.extended_name)
-        };
+        self.module.borrow_mut().set_implementation(self.id, implementation);
 
-        self.module.borrow_mut().set_implementation(id, implementation);
-
-        id
+        self.id
     }
 }
 
@@ -536,12 +547,20 @@ impl InterfaceBuilder {
     )
         -> Self
     {
+        let id = module.borrow().interfaces().len();
+        let id = ast::InterfaceId::new(id as u32);
+        let id = module.borrow_mut().push_interface_name(id);
+
         InterfaceBuilder {
+            id,
             module,
             name,
             range: Default::default(),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> InterfaceId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -556,23 +575,21 @@ impl InterfaceBuilder {
             range: self.range,
         };
 
-        let id = self.module.borrow().lookup_interface(self.name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            self.module.borrow_mut().push_interface_name(self.name)
-        };
+        self.module.borrow_mut().set_interface(self.id, interface);
 
-        self.module.borrow_mut().set_interface(id, interface);
-
-        id
+        self.id
     }
 }
 
 impl RecordBuilder {
     /// Creates an instance.
     pub fn new(module: RcModule, name: ItemIdentifier) -> Self {
+        let id = module.borrow().records().len();
+        let id = ast::RecordId::new(id as u32);
+        let id = module.borrow_mut().push_record_name(id);
+
         RecordBuilder {
+            id,
             name,
             range: Default::default(),
             enum_: None,
@@ -580,6 +597,9 @@ impl RecordBuilder {
             elaborate_definition: TupleBuilder::new(module),
         }
     }
+
+    /// Gets the id.
+    pub fn id(&self) -> RecordId { self.id }
 
     /// Sets the range.
     pub fn range(&mut self, pos: usize, len: usize) -> &mut Self {
@@ -621,13 +641,6 @@ impl RecordBuilder {
         let definition = self.definition.build();
         let elaborate_definition = self.elaborate_definition.build();
 
-        let id = module.borrow().lookup_record(name);
-        let id = if let Some(id) = id {
-            id
-        } else {
-            module.borrow_mut().push_record_name(name)
-        };
-
         if range == Default::default() {
             range = name.1;
         }
@@ -635,8 +648,8 @@ impl RecordBuilder {
         let record = Record { name, range, enum_, definition, elaborate_definition, };
 
         let mut module = module.borrow_mut();
-        module.set_record(id, record);
-        id
+        module.set_record(self.id, record);
+        self.id
     }
 }
 

@@ -3,7 +3,9 @@
 use std::convert;
 
 use crate::basic::com::Range;
+use crate::basic::sea::TableIndex;
 
+use crate::model::ast;
 use crate::model::hir::*;
 
 /// The ID of an Enum.
@@ -481,29 +483,66 @@ impl Default for Scope {
 //  From Implementations
 //
 
+impl convert::From<ast::EnumId> for EnumId {
+    fn from(e: ast::EnumId) -> Self { EnumId::new_module(e.index() as u32) }
+}
+
 impl convert::From<EnumId> for Item {
     fn from(e: EnumId) -> Self { Item::Enum(e) }
+}
+
+impl convert::From<ast::ExtensionId> for ExtensionId {
+    fn from(e: ast::ExtensionId) -> Self { ExtensionId::new_module(e.index() as u32) }
 }
 
 impl convert::From<ExtensionId> for Item {
     fn from(e: ExtensionId) -> Self { Item::Ext(e) }
 }
 
+impl convert::From<ast::FunctionId> for FunctionId {
+    fn from(e: ast::FunctionId) -> Self { FunctionId::new_module(e.index() as u32) }
+}
+
 impl convert::From<FunctionId> for Item {
     fn from(f: FunctionId) -> Self { Item::Fun(f) }
+}
+
+impl convert::From<ast::ImplementationId> for ImplementationId {
+    fn from(e: ast::ImplementationId) -> Self { ImplementationId::new_module(e.index() as u32) }
 }
 
 impl convert::From<ImplementationId> for Item {
     fn from(i: ImplementationId) -> Self { Item::Imp(i) }
 }
 
+impl convert::From<ast::InterfaceId> for InterfaceId {
+    fn from(e: ast::InterfaceId) -> Self { InterfaceId::new_module(e.index() as u32) }
+}
+
 impl convert::From<InterfaceId> for Item {
     fn from(i: InterfaceId) -> Self { Item::Int(i) }
+}
+
+impl convert::From<ast::RecordId> for RecordId {
+    fn from(e: ast::RecordId) -> Self { RecordId::new_module(e.index() as u32) }
 }
 
 impl convert::From<RecordId> for Item {
     fn from(r: RecordId) -> Self { Item::Rec(r) }
 }
+
+impl convert::From<ast::Scope> for Scope {
+    fn from(s: ast::Scope) -> Self {
+        match s {
+            ast::Scope::Module => Scope::Module,
+            ast::Scope::Ext(ext) => Scope::Ext(ext.into()),
+            ast::Scope::Imp(imp) => Scope::Imp(imp.into()),
+            ast::Scope::Int(int) => Scope::Int(int.into()),
+        }
+    }
+}
+
+
 
 //
 //  TryFrom Implementations

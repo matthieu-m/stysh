@@ -1355,7 +1355,14 @@ impl EnumBuilder {
             self.close
         };
 
-        let variants = self.module.borrow_mut().push_inner_records(&self.variants);
+        let variant_ids: Vec<_> = self.variants.iter()
+            .map(|&inner| {
+                let record = Record { inner, keyword: 0, semi_colon: 0 };
+                self.module.borrow_mut().push_record(record)
+            })
+            .collect();
+
+        let variants = self.module.borrow_mut().push_record_ids(&variant_ids);
         let commas = self.module.borrow_mut().push_positions(&commas);
 
         let enum_ = Enum {

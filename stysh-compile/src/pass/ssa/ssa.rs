@@ -1351,16 +1351,16 @@ mod tests {
 
         let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
 
-        {
+        let add = {
             let hir = env.factory();
             let (i, t) = (hir.item(), hir.type_module());
-            let signature = i.fun(env.item_id(5, 3), t.int())
+            let add = i.fun(env.item_id(5, 3), t.int())
                 .push(a, t.int())
                 .push(b, t.int())
                 .range(0, 31)
                 .build();
-            env.insert_function(signature);
-        }
+            env.insert_function(add)
+        };
 
         let (_, _, _, t, v) = env.hir();
 
@@ -1374,7 +1374,7 @@ mod tests {
             ).build_with_type();
 
         assert_eq!(
-            env.funit(body),
+            env.funit(add, body),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := __add__(@0, @1) ; 5@34",
@@ -1393,12 +1393,12 @@ mod tests {
         let add = {
             let hir = env.factory();
             let (i, t) = (hir.item(), hir.type_module());
-            let signature = i.fun(env.item_id(5, 3), t.int())
+            let add = i.fun(env.item_id(5, 3), t.int())
                 .push(a, t.int())
                 .push(b, t.int())
                 .range(0, 31)
                 .build();
-            env.insert_function(signature)
+            env.insert_function(add)
         };
 
         let (_, _, _, _, v) = env.hir();
@@ -1414,7 +1414,7 @@ mod tests {
             ).build_with_type();
 
         assert_eq!(
-            env.funit(body),
+            env.funit(add, body),
             cat(&[
                 "0 (Int, Int):",
                 "    $0 := <3@5>(@0, @1) ; 8@34",
@@ -1460,17 +1460,17 @@ mod tests {
 
             let (a, b, c) = (env.var_id(8, 1), env.var_id(16, 1), env.var_id(24, 1));
 
-            {
+            let id = {
                 let hir = env.factory();
                 let (i, t) = (hir.item(), hir.type_module());
-                let signature = i.fun(env.item_id(5, 2), t.bool_())
-                        .push(a, t.int())
-                        .push(b, t.int())
-                        .push(c, t.int())
-                        .range(0, 61)
-                        .build();
-                env.insert_function(signature);
-            }
+                let f = i.fun(env.item_id(5, 2), t.bool_())
+                    .push(a, t.int())
+                    .push(b, t.int())
+                    .push(c, t.int())
+                    .range(0, 61)
+                    .build();
+                env.insert_function(f)
+            };
 
             let (_, _, _, t, v) = env.hir();
 
@@ -1493,7 +1493,7 @@ mod tests {
                     v.call().builtin(fun, t.bool_()).push(left).push(right).build()
                 ).build_with_type();
 
-            env.funit(block)
+            env.funit(id, block)
         }
 
         assert_eq!(
@@ -1597,18 +1597,18 @@ mod tests {
         let (current, next, count) =
             (env.var_id(9, 7), env.var_id(23, 4), env.var_id(34, 5));
 
-        let callable = {
+        let fib = {
             let hir = env.factory();
             let (i, t) = (hir.item(), hir.type_module());
-            let signature =
-                i.fun(fib, t.int())
-                    .push(current, t.int())
-                    .push(next, t.int())
-                    .push(count, t.int())
-                    .range(0, 52)
-                    .build();
-            Callable::Function(env.insert_function(signature))
+            i.fun(fib, t.int())
+                .push(current, t.int())
+                .push(next, t.int())
+                .push(count, t.int())
+                .range(0, 52)
+                .build()
         };
+
+        let callable = Callable::Function(env.insert_function(fib));
 
         let (_, _, _, t, v) = env.hir();
 
@@ -1655,7 +1655,7 @@ mod tests {
         let block = v.block(if_).range(53, 105).build_with_type();
 
         assert_eq!(
-            env.funit(block),
+            env.funit(fib, block),
             cat(&[
                 "0 (Int, Int, Int):",
                 "    $0 := load 0 ; 1@72",
@@ -1843,41 +1843,35 @@ mod tests {
             ValueIdentifier(self.resolver.from_range(range), range)
         }
 
-        fn insert_function(&self, signature: FunctionSignature) -> FunctionId {
+        fn insert_function(&self, id: FunctionId) -> FunctionId {
             let module = self.module.borrow();
+            let signature = module.get_function(id);
             let mut tree = self.tree.borrow_mut();
 
             tree.set_function(signature, &*module);
 
-            module.lookup_function(signature.name)
-                .expect("Function to be registered")
+            id
         }
 
         fn type_of(&self, e: ExpressionId) -> Type {
             self.tree.borrow().get_expression_type(e)
         }
 
-        fn funit(&self, body: ExpressionId) -> String {
-            use std::ops::Deref;
-
+        fn funit(&self, fun: FunctionId, body: ExpressionId) -> String {
             let mut tree = self.tree.borrow().clone();
             tree.set_root(body);
 
             println!("funit - {:#?}", tree);
             println!("");
 
-            let name = tree.get_function().expect("Function").name;
-
             let guard = self.module.borrow();
-            let fun = guard.lookup_function(name).expect("Function to be registered");
-
-            let graph = super::GraphBuilder::new(guard.deref())
+            let graph = super::GraphBuilder::new(&*guard)
                 .from_function(&tree, fun);
 
             println!("funit - {:#?}", graph);
             println!();
 
-            sir::display_graph(&graph, guard.deref())
+            sir::display_graph(&graph, &*guard)
         }
 
         fn exprit(&self, expr: ExpressionId) -> String {

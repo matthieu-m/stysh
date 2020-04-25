@@ -1555,24 +1555,23 @@ mod tests {
 
         fn insert_function(
             &mut self,
-            function: hir::FunctionSignature,
+            fun: hir::FunctionId,
             positions: &[usize],
         )
             -> hir::FunctionId
         {
+            let function = self.module.borrow().get_function(fun);
             let name = function.name;
-            let function = self.module.borrow_mut().lookup_function(name)
-                .expect("Function to be registered");
-            println!("Registering function: {:?} -> {:?}", name, function);
+            println!("Registering function: {:?} -> {:?}", name, fun);
 
             let len = name.span().length();
 
             for p in positions {
                 let id = hir::ValueIdentifier(name.id(), range(*p, len));
-                self.scope.callables.insert(id, scp::CallableCandidate::Function(function));
+                self.scope.callables.insert(id, scp::CallableCandidate::Function(fun));
             }
 
-            function
+            fun
         }
 
         fn insert_record(&mut self, rec: hir::RecordId, positions: &[usize])

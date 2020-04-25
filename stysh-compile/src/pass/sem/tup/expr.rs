@@ -402,10 +402,11 @@ mod tests {
             let x = local.item_id(14, 1);
             let a = local.item_id(18, 1);
 
-            let x_id = local.module().borrow_mut().push_enum_name(x);
+            let mut enum_ = i.enum_(x);
+            let x_id = enum_.id();
 
             let a = i.unit_of_enum(a, x_id);
-            let x = i.enum_(x).push(a).build();
+            let x = enum_.push(a).build();
 
             (x, a)
         };

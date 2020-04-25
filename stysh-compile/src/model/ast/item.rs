@@ -60,7 +60,7 @@ pub struct Enum {
     /// Name of the enum.
     pub name: TypeIdentifier,
     /// Variants of the enum.
-    pub variants: Id<[InnerRecord]>,
+    pub variants: Id<[RecordId]>,
     /// Offset of the `:enum` keyword.
     pub keyword: u32,
     /// Offset of the opening brace.

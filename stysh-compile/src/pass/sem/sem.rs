@@ -137,59 +137,56 @@ impl<'a> GraphBuilder<'a> {
 //
 impl<'a> GraphBuilder<'a> {
     fn enum_name(&mut self, e: ast::EnumId) -> hir::Item {
+        let id = self.hir_module.borrow_mut().push_enum_name(e);
+        debug_assert!(hir::EnumId::from(e) == id);
+
         let e = self.ast_module.get_enum(e);
-        let id = self.hir_module.borrow_mut().push_enum_name(e.name.into());
 
-        let ast_variants = self.ast_module.get_inner_records(e.variants);
-
-        for ev in ast_variants {
-            use self::ast::InnerRecord::*;
-
-            match *ev {
-                Unit(name) => {
-                    self.hir_module.borrow_mut().push_record_name(name.into());
-                },
-                Missing(_) | Tuple(..) | Unexpected(_) => (),
-            }
+        for ev in self.ast_module.get_record_ids(e.variants) {
+            self.record_name(*ev);
         }
 
         hir::Item::Enum(id)
     }
 
     fn extension_name(&mut self, e: ast::ExtensionId) -> hir::Item {
-        let e = self.ast_module.get_extension(e);
-        let id = self.hir_module.borrow_mut().push_extension_name(e.name.into());
+        let id = self.hir_module.borrow_mut().push_extension_name(e);
+        debug_assert!(hir::ExtensionId::from(e) == id);
+
         hir::Item::Ext(id)
     }
 
     fn function_name(&mut self, f: ast::FunctionId) -> hir::Item {
-        let f = self.ast_module.get_function(f);
-        let id = self.hir_module.borrow_mut().push_function_name(f.name.into());
+        let id = self.hir_module.borrow_mut().push_function_name(f);
+        debug_assert!(hir::FunctionId::from(f) == id);
+
         hir::Item::Fun(id)
     }
 
     fn implementation_name(&mut self, i: ast::ImplementationId) -> hir::Item {
-        let i = self.ast_module.get_implementation(i);
-        let id = self.hir_module.borrow_mut().push_implementation_name(i.extended.into());
+        let id = self.hir_module.borrow_mut().push_implementation_name(i);
+        debug_assert!(hir::ImplementationId::from(i) == id);
+
         hir::Item::Imp(id)
     }
 
     fn interface_name(&mut self, i: ast::InterfaceId) -> hir::Item {
-        let i = self.ast_module.get_interface(i);
-        let id = self.hir_module.borrow_mut().push_interface_name(i.name.into());
+        let id = self.hir_module.borrow_mut().push_interface_name(i);
+        debug_assert!(hir::InterfaceId::from(i) == id);
+
         hir::Item::Int(id)
     }
 
     fn record_name(&mut self, r: ast::RecordId) -> hir::Item {
-        let r = self.ast_module.get_record(r);
-        let id = self.hir_module.borrow_mut().push_record_name(r.name().into());
+        let id = self.hir_module.borrow_mut().push_record_name(r);
+        debug_assert!(hir::RecordId::from(r) == id);
+
         hir::Item::Rec(id)
     }
 
     fn enum_item(&mut self, e: ast::EnumId) -> hir::Item {
+        let id = e.into();
         let e = self.ast_module.get_enum(e);
-        let id = self.hir_module.borrow().lookup_enum(e.name.into())
-            .expect("Enum to be registered");
 
         let scope = {
             let mut scope = scp::TypeScope::new(self.scope, hir::Type::Enum(id));
@@ -197,14 +194,14 @@ impl<'a> GraphBuilder<'a> {
             scope
         };
 
-        let ast_variants = self.ast_module.get_inner_records(e.variants);
+        let ast_variants = self.ast_module.get_record_ids(e.variants);
         let mut variants = Vec::with_capacity(ast_variants.len());
 
         for ev in ast_variants {
-            if let Some(name) = ev.name() {
-                let v = self.rec_item_impl(&scope, *ev, name, ev.span(), Some(id));
-                variants.push(v);
-            }
+            let r = self.ast_module.get_record(*ev);
+            let name = r.inner.name().unwrap_or_default();
+            let v = self.rec_item_impl(&scope, (*ev).into(), name, r.inner, r.inner.span(), Some(id));
+            variants.push(v);
         }
 
         let name = e.name.into();
@@ -221,9 +218,8 @@ impl<'a> GraphBuilder<'a> {
     fn extension_item(&mut self, e: ast::ExtensionId) -> hir::Item {
         use std::convert::TryInto;
 
+        let id = e.into();
         let ext = self.ast_module.get_extension(e);
-        let id = self.hir_module.borrow().lookup_extension(ext.name.into())
-            .expect("Extension to be registered");
 
         let name = ext.name.into();
         let range = ext.span();
@@ -242,9 +238,8 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn fun_item(&mut self, f: ast::FunctionId) -> hir::Item {
+        let id = f.into();
         let fun = self.ast_module.get_function(f);
-        let id = self.hir_module.borrow().lookup_function(fun.name.into())
-            .expect("Function to be registered");
 
         let name = fun.name.into();
 
@@ -253,7 +248,7 @@ impl<'a> GraphBuilder<'a> {
             self.ast_module.get_type_range(fun.result).end_offset() - (fun.keyword as usize)
         );
 
-        let scope = self.resolve_scope(self.ast_module.get_function_scope(f));
+        let scope = self.ast_module.get_function_scope(f).into();
 
         let (arguments, argument_types, elaborate_argument_types) =
             self.within_scope(scope, |scope| {
@@ -309,9 +304,8 @@ impl<'a> GraphBuilder<'a> {
     fn implementation_item(&mut self, i: ast::ImplementationId) -> hir::Item {
         use std::convert::TryInto;
 
+        let id = i.into();
         let imp = self.ast_module.get_implementation(i);
-        let id = self.hir_module.borrow().lookup_implementation(imp.extended.into())
-            .expect("Implementation to be registered");
 
         let implemented_name = imp.implemented.into();
         let extended_name = imp.extended.into();
@@ -352,9 +346,8 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn interface_item(&mut self, i: ast::InterfaceId) -> hir::Item {
+        let id = i.into();
         let int = self.ast_module.get_interface(i);
-        let id = self.hir_module.borrow().lookup_interface(int.name.into())
-            .expect("Interface to be registered");
 
         let name = int.name.into();
         let range = int.span();
@@ -365,12 +358,9 @@ impl<'a> GraphBuilder<'a> {
         hir::Item::Int(id)
     }
 
-    fn rec_item(&mut self, r: ast::RecordId)
-        -> hir::Item
-    {
+    fn rec_item(&mut self, r: ast::RecordId) -> hir::Item {
+        let id = r.into();
         let r = self.ast_module.get_record(r);
-        let id = self.hir_module.borrow().lookup_record(r.name().into())
-            .expect("Record to be registered");
 
         let scope = {
             let mut scope = scp::TypeScope::new(self.scope, hir::Type::Rec(id));
@@ -378,7 +368,7 @@ impl<'a> GraphBuilder<'a> {
             scope
         };
 
-        self.rec_item_impl(&scope, r.inner, r.name(), r.span(), None);
+        self.rec_item_impl(&scope, id, r.name(), r.inner, r.span(), None);
 
         hir::Item::Rec(id)
     }
@@ -386,8 +376,9 @@ impl<'a> GraphBuilder<'a> {
     fn rec_item_impl(
         &mut self,
         scope: &dyn scp::Scope,
-        record: ast::InnerRecord,
+        id: hir::RecordId,
         name: ast::TypeIdentifier,
+        record: ast::InnerRecord,
         range: Range,
         enum_: Option<hir::EnumId>,
     )
@@ -396,8 +387,6 @@ impl<'a> GraphBuilder<'a> {
         use self::ast::InnerRecord::*;
 
         let name = name.into();
-        let id = self.hir_module.borrow().lookup_record(name)
-            .expect("Record to be registered");
 
         let elaborate_definition = match record {
             Missing(_) | Unexpected(_) | Unit(_) => hir::Tuple::unit(),
@@ -485,27 +474,6 @@ impl<'a> GraphBuilder<'a> {
         }
 
         self.unifier(&registry, tree).finalize();
-    }
-
-    fn resolve_scope(&self, s: ast::Scope) -> hir::Scope {
-        match s {
-            ast::Scope::Module => hir::Scope::Module,
-            ast::Scope::Ext(ext) => {
-                let ext = self.ast_module.get_extension(ext);
-                let ext = self.hir_module.borrow().lookup_extension(ext.name.into());
-                hir::Scope::Ext(ext.expect("Extension"))
-            },
-            ast::Scope::Imp(imp) => {
-                let imp = self.ast_module.get_implementation(imp);
-                let imp = self.hir_module.borrow().lookup_implementation(imp.extended.into());
-                hir::Scope::Imp(imp.expect("Implementation"))
-            },
-            ast::Scope::Int(int) => {
-                let int = self.ast_module.get_interface(int);
-                let int = self.hir_module.borrow().lookup_interface(int.name.into());
-                hir::Scope::Int(int.expect("Interface"))
-            },
-        }
     }
 
     fn simplify(&self, t: hir::ElaborateTypeId) -> hir::TypeId {
@@ -647,14 +615,13 @@ mod tests {
         {
             let i = env.hir().item();
             let name = env.item_id(6, 6);
-            let enum_id = env.enum_id(name);
+            let mut enum_ = i.enum_(name);
 
             let (one, two) = (env.item_id(15, 3), env.item_id(20, 3));
+            let one = i.unit_of_enum(one, enum_.id());
+            let two = i.unit_of_enum(two, enum_.id());
 
-            i.enum_(name)
-                .push(i.unit_of_enum(one, enum_id))
-                .push(i.unit_of_enum(two, enum_id))
-                .build();
+            enum_.push(one).push(two).build();
         }
 
         assert_eq!(env.item_of(ast), env.module());
@@ -763,7 +730,7 @@ mod tests {
             let add = env.item_id(5, 3);
             let (a, b) = (env.var_id(9, 1), env.var_id(17, 1));
 
-            let signature = {
+            let fun = {
                 let (i, td) = (hir.item(), hir.type_module());
 
                 i.fun(add, td.int())
@@ -773,7 +740,7 @@ mod tests {
                     .build()
             };
 
-            env.arguments(signature);
+            env.arguments(fun);
 
             let body = {
                 let (t, v) = (hir.type_(), hir.value());
@@ -823,7 +790,7 @@ mod tests {
             let hir = env.hir();
             let add = env.item_id(5, 3);
 
-            let signature = {
+            let fun = {
                 let (i, td) = (hir.item(), hir.type_module());
 
                 i.fun(add, td.tuple().push(td.int()).push(td.int()).build())
@@ -831,7 +798,7 @@ mod tests {
                     .build()
             };
 
-            env.arguments(signature);
+            env.arguments(fun);
 
             let body = {
                 let v = hir.value();
@@ -890,15 +857,6 @@ mod tests {
             println!();
 
             result
-        }
-
-        fn enum_id(&self, name: hir::ItemIdentifier) -> hir::EnumId {
-            let id = self.module.borrow().lookup_enum(name);
-            if let Some(id) = id {
-                id
-            } else {
-                self.module.borrow_mut().push_enum_name(name)
-            }
         }
 
         fn item_id(&self, pos: usize, len: usize) -> hir::ItemIdentifier {
@@ -974,8 +932,11 @@ mod tests {
             result
         }
 
-        fn arguments(&self, signature: hir::FunctionSignature) {
+        fn arguments(&self, id: hir::FunctionId) {
+            use crate::model::hir::Registry;
+
             let module = self.module.borrow();
+            let signature = module.get_function(id);
             self.tree.borrow_mut().set_function(signature, &*module);
         }
 

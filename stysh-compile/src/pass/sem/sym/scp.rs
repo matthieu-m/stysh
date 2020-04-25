@@ -664,6 +664,7 @@ pub mod mocks {
 #[cfg(test)]
 mod tests {
     use crate::basic::{com, mem};
+    use crate::model::ast;
     use crate::model::hir::{self, *};
 
     use super::*;
@@ -763,18 +764,17 @@ mod tests {
             let name = item_id(interner.insert(b"Simple"), 19, 6);
             let range = Default::default();
 
-            let rec = item_id(interner.insert(b"Simple"), 5, 6);
-            let ext = Type::Rec(module.push_record_name(rec));
+            let ext = Type::Rec(module.push_record_name(ast::RecordId::new(0)));
             let elaborate_extended = ext.try_into().expect("Record");
 
-            let ext_id = module.push_extension_name(name);
+            let ext_id = module.push_extension_name(ast::ExtensionId::new(0));
             let extended = module.push_type(ext);
             let elaborate_extended = module.push_elaborate_type(elaborate_extended);
 
             module.set_extension(ext_id, Extension { name, range, extended, elaborate_extended, });
 
             let bar = item_id(bar.id(), 63, 3);
-            let fun = module.push_function_name(bar);
+            let fun = module.push_function_name(ast::FunctionId::new(0));
             let signature = FunctionSignature {
                 name: bar,
                 range: Default::default(),
@@ -817,8 +817,7 @@ mod tests {
         let (_module, extended) = {
             let mut module = Module::new(Default::default());
 
-            let rec = item_id(interner.insert(b"Simple"), 5, 6);
-            let extended = Type::Rec(module.push_record_name(rec));
+            let extended = Type::Rec(module.push_record_name(ast::RecordId::new(0)));
 
             (module, extended)
         };

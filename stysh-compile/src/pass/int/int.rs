@@ -523,9 +523,7 @@ mod tests {
         let fun = {
             let hir = env.hir();
             let (i, t) = (hir.item(), hir.type_module());
-            i.fun(id, t.int()).build();
-            env.module.borrow().lookup_function(id)
-                .expect("Function to be registered")
+            i.fun(id, t.int()).build()
         };
 
         {

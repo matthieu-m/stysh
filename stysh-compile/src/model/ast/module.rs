@@ -96,10 +96,10 @@ pub struct Module {
     functions: KeyedMulti<FunctionId>,
     /// Identifiers.
     identifiers: KeyedMulti<Identifier>,
-    /// InnerRecords.
-    inner_records: KeyedMulti<InnerRecord>,
     /// Positions.
     positions: KeyedMulti<u32>,
+    /// Record IDs.
+    record_ids: KeyedMulti<RecordId>,
     /// Type IDs.
     type_ids: KeyedMulti<TypeId>,
 }
@@ -492,21 +492,6 @@ impl Module {
     }
 
 
-    //  Inner Records
-
-    /// Returns the inner records associated to the ID.
-    pub fn get_inner_records(&self, id: Id<[InnerRecord]>) -> &[InnerRecord] {
-        if id.is_empty() { &[] } else { self.inner_records.get(&id) }
-    }
-
-    /// Pushes a new slice of inner records.
-    ///
-    /// Returns the ID created for it.
-    pub fn push_inner_records(&mut self, inner_records: &[InnerRecord]) -> Id<[InnerRecord]> {
-        Self::push_slice(&mut self.inner_records, inner_records)
-    }
-
-
     //  Positions
 
     /// Returns the positions associated to the ID.
@@ -519,6 +504,21 @@ impl Module {
     /// Returns the ID created for it.
     pub fn push_positions(&mut self, positions: &[u32]) -> Id<[u32]> {
         Self::push_slice(&mut self.positions, positions)
+    }
+
+
+    //  Records
+
+    /// Returns the record IDs associated to the ID.
+    pub fn get_record_ids(&self, id: Id<[RecordId]>) -> &[RecordId] {
+        if id.is_empty() { &[] } else { self.record_ids.get(&id) }
+    }
+
+    /// Pushes a new slice of record IDs.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_record_ids(&mut self, record_ids: &[RecordId]) -> Id<[RecordId]> {
+        Self::push_slice(&mut self.record_ids, record_ids)
     }
 
 
@@ -604,14 +604,14 @@ impl MultiStore<Identifier> for Module {
     fn push_slice(&mut self, items: &[Identifier]) -> Id<[Identifier]> { self.push_identifiers(items) }
 }
 
-impl MultiStore<InnerRecord> for Module {
-    fn get_slice(&self, id: Id<[InnerRecord]>) -> &[InnerRecord] { self.get_inner_records(id) }
-    fn push_slice(&mut self, items: &[InnerRecord]) -> Id<[InnerRecord]> { self.push_inner_records(items) }
-}
-
 impl MultiStore<u32> for Module {
     fn get_slice(&self, id: Id<[u32]>) -> &[u32] { self.get_positions(id) }
     fn push_slice(&mut self, items: &[u32]) -> Id<[u32]> { self.push_positions(items) }
+}
+
+impl MultiStore<RecordId> for Module {
+    fn get_slice(&self, id: Id<[RecordId]>) -> &[RecordId] { self.get_record_ids(id) }
+    fn push_slice(&mut self, items: &[RecordId]) -> Id<[RecordId]> { self.push_record_ids(items) }
 }
 
 impl MultiStore<TypeId> for Module {
@@ -682,11 +682,11 @@ impl fmt::Debug for Module {
         if !self.identifiers.is_empty() {
             write!(f, "identifiers: {:?}, ", self.identifiers)?;
         }
-        if !self.inner_records.is_empty() {
-            write!(f, "inner_records: {:?}, ", self.inner_records)?;
-        }
         if !self.positions.is_empty() {
             write!(f, "positions: {:?}, ", self.positions)?;
+        }
+        if !self.record_ids.is_empty() {
+            write!(f, "record_ids: {:?}, ", self.record_ids)?;
         }
         if !self.type_ids.is_empty() {
             write!(f, "type_ids: {:?}, ", self.type_ids)?;

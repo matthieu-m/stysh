@@ -82,6 +82,8 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
                 while let Some((v, c)) =
                     parser.parse_inner_record(Kind::SignComma)
                 {
+                    let v = self.raw.module().borrow_mut()
+                        .push_record(Record { inner: v, keyword: 0, semi_colon: 0 });
                     variants.push(v);
                     commas.push(c);
                 }
@@ -90,7 +92,7 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
 
                 Enum {
                     name: name,
-                    variants: module.push_inner_records(&variants),
+                    variants: module.push_record_ids(&variants),
                     keyword: keyword.offset() as u32,
                     open: o.offset() as u32,
                     close: c.offset() as u32,

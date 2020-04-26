@@ -761,7 +761,6 @@ mod tests {
         let (module, extended, result) = {
             let mut module = Module::new(Default::default());
 
-            let name = item_id(interner.insert(b"Simple"), 19, 6);
             let range = Default::default();
 
             let ext = Type::Rec(module.push_record_name(ast::RecordId::new(0)));
@@ -771,7 +770,7 @@ mod tests {
             let extended = module.push_type(ext);
             let elaborate_extended = module.push_elaborate_type(elaborate_extended);
 
-            module.set_extension(ext_id, Extension { name, range, extended, elaborate_extended, });
+            module.set_extension(ext_id, Extension { range, extended, elaborate_extended, });
 
             let bar = item_id(bar.id(), 63, 3);
             let fun = module.push_function_name(ast::FunctionId::new(0));

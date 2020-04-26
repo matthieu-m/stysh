@@ -22,12 +22,12 @@ pub struct Body {
 /// Parses a body.
 pub fn parse_body<'a, 'tree>(
     raw: &mut RawParser<'a, 'tree>,
-    name: TypeIdentifier,
+    ty: TypeId,
 )
     -> Body
 {
     let mut parser = BodyParser::new(*raw);
-    let body = parser.parse_body(name);
+    let body = parser.parse_body(ty);
     *raw = parser.into_raw();
     body
 }
@@ -44,7 +44,7 @@ impl<'a, 'tree> BodyParser<'a, 'tree> {
 
     fn into_raw(self) -> RawParser<'a, 'tree> { self.raw }
 
-    fn parse_body(&mut self, name: TypeIdentifier) -> Body {
+    fn parse_body(&mut self, ty: TypeId) -> Body {
         //  Expects:
         //  -   {
         //  -       functions
@@ -60,13 +60,13 @@ impl<'a, 'tree> BodyParser<'a, 'tree> {
                         Kind::KeywordFun => {
                             function_ids.push(fun::parse_function(&mut raw));
                         },
-                        _ => unimplemented!("parse_body - expected :fun in {:?}, got {:?}", name, node),
+                        _ => unimplemented!("parse_body - expected :fun in {:?}, got {:?}", ty, node),
                     }
                 }
 
                 (o, c)
             }
-            _ => unimplemented!("parse_body - unbraced {:?}", name),
+            _ => unimplemented!("parse_body - unbraced {:?}", self.raw),
         };
 
         let functions = self.raw.module().borrow_mut().push_function_ids(&function_ids);

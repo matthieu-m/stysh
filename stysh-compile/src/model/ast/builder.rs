@@ -35,14 +35,6 @@ pub struct ExprFactory {
     resolver: Resolver,
 }
 
-/// ItemFactory
-#[derive(Clone)]
-pub struct ItemFactory {
-    module: RcModule,
-    tree: RcTree,
-    resolver: Resolver,
-}
-
 /// PatternFactory
 #[derive(Clone)]
 pub struct PatternFactory {
@@ -154,83 +146,6 @@ pub struct PreOpBuilder {
 }
 
 //
-//  Item Builders
-//
-
-/// EnumBuilder
-#[derive(Clone)]
-pub struct EnumBuilder {
-    module: RcModule,
-    resolver: Resolver,
-    name: TypeIdentifier,
-    keyword: u32,
-    open: u32,
-    close: u32,
-    variants: Vec<InnerRecord>,
-    commas: Vec<u32>,
-}
-
-/// ExtensionBuilder
-#[derive(Clone)]
-pub struct ExtensionBuilder {
-    module: RcModule,
-    name: TypeIdentifier,
-    keyword: u32,
-    open: u32,
-    close: u32,
-    functions: Vec<FunctionId>,
-}
-
-/// FunctionBuilder
-#[derive(Clone)]
-pub struct FunctionBuilder {
-    module: RcModule,
-    tree: RcTree,
-    resolver: Resolver,
-    name: VariableIdentifier,
-    result: TypeId,
-    keyword: u32,
-    open: u32,
-    close: u32,
-    arrow: u32,
-    semi_colon: u32,
-    arguments: Vec<Argument>,
-}
-
-/// ImplementationBuilder
-#[derive(Clone)]
-pub struct ImplementationBuilder {
-    module: RcModule,
-    implemented: TypeIdentifier,
-    extended: TypeIdentifier,
-    keyword: u32,
-    for_: u32,
-    open: u32,
-    close: u32,
-    functions: Vec<FunctionId>,
-}
-
-/// InterfaceBuilder
-#[derive(Clone)]
-pub struct InterfaceBuilder {
-    module: RcModule,
-    name: TypeIdentifier,
-    keyword: u32,
-    open: u32,
-    close: u32,
-    functions: Vec<FunctionId>,
-}
-
-/// RecordBuilder
-#[derive(Clone)]
-pub struct RecordBuilder {
-    module: RcModule,
-    inner: InnerRecord,
-    keyword: u32,
-    semi_colon: u32,
-}
-
-//
 //  Pattern Builders
 //
 
@@ -321,6 +236,7 @@ pub struct PathBuilder<S> {
 //
 //  Implementations of Factory
 //
+
 impl Factory {
     /// Creates an instance.
     pub fn new(module: RcModule, tree: RcTree, resolver: Resolver) -> Factory {
@@ -374,6 +290,7 @@ impl Factory {
 //
 //  Implementations of Expr builders
 //
+
 impl ExprFactory {
     /// Creates a new instance.
     pub fn new(module: RcModule, tree: RcTree, resolver: Resolver) -> ExprFactory {
@@ -1118,8 +1035,17 @@ impl PreOpBuilder {
 }
 
 //
-//  Implementations of Item builders
+//  Item builders
 //
+
+/// ItemFactory
+#[derive(Clone)]
+pub struct ItemFactory {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
+}
+
 impl ItemFactory {
     /// Creates a new instance.
     pub fn new(module: RcModule, tree: RcTree, resolver: Resolver)
@@ -1146,6 +1072,11 @@ impl ItemFactory {
     /// Creates an ExtensionBuilder, named.
     pub fn extension_named(&self, name: TypeIdentifier) -> ExtensionBuilder {
         ExtensionBuilder::named(self.module.clone(), name)
+    }
+
+    /// Creates an ExtensionBuilder, typed.
+    pub fn extension_typed(&self, ty: TypeId) -> ExtensionBuilder {
+        ExtensionBuilder::typed(self.module.clone(), ty)
     }
 
     /// Creates a FunctionBuilder.
@@ -1191,6 +1122,13 @@ impl ItemFactory {
         ImplementationBuilder::named(self.module.clone(), int, ext)
     }
 
+    /// Creates an ImplementationBuilder, typed.
+    pub fn implementation_typed(&self, int: TypeId, ext: TypeId)
+        -> ImplementationBuilder
+    {
+        ImplementationBuilder::typed(self.module.clone(), int, ext)
+    }
+
     /// Creates an InterfaceBuilder.
     pub fn interface(&self, pos: u32, len: u32) -> InterfaceBuilder {
         InterfaceBuilder::new(self.module.clone(), self.resolver.clone(), pos, len)
@@ -1212,6 +1150,19 @@ impl ItemFactory {
     }
 
     //  TODO: requires special type factory off RcModule.
+}
+
+/// EnumBuilder
+#[derive(Clone)]
+pub struct EnumBuilder {
+    module: RcModule,
+    resolver: Resolver,
+    name: TypeIdentifier,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    variants: Vec<InnerRecord>,
+    commas: Vec<u32>,
 }
 
 impl EnumBuilder {
@@ -1378,6 +1329,17 @@ impl EnumBuilder {
     }
 }
 
+/// ExtensionBuilder
+#[derive(Clone)]
+pub struct ExtensionBuilder {
+    module: RcModule,
+    extended: TypeId,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
+}
+
 impl ExtensionBuilder {
     /// Creates a new instance.
     pub fn new(
@@ -1393,15 +1355,17 @@ impl ExtensionBuilder {
     }
 
     /// Creates a new instance.
-    pub fn named(
-        module: RcModule,
-        name: TypeIdentifier,
-    )
-        -> Self
-    {
+    pub fn named(module: RcModule, name: TypeIdentifier) -> Self {
+        let extended = module.borrow_mut().push_type(Type::Simple(name), name.span());
+
+        ExtensionBuilder::typed(module, extended)
+    }
+
+    /// Creates a new instance.
+    pub fn typed(module: RcModule, extended: TypeId) -> Self {
         ExtensionBuilder {
             module,
-            name,
+            extended,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1430,47 +1394,67 @@ impl ExtensionBuilder {
 
     /// Creates an Extension.
     pub fn build(&self) -> ExtensionId {
-        let mut functions = self.functions.clone();
-        functions.sort_unstable();
+        let mut funs = self.functions.clone();
+        funs.sort_unstable();
+
+        let extended_range = self.module.borrow().get_type_range(self.extended);
 
         let keyword = if self.keyword == U32_NONE {
-            self.name.span().offset() as u32 - 5
+            extended_range.offset() as u32 - 5
         } else {
             self.keyword
         };
 
         let open = if self.open == U32_NONE {
-            self.name.span().end_offset() as u32 + 1
+            extended_range.end_offset() as u32 + 1
         } else {
             self.open
         };
 
         let close = if self.close == U32_NONE {
-            functions.last()
+            funs.last()
                 .map(|&fun| self.module.borrow().get_function_range(fun).end_offset() as u32 + 1)
                 .unwrap_or(open + 2)
         } else {
             self.close
         };
 
-        let function_ids = self.module.borrow_mut().push_function_ids(&functions);
+        let mut module = self.module.borrow_mut();
+
+        let functions = module.push_function_ids(&funs);
 
         let ext = Extension {
-            name: self.name,
-            functions: function_ids,
+            extended: self.extended,
+            functions,
             keyword,
             open,
             close,
         };
 
-        let id = self.module.borrow_mut().push_extension(ext);
+        let id = module.push_extension(ext);
 
-        for &fun in &functions {
-            self.module.borrow_mut().set_function_scope(fun, Scope::Ext(id));
+        for &fun in &funs {
+            module.set_function_scope(fun, Scope::Ext(id));
         }
 
         id
     }
+}
+
+/// FunctionBuilder
+#[derive(Clone)]
+pub struct FunctionBuilder {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
+    name: VariableIdentifier,
+    result: TypeId,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    arrow: u32,
+    semi_colon: u32,
+    arguments: Vec<Argument>,
 }
 
 impl FunctionBuilder {
@@ -1630,6 +1614,19 @@ impl FunctionBuilder {
     }
 }
 
+/// ImplementationBuilder
+#[derive(Clone)]
+pub struct ImplementationBuilder {
+    module: RcModule,
+    implemented: TypeId,
+    extended: TypeId,
+    keyword: u32,
+    for_: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
+}
+
 impl ImplementationBuilder {
     /// Creates a new instance.
     pub fn new(
@@ -1651,6 +1648,26 @@ impl ImplementationBuilder {
         module: RcModule,
         implemented: TypeIdentifier,
         extended: TypeIdentifier,
+    )
+        -> Self
+    {
+        let implemented =
+            module.borrow_mut().push_type(Type::Simple(implemented), implemented.span());
+        let extended =
+            module.borrow_mut().push_type(Type::Simple(extended), extended.span());
+
+        ImplementationBuilder::typed(
+            module,
+            implemented,
+            extended,
+        )
+    }
+
+    /// Creates a new instance.
+    pub fn typed(
+        module: RcModule,
+        implemented: TypeId,
+        extended: TypeId,
     )
         -> Self
     {
@@ -1693,55 +1710,71 @@ impl ImplementationBuilder {
 
     /// Creates an Implementation.
     pub fn build(&self) -> ImplementationId {
-        let mut functions = self.functions.clone();
-        functions.sort_unstable();
+        let mut funs = self.functions.clone();
+        funs.sort_unstable();
+
+        let implemented_range = self.module.borrow().get_type_range(self.implemented);
+        let extended_range = self.module.borrow().get_type_range(self.extended);
 
         let keyword = if self.keyword == U32_NONE {
-            self.implemented.span().offset() as u32 - 5
+            implemented_range.offset() as u32 - 5
         } else {
             self.keyword
         };
 
         let for_ = if self.for_ == U32_NONE {
-            self.extended.span().offset() as u32 - 5
+            extended_range.offset() as u32 - 5
         } else {
             self.for_
         };
 
         let open = if self.open == U32_NONE {
-            self.extended.span().end_offset() as u32 + 1
+            extended_range.end_offset() as u32 + 1
         } else {
             self.open
         };
 
         let close = if self.close == U32_NONE {
-            functions.last()
+            funs.last()
                 .map(|&fun| self.module.borrow().get_function_range(fun).end_offset() as u32 + 1)
                 .unwrap_or(open + 2)
         } else {
             self.close
         };
 
-        let function_ids = self.module.borrow_mut().push_function_ids(&functions);
+        let mut module = self.module.borrow_mut();
+
+        let functions = module.push_function_ids(&funs);
 
         let imp = Implementation {
             implemented: self.implemented,
             extended: self.extended,
-            functions: function_ids,
+            functions,
             keyword,
             for_,
             open,
             close,
         };
 
-        let id = self.module.borrow_mut().push_implementation(imp);
+        let id = module.push_implementation(imp);
 
-        for &fun in &functions {
-            self.module.borrow_mut().set_function_scope(fun, Scope::Imp(id));
+        for &fun in &funs {
+            module.set_function_scope(fun, Scope::Imp(id));
         }
 
         id
     }
+}
+
+/// InterfaceBuilder
+#[derive(Clone)]
+pub struct InterfaceBuilder {
+    module: RcModule,
+    name: TypeIdentifier,
+    keyword: u32,
+    open: u32,
+    close: u32,
+    functions: Vec<FunctionId>,
 }
 
 impl InterfaceBuilder {
@@ -1837,6 +1870,15 @@ impl InterfaceBuilder {
 
         id
     }
+}
+
+/// RecordBuilder
+#[derive(Clone)]
+pub struct RecordBuilder {
+    module: RcModule,
+    inner: InnerRecord,
+    keyword: u32,
+    semi_colon: u32,
 }
 
 impl RecordBuilder {

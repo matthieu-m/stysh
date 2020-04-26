@@ -86,7 +86,6 @@ pub struct EnumBuilder {
 pub struct ExtensionBuilder {
     module: RcModule,
     id: ExtensionId,
-    name: ItemIdentifier,
     range: Range,
     extended: TypeId,
     elaborate_extended: ElaborateTypeId,
@@ -110,8 +109,6 @@ pub struct FunctionSignatureBuilder {
 pub struct ImplementationBuilder {
     module: RcModule,
     id: ImplementationId,
-    implemented_name: ItemIdentifier,
-    extended_name: ItemIdentifier,
     range: Range,
     implemented: InterfaceId,
     extended: TypeId,
@@ -151,10 +148,8 @@ impl ItemFactory {
     }
 
     /// Creates an ExtensionBuilder.
-    pub fn ext(&self, name: ItemIdentifier, extended: TypeId)
-        ->  ExtensionBuilder
-    {
-        ExtensionBuilder::new(self.0.clone(), name, extended)
+    pub fn ext(&self, extended: TypeId) ->  ExtensionBuilder {
+        ExtensionBuilder::new(self.0.clone(), extended)
     }
 
     /// Creates a FunctionSignatureBuilder.
@@ -171,8 +166,6 @@ impl ItemFactory {
     /// Creates an ImplementationBuilder.
     pub fn impl_(
         &self,
-        implemented_name: ItemIdentifier,
-        extended_name: ItemIdentifier,
         implemented: InterfaceId,
         extended: TypeId
     )
@@ -180,8 +173,6 @@ impl ItemFactory {
     {
         ImplementationBuilder::new(
             self.0.clone(),
-            implemented_name,
-            extended_name,
             implemented,
             extended,
         )
@@ -264,7 +255,6 @@ impl ExtensionBuilder {
     /// Creates an instance.
     pub fn new(
         module: RcModule,
-        name: ItemIdentifier,
         extended: TypeId,
     )
         -> Self
@@ -276,7 +266,6 @@ impl ExtensionBuilder {
         ExtensionBuilder {
             module,
             id,
-            name,
             range: Default::default(),
             extended,
             elaborate_extended: Default::default(),
@@ -301,7 +290,6 @@ impl ExtensionBuilder {
     /// Creates an Extension.
     pub fn build(&self) -> ExtensionId {
         let extension = Extension {
-            name: self.name,
             range: self.range,
             extended: self.extended,
             elaborate_extended: self.elaborate_extended,
@@ -476,8 +464,6 @@ impl ImplementationBuilder {
     /// Creates an instance.
     pub fn new(
         module: RcModule,
-        implemented_name: ItemIdentifier,
-        extended_name: ItemIdentifier,
         implemented: InterfaceId,
         extended: TypeId,
     )
@@ -490,8 +476,6 @@ impl ImplementationBuilder {
         ImplementationBuilder {
             module,
             id,
-            implemented_name,
-            extended_name,
             range: Default::default(),
             implemented,
             extended,
@@ -524,8 +508,6 @@ impl ImplementationBuilder {
     /// Creates an Implementation.
     pub fn build(&self) -> ImplementationId {
         let implementation = Implementation {
-            implemented_name: self.implemented_name,
-            extended_name: self.extended_name,
             range: self.range,
             implemented: self.implemented,
             extended: self.extended,

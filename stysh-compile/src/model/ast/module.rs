@@ -48,12 +48,8 @@ pub struct Module {
 
     /// Enums.
     enum_lookup: BTreeMap<TypeIdentifier, EnumId>,
-    /// Extensions.
-    extension_lookup: BTreeMap<TypeIdentifier, ExtensionId>,
     /// Functions.
     function_lookup: BTreeMap<VariableIdentifier, FunctionId>,
-    /// Implementations.
-    implementation_lookup: BTreeMap<TypeIdentifier, ImplementationId>,
     /// Interfaces.
     interface_lookup: BTreeMap<TypeIdentifier, InterfaceId>,
     /// Records.
@@ -161,16 +157,11 @@ impl Module {
     //  Extensions.
 
     /// Returns the number of extensions.
-    pub fn len_extensions(&self) -> usize { self.extension_lookup.len() }
+    pub fn len_extensions(&self) -> usize { self.extension.len() }
 
     /// Returns the extension IDs.
     pub fn extensions(&self) -> Vec<ExtensionId> {
         (0..(self.len_extensions() as u32)).into_iter().map(ExtensionId::new).collect()
-    }
-
-    /// Looks up an extension ID by identifier.
-    pub fn get_extension_id(&self, id: TypeIdentifier) -> Option<ExtensionId> {
-        self.extension_lookup.get(&id).copied()
     }
 
     /// Returns the extension associated to the ID.
@@ -189,9 +180,6 @@ impl Module {
     pub fn push_extension(&mut self, ext: Extension) -> ExtensionId {
         let id = Id::new(self.extension.len() as u32);
         self.extension.push(&id, ext);
-
-        self.extension_lookup.insert(ext.name, id);
-
         id
     }
 
@@ -308,16 +296,11 @@ impl Module {
     //  Implementations.
 
     /// Returns the number of implementations.
-    pub fn len_implementations(&self) -> usize { self.implementation_lookup.len() }
+    pub fn len_implementations(&self) -> usize { self.implementation.len() }
 
     /// Returns the implementation IDs.
     pub fn implementations(&self) -> Vec<ImplementationId> {
         (0..(self.len_implementations() as u32)).into_iter().map(ImplementationId::new).collect()
-    }
-
-    /// Looks up an implementation ID by type (extended) identifier.
-    pub fn get_implementation_id(&self, id: TypeIdentifier) -> Option<ImplementationId> {
-        self.implementation_lookup.get(&id).copied()
     }
 
     /// Returns the implementation associated to the ID.
@@ -336,9 +319,6 @@ impl Module {
     pub fn push_implementation(&mut self, imp: Implementation) -> ImplementationId {
         let id = Id::new(self.implementation.len() as u32);
         self.implementation.push(&id, imp);
-
-        self.implementation_lookup.insert(imp.extended, id);
-
         id
     }
 
@@ -631,14 +611,8 @@ impl fmt::Debug for Module {
         if !self.enum_lookup.is_empty() {
             write!(f, "enum_lookup: {:?}, ", self.enum_lookup)?;
         }
-        if !self.extension_lookup.is_empty() {
-            write!(f, "extension_lookup: {:?}, ", self.extension_lookup)?;
-        }
         if !self.function_lookup.is_empty() {
             write!(f, "function_lookup: {:?}, ", self.function_lookup)?;
-        }
-        if !self.implementation_lookup.is_empty() {
-            write!(f, "implementation_lookup: {:?}, ", self.implementation_lookup)?;
         }
         if !self.interface_lookup.is_empty() {
             write!(f, "interface_lookup: {:?}, ", self.interface_lookup)?;

@@ -75,8 +75,8 @@ pub struct Enum {
 /// An Extension.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Extension {
-    /// Name of the extended type.
-    pub name: TypeIdentifier,
+    /// Extended type.
+    pub extended: TypeId,
     /// Functions.
     pub functions: Id<[FunctionId]>,
     /// Offset of the `:ext` keyword.
@@ -111,10 +111,10 @@ pub struct Function {
 /// An Implementation.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Implementation {
-    /// Name of the implemented interface.
-    pub implemented: TypeIdentifier,
-    /// Name of the extended type.
-    pub extended: TypeIdentifier,
+    /// Implemented interface.
+    pub implemented: TypeId,
+    /// Extended type.
+    pub extended: TypeId,
     /// Functions.
     pub functions: Id<[FunctionId]>,
     /// Offset of the `:imp` keyword.

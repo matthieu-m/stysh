@@ -216,22 +216,17 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn extension_item(&mut self, e: ast::ExtensionId) -> hir::Item {
-        use std::convert::TryInto;
-
         let id = e.into();
         let ext = self.ast_module.get_extension(e);
 
-        let name = ext.name.into();
         let range = ext.span();
-        let extended = self.scope.lookup_type(name);
-        let elaborate_extended = extended.try_into().expect("FIXME (tuple)");
 
-        let extended = self.hir_module.borrow_mut().push_type(extended);
-        let elaborate_extended = self.hir_module
-            .borrow_mut()
-            .push_elaborate_type(elaborate_extended);
+        let elaborate_extended =
+            self.type_mapper(self.scope, self.ast_module, self.hir_module)
+                .type_of(ext.extended);
+        let extended = self.simplify(elaborate_extended);
 
-        let ext = hir::Extension { name, range, extended, elaborate_extended, };
+        let ext = hir::Extension { range, extended, elaborate_extended, };
         self.hir_module.borrow_mut().set_extension(id, ext);
 
         hir::Item::Ext(id)
@@ -302,38 +297,29 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn implementation_item(&mut self, i: ast::ImplementationId) -> hir::Item {
-        use std::convert::TryInto;
-
         let id = i.into();
         let imp = self.ast_module.get_implementation(i);
 
-        let implemented_name = imp.implemented.into();
-        let extended_name = imp.extended.into();
         let range = imp.span();
-        let implemented = if let hir::Type::Int(i) =
-            self.scope.lookup_type(implemented_name)
-        {
-            i
-        }
-        else
-        {
-            unreachable!("Unknown interface {:?}", implemented_name);
-        };
-        let extended = self.scope.lookup_type(extended_name);
-        let elaborate_implemented = hir::ElaborateType::Int(implemented, hir::PathId::empty());
-        let elaborate_extended = extended.try_into().expect("FIXME (tuple)");
 
-        let extended = self.hir_module.borrow_mut().push_type(extended);
-        let elaborate_implemented = self.hir_module
-            .borrow_mut()
-            .push_elaborate_type(elaborate_implemented);
-        let elaborate_extended = self.hir_module
-            .borrow_mut()
-            .push_elaborate_type(elaborate_extended);
+        let elaborate_implemented =
+            self.type_mapper(self.scope, self.ast_module, self.hir_module)
+                .type_of(imp.implemented);
+        let implemented = self.simplify(elaborate_implemented);
+
+        let elaborate_extended =
+            self.type_mapper(self.scope, self.ast_module, self.hir_module)
+                .type_of(imp.extended);
+        let extended = self.simplify(elaborate_extended);
+
+        let implemented = self.hir_module.borrow().get_type(implemented);
+        let implemented = if let hir::Type::Int(i) = implemented {
+            i
+        } else {
+            unreachable!("Unknown interface {:?}", implemented);
+        };
 
         let imp = hir::Implementation {
-            implemented_name,
-            extended_name,
             range,
             implemented,
             extended,

@@ -5,7 +5,7 @@
 use crate::model::tt::Kind;
 use crate::model::ast::*;
 
-use super::body;
+use super::{body, typ};
 use super::com::RawParser;
 
 /// Parses an implementation.
@@ -31,25 +31,17 @@ impl<'a, 'tree> ImplementationParser<'a, 'tree> {
     fn parse_implementation(&mut self) -> ImplementationId {
         //  Expects:
         //  -   :imp
-        //  -   type-identifier
+        //  -   type
         //  -   :for
-        //  -   type-identifier
+        //  -   type
         //  -   <body>
         let keyword = self.raw.pop_kind(Kind::KeywordImp).expect(":imp");
 
-        let implemented =
-            self.raw
-                .pop_kind(Kind::NameType)
-                .map(|t| self.raw.resolve_type(t))
-                .unwrap_or(TypeIdentifier::default());
+        let implemented = typ::parse_type(&mut self.raw);
 
         let for_ = self.raw.pop_kind(Kind::KeywordFor).expect(":for");
 
-        let extended =
-            self.raw
-                .pop_kind(Kind::NameType)
-                .map(|t| self.raw.resolve_type(t))
-                .unwrap_or(TypeIdentifier::default());
+        let extended = typ::parse_type(&mut self.raw);
 
         let body = body::parse_body(&mut self.raw, extended);
 
@@ -100,6 +92,8 @@ mod tests {
         let env = LocalEnv::new(b":imp Magic :for Simple { :fun id() -> Simple { Simple } }");
         let (e, i, _, _, tm, t) = env.factories();
 
+        let mut imp = i.implementation(5, 5, 6);
+
         let fun = i.function(
             30,
             2,
@@ -107,8 +101,7 @@ mod tests {
         ).build();
         e.block(e.constructor(t.simple(47, 6)).build()).build_body(fun);
 
-        i.implementation(5, 5, 6)
-            .push_function(fun)
+        imp.push_function(fun)
             .build();
 
         assert_eq!(env.actual_implementation(), env.expected_module());
@@ -120,6 +113,8 @@ mod tests {
             b":imp Magic :for Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
         );
         let (e, i, _, _, tm, t) = env.factories();
+
+        let mut imp = i.implementation(5, 5, 6);
 
         let one = i.function(
             30,
@@ -146,10 +141,57 @@ mod tests {
         ).build();
         e.block(e.constructor(t.simple(89, 1)).build()).build_body(three);
 
-        i.implementation(5, 5, 6)
-            .push_function(one)
+        imp.push_function(one)
             .push_function(two)
             .push_function(three)
+            .build();
+
+        assert_eq!(env.actual_implementation(), env.expected_module());
+    }
+
+    #[test]
+    fn implementation_nested() {
+        let env = LocalEnv::new(b":imp A::B :for X::Y { :fun id() -> Self { Self } }");
+        let (e, i, _, _, tm, t) = env.factories();
+
+        let imp = tm.nested(8, 1).push(5, 1).build();
+        let ext = tm.nested(18, 1).push(15, 1).build();
+
+        let fun = i.function(
+            27,
+            2,
+            tm.simple(35, 4),
+        ).build();
+        e.block(e.constructor(t.simple(42, 4)).build()).build_body(fun);
+
+        i.implementation_typed(imp, ext)
+            .push_function(fun)
+            .build();
+
+        assert_eq!(env.actual_implementation(), env.expected_module());
+    }
+
+    #[test]
+    fn implementation_tuple() {
+        let env = LocalEnv::new(b":imp Magic :for (A, B) { :fun id() -> Simple { Simple } }");
+        let (e, i, _, _, tm, t) = env.factories();
+
+        let imp = tm.simple(5, 5);
+        let ext = {
+            let a = tm.simple(17, 1);
+            let b = tm.simple(20, 1);
+            tm.tuple().push(a).push(b).build()
+        };
+
+        let fun = i.function(
+            30,
+            2,
+            tm.simple(38, 6),
+        ).build();
+        e.block(e.constructor(t.simple(47, 6)).build()).build_body(fun);
+
+        i.implementation_typed(imp, ext)
+            .push_function(fun)
             .build();
 
         assert_eq!(env.actual_implementation(), env.expected_module());

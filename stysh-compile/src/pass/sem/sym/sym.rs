@@ -886,7 +886,7 @@ mod tests {
 
             let n = env.item_id(0, 6);
             let nested = env.insert_record(i.unit(n), &[0]);
-            let nested = i.ext(n, td.record(nested)).build();
+            let nested = i.ext(td.record(nested)).build();
 
             let basic = env.item_id(8, 5);
             let basic = env.insert_function(

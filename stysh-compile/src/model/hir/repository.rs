@@ -49,8 +49,6 @@ pub struct Repository {
     //  Extensions
     //
 
-    /// Extension canonical name to ExtensionId.
-    extension_lookup: JaggedHashMap<ItemIdentifier, ExtensionId>,
     /// Definition of a given Extension.
     extension: JaggedArray<Extension>,
 
@@ -67,8 +65,6 @@ pub struct Repository {
     //  Implementations
     //
 
-    /// Implementation's extended canonical name to ImplementationId.
-    implementation_lookup: JaggedHashMap<ItemIdentifier, ImplementationId>,
     /// Definition of a given Implementation.
     implementation: JaggedArray<Implementation>,
     /// Functions associated to a given Implementation.
@@ -146,13 +142,11 @@ impl Repository {
             enum_: JaggedArray::new(5),
             enum_functions: JaggedArray::new(5),
 
-            extension_lookup: JaggedHashMap::new(5),
             extension: JaggedArray::new(5),
 
             function_lookup: JaggedHashMap::new(5),
             function: JaggedArray::new(5),
 
-            implementation_lookup: JaggedHashMap::new(5),
             implementation: JaggedArray::new(5),
             implementation_functions: JaggedArray::new(5),
             implementation_of_builtin: JaggedHashMap::new(5),
@@ -242,11 +236,9 @@ impl Repository {
             enum_lookup: self.enum_lookup.snapshot(),
             enum_: self.enum_.snapshot(),
             enum_functions: self.enum_functions.snapshot(),
-            extension_lookup: self.extension_lookup.snapshot(),
             extension: self.extension.snapshot(),
             function_lookup: self.function_lookup.snapshot(),
             function: self.function.snapshot(),
-            implementation_lookup: self.implementation_lookup.snapshot(),
             implementation: self.implementation.snapshot(),
             implementation_functions: self.implementation_functions.snapshot(),
             implementation_of_builtin: self.implementation_of_builtin.snapshot(),
@@ -349,8 +341,6 @@ impl Repository {
         mapper: &IdMapper,
     )
     {
-        debug_assert!(self.extension_lookup.len() == self.extension.len());
-
         let id = mapper.map_extension(extension);
         debug_assert!(id.is_repository());
         debug_assert!(id.get_repository().unwrap() == self.extension.len() as u32,
@@ -358,16 +348,14 @@ impl Repository {
 
         let ext = module.get_extension(extension);
 
-        let name = ext.name;
         let range = ext.range;
         let extended = self.insert_type(ext.extended, module, mapper);
         let elaborate_extended =
             self.insert_elaborate_type(ext.elaborate_extended, module, mapper);
 
-        let ext = Extension { name, range, extended, elaborate_extended, };
+        let ext = Extension { range, extended, elaborate_extended, };
 
         self.extension.push(ext);
-        self.extension_lookup.insert(name, id);
     }
 
     fn insert_function(
@@ -441,7 +429,6 @@ impl Repository {
     {
         use self::Type::*;
 
-        debug_assert!(self.implementation_lookup.len() == self.implementation.len());
         debug_assert!(self.implementation_functions.len() == self.implementation.len());
 
         let id = mapper.map_implementation(implementation);
@@ -452,8 +439,6 @@ impl Repository {
         let imp = module.get_implementation(implementation);
         let functions = mapper.map_functions(module.get_implementation_functions(implementation));
 
-        let implemented_name = imp.implemented_name;
-        let extended_name = imp.extended_name;
         let range = imp.range;
         let implemented = mapper.map_interface(imp.implemented);
         let extended = self.insert_type(imp.extended, module, mapper);
@@ -463,8 +448,6 @@ impl Repository {
             self.insert_elaborate_type(imp.elaborate_extended, module, mapper);
 
         let imp = Implementation {
-            implemented_name, 
-            extended_name, 
             range, 
             implemented, 
             extended,
@@ -474,7 +457,6 @@ impl Repository {
 
         self.implementation.push(imp);
         self.implementation_functions.push(functions);
-        self.implementation_lookup.insert(extended_name, id);
 
         match self.snapshot().get_type(imp.extended) {
             Builtin(ty) =>
@@ -790,7 +772,6 @@ pub struct RepositorySnapshot {
     enum_functions: JaggedArraySnapshot<Functions>,
 
     //  Extensions
-    extension_lookup: JaggedHashMapSnapshot<ItemIdentifier, ExtensionId>,
     extension: JaggedArraySnapshot<Extension>,
 
     //  Functions
@@ -798,7 +779,6 @@ pub struct RepositorySnapshot {
     function: JaggedArraySnapshot<FunctionSignature>,
 
     //  Implementations
-    implementation_lookup: JaggedHashMapSnapshot<ItemIdentifier, ImplementationId>,
     implementation: JaggedArraySnapshot<Implementation>,
     implementation_functions: JaggedArraySnapshot<Functions>,
     implementation_of_builtin: JaggedHashMapSnapshot<(InterfaceId, BuiltinType), ImplementationId>,

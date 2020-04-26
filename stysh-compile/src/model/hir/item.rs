@@ -126,8 +126,6 @@ pub struct Enum {
 /// An extension definition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Extension {
-    /// The extension identifier.
-    pub name: ItemIdentifier,
     /// The extension range.
     pub range: Range,
     /// The extended type.
@@ -160,10 +158,6 @@ pub struct FunctionSignature {
 /// An implementation definition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Implementation {
-    /// The implemented identifier.
-    pub implemented_name: ItemIdentifier,
-    /// The extended identifier.
-    pub extended_name: ItemIdentifier,
     /// The implementation range.
     pub range: Range,
     /// The interface.

@@ -41,7 +41,7 @@ impl<'a, 'tree> InterfaceParser<'a, 'tree> {
                 .map(|t| self.raw.resolve_type(t))
                 .unwrap_or(TypeIdentifier::default());
 
-        let body = body::parse_body(&mut self.raw, name);
+        let body = body::parse_body(&mut self.raw, TypeId::default());
 
         let int = Interface {
             name,

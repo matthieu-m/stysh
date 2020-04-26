@@ -29,7 +29,8 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
             S: MultiStore<ast::Identifier> + MultiStore<u32>,
     {
         let (components, colons) = match self.state.nodes.first().cloned() {
-            Some(tt::Node::Run(tokens)) => self.parse_path_impl(tokens),
+            Some(tt::Node::Run(tokens)) =>
+                self.parse_path_impl(&tokens[self.state.run_start..]),
             _ => return ast::Path::empty(),
         };
 

@@ -79,6 +79,8 @@ pub struct Module {
     implementation_of_interface: BTreeMap<(InterfaceId, InterfaceId), ImplementationId>,
     /// Implementations indexed by InterfaceId/RecordId.
     implementation_of_record: BTreeMap<(InterfaceId, RecordId), ImplementationId>,
+    /// Implementations for tuples indexed by InterfaceId.
+    implementation_of_tuple: BTreeMap<InterfaceId, ImplementationId>,
 
     //
     //  Interfaces.
@@ -97,6 +99,13 @@ pub struct Module {
     record: Table<RecordId, Record>,
     /// Functions associated to a given Record.
     record_functions: Table<RecordId, Vec<(Identifier, FunctionId)>>,
+
+    //
+    //  Tuples
+    //
+
+    /// Functions associated to Tuples.
+    tuple_functions: Vec<(Identifier, FunctionId)>,
 
     //
     //  Components
@@ -280,7 +289,8 @@ impl Module {
             Enum(e) => { self.implementation_of_enum.insert((int, e), id); },
             Int(i) => { self.implementation_of_interface.insert((int, i), id); },
             Rec(r) => { self.implementation_of_record.insert((int, r), id); },
-            Tuple(..) | Unresolved =>
+            Tuple(..) => { self.implementation_of_tuple.insert(int, id); },
+            Unresolved =>
                 unimplemented!("Implementations for {:?}", imp.extended),
         }
     }
@@ -542,11 +552,12 @@ impl Module {
         use self::Type::*;
 
         let functions = match self.get_type(ty) {
-            Tuple(..) | Unresolved => return,
+            Unresolved => return,
             Builtin(ty) => &mut self.builtin_functions[ty.index()],
             Enum(e) => self.enum_functions.at_mut(&Self::localize(e)),
             Int(i) => self.interface_functions.at_mut(&Self::localize(i)),
             Rec(r) => self.record_functions.at_mut(&Self::localize(r)),
+            Tuple(_) => &mut self.tuple_functions,
         };
 
         debug_assert!(!functions.contains(&(name, id)));
@@ -619,7 +630,8 @@ impl Registry for Module {
             Enum(e) => self.implementation_of_enum.get(&(int, e)).copied(),
             Int(i) => self.implementation_of_interface.get(&(int, i)).copied(),
             Rec(r) => self.implementation_of_record.get(&(int, r)).copied(),
-            Tuple(..) | Unresolved => None,
+            Tuple(..) => self.implementation_of_tuple.get(&int).copied(),
+            Unresolved => None,
         }
     }
 
@@ -649,6 +661,10 @@ impl Registry for Module {
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
         let id = Self::localize(id);
         self.record_functions.at(&id)
+    }
+
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)] {
+        &self.tuple_functions
     }
 
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

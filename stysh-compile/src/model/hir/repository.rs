@@ -1,6 +1,6 @@
 //! A process repository of all items.
 
-use std::{cell, ops};
+use std::{cell, ops, sync};
 use std::collections::BTreeMap;
 
 use crate::basic::com::{Store, MultiStore};
@@ -77,6 +77,8 @@ pub struct Repository {
     implementation_of_interface: JaggedHashMap<(InterfaceId, InterfaceId), ImplementationId>,
     /// Implementations indexed by InterfaceId/RecordId.
     implementation_of_record: JaggedHashMap<(InterfaceId, RecordId), ImplementationId>,
+    /// Implementations for tuples indexed by InterfaceId,
+    implementation_of_tuple: JaggedHashMap<InterfaceId, ImplementationId>,
 
     //
     //  Interfaces
@@ -99,6 +101,13 @@ pub struct Repository {
     record: JaggedArray<Record>,
     /// Functions associated to a given record.
     record_functions: JaggedArray<Functions>,
+
+    //
+    //  Tuples
+    //
+
+    /// Functions associated to tuples.
+    tuple_functions: sync::Arc<Functions>,
 
     //
     //  Components
@@ -153,6 +162,7 @@ impl Repository {
             implementation_of_enum: JaggedHashMap::new(5),
             implementation_of_interface: JaggedHashMap::new(5),
             implementation_of_record: JaggedHashMap::new(5),
+            implementation_of_tuple: JaggedHashMap::new(5),
 
             interface_lookup: JaggedHashMap::new(5),
             interface: JaggedArray::new(5),
@@ -161,6 +171,8 @@ impl Repository {
             record_lookup: JaggedHashMap::new(5),
             record: JaggedArray::new(5),
             record_functions: JaggedArray::new(5),
+
+            tuple_functions: Default::default(),
 
             arguments: JaggedMultiArray::new(5),
             elaborate_type: JaggedArray::new(5),
@@ -180,7 +192,7 @@ impl Repository {
     ///
     /// The Module may contain content that has already been internalized, if
     /// this is the case the items are skipped.
-    pub fn internalize_module(&self, module: &Module) {
+    pub fn internalize_module(&mut self, module: &Module) {
         //  Only named items need be inserted, they will recursively lead to
         //  inserting the components that they need.
         let mapper = self.create_id_mapper(module);
@@ -195,6 +207,11 @@ impl Repository {
 
         for extension in module.extensions() {
             self.insert_extension(extension, module, &mapper);
+        }
+
+        if !module.get_tuple_functions().is_empty() {
+            debug_assert!(self.tuple_functions.is_empty());
+            self.tuple_functions = sync::Arc::new(mapper.map_functions(module.get_tuple_functions()));
         }
 
         for implementation in module.implementations() {
@@ -245,12 +262,14 @@ impl Repository {
             implementation_of_enum: self.implementation_of_enum.snapshot(),
             implementation_of_interface: self.implementation_of_interface.snapshot(),
             implementation_of_record: self.implementation_of_record.snapshot(),
+            implementation_of_tuple: self.implementation_of_tuple.snapshot(),
             interface_lookup: self.interface_lookup.snapshot(),
             interface: self.interface.snapshot(),
             interface_functions: self.interface_functions.snapshot(),
             record_lookup: self.record_lookup.snapshot(),
             record: self.record.snapshot(),
             record_functions: self.record_functions.snapshot(),
+            tuple_functions: self.tuple_functions.clone(),
             arguments: self.arguments.snapshot(),
             elaborate_type: self.elaborate_type.snapshot(),
             elaborate_type_ids: self.elaborate_type_ids.snapshot(),
@@ -467,7 +486,9 @@ impl Repository {
                 { self.implementation_of_interface.insert((implemented, int), id); },
             Rec(rec) =>
                 { self.implementation_of_record.insert((implemented, rec), id); },
-            Tuple(..) | Unresolved =>
+            Tuple(..) =>
+                { self.implementation_of_tuple.insert(implemented, id); },
+            Unresolved =>
                 unimplemented!("Implementations for {:?}", extended),
         }
     }
@@ -580,6 +601,7 @@ impl Repository {
         use self::ElaborateType::*;
 
         match type_ {
+            Alias(a) => Alias(self.insert_type(a, module, mapper)),
             Builtin(b) => Builtin(b),
             Enum(e, p) => {
                 let e = mapper.map_enum(e);
@@ -785,6 +807,7 @@ pub struct RepositorySnapshot {
     implementation_of_enum: JaggedHashMapSnapshot<(InterfaceId, EnumId), ImplementationId>,
     implementation_of_interface: JaggedHashMapSnapshot<(InterfaceId, InterfaceId), ImplementationId>,
     implementation_of_record: JaggedHashMapSnapshot<(InterfaceId, RecordId), ImplementationId>,
+    implementation_of_tuple: JaggedHashMapSnapshot<InterfaceId, ImplementationId>,
 
     //  Interfaces
     interface_lookup: JaggedHashMapSnapshot<ItemIdentifier, InterfaceId>,
@@ -795,6 +818,9 @@ pub struct RepositorySnapshot {
     record_lookup: JaggedHashMapSnapshot<ItemIdentifier, RecordId>,
     record: JaggedArraySnapshot<Record>,
     record_functions: JaggedArraySnapshot<Functions>,
+
+    //  Tuples
+    tuple_functions: sync::Arc<Functions>,
 
     //  Components
     arguments: JaggedMultiArraySnapshot<ValueIdentifier>,
@@ -864,7 +890,8 @@ impl Registry for RepositorySnapshot {
             Enum(e) => self.implementation_of_enum.get(&(int, e)).copied(),
             Int(i) => self.implementation_of_interface.get(&(int, i)).copied(),
             Rec(r) => self.implementation_of_record.get(&(int, r)).copied(),
-            Tuple(..) | Unresolved => None,
+            Tuple(..) => self.implementation_of_tuple.get(&int).copied(),
+            Unresolved => None,
         }
     }
 
@@ -890,6 +917,10 @@ impl Registry for RepositorySnapshot {
 
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
         self.record_functions.at(index_of(id))
+    }
+
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)] {
+        &self.tuple_functions
     }
 
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

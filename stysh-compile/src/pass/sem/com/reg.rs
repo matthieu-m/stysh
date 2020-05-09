@@ -184,6 +184,19 @@ impl<'a> Registry for Reg<'a> {
         }
     }
 
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)] {
+        let module = self.module.get_tuple_functions();
+
+        //  Builtin extensions should only ever belong to a core module, so
+        //  either this is the core module and it has them, or it is not
+        //  and they are in the repository.
+        if !module.is_empty() {
+            module
+        } else {
+            self.repository.get_tuple_functions()
+        }
+    }
+
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {
         debug_assert!(id == Id::empty() || id.is_module() || id.is_repository(), "{:?}", id);
 
@@ -358,6 +371,10 @@ impl<'a> Registry for RegRef<'a> {
 
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)] {
         self.registry.get_record_functions(id)
+    }
+
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)] {
+        self.registry.get_tuple_functions()
     }
 
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

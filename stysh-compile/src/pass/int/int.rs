@@ -58,8 +58,6 @@ pub enum Value {
     Constructor(hir::Type, Vec<Value>),
     /// An interface.
     Dynamic(hir::InterfaceId, Box<Value>),
-    /// A tuple.
-    Tuple(Vec<Value>),
 }
 
 //
@@ -210,7 +208,7 @@ impl<'a> BlockInterpreter<'a> {
         let index = index as usize;
 
         match self.get_value(value) {
-            Constructor(_, tup) | Tuple(tup) => tup[index as usize].clone(),
+            Constructor(_, tup) => tup[index as usize].clone(),
             _ => unreachable!(),
         }
     }
@@ -305,11 +303,7 @@ impl<'a> BlockInterpreter<'a> {
         }
 
         let ty = self.get_type(ty);
-        if let hir::Type::Tuple(..) = ty {
-            Value::Tuple(fields)
-        } else {
-            Value::Constructor(ty, fields)
-        }
+        Value::Constructor(ty, fields)
     }
 
     fn load(&self, v: hir::BuiltinValue) -> Value {
@@ -402,7 +396,6 @@ impl<'a> BlockInterpreter<'a> {
             String(_) => hir::Type::string(),
             Constructor(ty, _) => *ty,
             Dynamic(_, value) => self.get_dynamic_type(&*value),
-            Tuple(_) => unreachable!("get_dynamic_type - Tuple"),
         }
     }
 
@@ -544,6 +537,8 @@ mod tests {
 
     #[test]
     fn new_tuple() {
+        use self::hir::Registry;
+
         let mut env = Env::new();
 
         let tup = {
@@ -559,7 +554,8 @@ mod tests {
             env.push_block(&[]);
         }
 
-        assert_eq!(env.eval(&[]), Value::Tuple(vec![val_int(1), val_int(2)]));
+        let type_ = env.module.borrow().get_type(tup);
+        assert_eq!(env.eval(&[]), Value::Constructor(type_, vec![val_int(1), val_int(2)]));
     }
 
     #[test]

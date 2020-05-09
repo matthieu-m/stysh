@@ -98,6 +98,8 @@ pub enum Type {
 /// The explicitly specified type of an expression, field, pattern, ...
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum ElaborateType {
+    /// An alias type.
+    Alias(TypeId),
     /// A built-in type.
     Builtin(BuiltinType),
     /// An enum type, possibly nested.
@@ -566,6 +568,7 @@ impl convert::TryFrom<ElaborateType> for Type {
         use self::ElaborateType::*;
 
         match t {
+            Alias(..) => Err("No conversion from ElaborateType::Alias to Type"),
             Builtin(b) => Ok(Type::Builtin(b)),
             Enum(e, ..) => Ok(Type::Enum(e)),
             Int(i, ..) => Ok(Type::Int(i)),

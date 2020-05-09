@@ -1881,7 +1881,7 @@ mod tests {
             println!("exprit - {:#?}", tree);
             println!("");
 
-            let repository = Repository::default();
+            let mut repository = Repository::default();
             repository.internalize_module(&*self.module.borrow());
             repository.internalize_tree(&mut tree);
 

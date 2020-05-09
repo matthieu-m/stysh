@@ -105,6 +105,9 @@ pub trait Registry: fmt::Debug {
     /// Panics if the ID is incorrect.
     fn get_record_functions(&self, id: RecordId) -> &[(Identifier, FunctionId)];
 
+    /// Returns the list of functions associated to tuples, sorted.
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)];
+
     /// Returns the arguments associated to the ID.
     ///
     /// #   Panics
@@ -200,6 +203,8 @@ pub struct MockRegistry {
     pub records: Vec<Record>,
     /// Functions for records.
     pub record_functions: Vec<Vec<(Identifier, FunctionId)>>,
+    /// Functions for tuples.
+    pub tuple_functions: Vec<(Identifier, FunctionId)>,
     /// Arguments.
     pub arguments: Vec<Vec<ValueIdentifier>>,
     /// Elaborate Types.
@@ -299,6 +304,10 @@ impl Registry for MockRegistry {
         -> &[(Identifier, FunctionId)]
     {
         &self.record_functions[Self::index_of(id)]
+    }
+
+    fn get_tuple_functions(&self) -> &[(Identifier, FunctionId)] {
+        &self.tuple_functions
     }
 
     fn get_arguments(&self, id: Id<[ValueIdentifier]>) -> &[ValueIdentifier] {

@@ -32,8 +32,9 @@ impl<'a, A, H> TypeMapper<'a, A, H> {
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::Identifier>
-            + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + Store<hir::Type, hir::TypeId>
+            + MultiStore<hir::Identifier> + MultiStore<hir::PathComponent>
+            + MultiStore<hir::ElaborateTypeId>,
 {
     /// Translates a type into... a type!
     pub fn type_of(&self, t: ast::TypeId) -> hir::ElaborateTypeId {
@@ -67,8 +68,9 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 impl<'a, A, H> TypeMapper<'a, A, H>
     where
         A: Store<ast::Type> + MultiStore<ast::TypeId> + MultiStore<ast::Identifier>,
-        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + MultiStore<hir::Identifier>
-            + MultiStore<hir::PathComponent> + MultiStore<hir::ElaborateTypeId>,
+        H: Store<hir::ElaborateType, hir::ElaborateTypeId> + Store<hir::Type, hir::TypeId>
+            + MultiStore<hir::Identifier> + MultiStore<hir::PathComponent>
+            + MultiStore<hir::ElaborateTypeId>,
 {
     fn type_of_nested(&self, t: ast::TypeIdentifier, p: ast::Path)
         -> hir::ElaborateTypeId
@@ -92,15 +94,18 @@ impl<'a, A, H> TypeMapper<'a, A, H>
 
     fn type_of_simple(&self, t: ast::TypeIdentifier) -> hir::ElaborateTypeId {
         let range = t.span();
-        let type_ = self.scope
-            .lookup_type(t.into())
-            .elaborate(t.into(), hir::PathId::empty());
+        let type_ = self.scope.lookup_type(t.into());
 
-        if let hir::ElaborateType::Builtin(b) = type_ {
-            hir::ElaborateTypeId::from(b)
-        } else {
-            self.hir_store.borrow_mut().push(type_, range)
-        }
+        let elaborate = match type_ {
+            hir::Type::Builtin(b) => return hir::ElaborateTypeId::from(b),
+            hir::Type::Tuple(_) => {
+                //  Alias, such as Self, to a tuple type.
+                let ty = self.hir_store.borrow_mut().push(type_, range);
+                hir::ElaborateType::Alias(ty)
+            },
+            _ => type_.elaborate(t.into(), hir::PathId::empty()),
+        };
+        self.hir_store.borrow_mut().push(elaborate, range)
     }
 
     /// Translates a tuple of types into a type.

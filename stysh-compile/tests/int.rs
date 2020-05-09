@@ -142,3 +142,27 @@ fn peano_interface_record() {
         int::Value::Int(2)
     );
 }
+
+#[test]
+fn peano_interface_tuple() {
+    assert_eq!(
+        utils::interpret(
+            b"
+            :int Peano {
+                :fun zero(self) -> Int;
+                :fun one(self: Self) -> Int;
+            }
+
+            :imp Peano :for () {
+                :fun zero(self) -> Int { 0 }
+                :fun one(self: Self) -> Int { 1 }
+            }
+
+            :fun two(peano: Peano) -> Int { peano.one() + peano.one() }
+
+            two(())
+            "
+        ),
+        int::Value::Int(2)
+    );
+}

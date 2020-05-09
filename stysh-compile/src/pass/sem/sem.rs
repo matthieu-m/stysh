@@ -478,6 +478,7 @@ impl<'a> GraphBuilder<'a> {
         use self::hir::ElaborateType::*;
 
         match module.get_elaborate_type(t) {
+            Alias(a) => a,
             Builtin(b) => hir::TypeId::from(b),
             Enum(e, ..) => module.push_type(hir::Type::Enum(e)),
             Int(i, ..) => module.push_type(hir::Type::Int(i)),

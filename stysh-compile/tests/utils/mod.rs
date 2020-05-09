@@ -44,7 +44,7 @@ fn interpret_impl(
         create_items(&ast_module, &tree, &scope, &hir_module);
     }
 
-    let repository = hir::Repository::default();
+    let mut repository = hir::Repository::default();
     repository.internalize_module(&hir_module.borrow());
 
     let scope = create_scope(builtin, &repository.snapshot());

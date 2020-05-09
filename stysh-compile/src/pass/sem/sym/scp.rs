@@ -124,8 +124,7 @@ impl<'a> TypeScope<'a> {
         let method: &Constructor = &CallableCandidate::Method;
 
         let (constructor, functions) = match self.type_ {
-            //  No extensions on those.
-            Tuple(..) | Unresolved =>
+            Unresolved =>
                 return self.unresolved_function(name),
             //  Always a method call, resolved at run-time.
             Int(i) => (method, registry.get_interface_functions(i)),
@@ -133,6 +132,7 @@ impl<'a> TypeScope<'a> {
             Builtin(ty) => (function, registry.get_builtin_functions(ty)),
             Enum(e) => (function, registry.get_enum_functions(e)),
             Rec(r) => (function, registry.get_record_functions(r)),
+            Tuple(..) => (function, registry.get_tuple_functions()),
         };
 
         self.lookup_associated_among(constructor, name, functions)
@@ -163,7 +163,7 @@ impl<'a> TypeScope<'a> {
         use self::Type::*;
 
         match typ {
-            Builtin(..) | Enum(..) | Int(..) | Rec(..) => true,
+            Builtin(..) | Enum(..) | Int(..) | Rec(..) | Tuple(..) => true,
             _ => false,
         }
     }

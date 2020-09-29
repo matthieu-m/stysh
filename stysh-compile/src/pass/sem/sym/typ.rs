@@ -41,6 +41,7 @@ impl<'a, A, H> TypeMapper<'a, A, H>
         use self::ast::Type;
 
         match self.ast_store.get(t) {
+            Type::Generic(..) => todo!("Generics!"),
             Type::Missing(_) => unimplemented!(),
             Type::Nested(t, p) => self.type_of_nested(t, p),
             Type::Simple(t) => self.type_of_simple(t),

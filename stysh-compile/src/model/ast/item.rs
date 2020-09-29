@@ -55,10 +55,16 @@ pub struct Argument {
 }
 
 /// An Enum.
+///
+/// ```text
+/// :enum <name> <parameters>? { <variant>, ... }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Enum {
     /// Name of the enum.
     pub name: TypeIdentifier,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// Variants of the enum.
     pub variants: Id<[RecordId]>,
     /// Offset of the `:enum` keyword.
@@ -73,10 +79,16 @@ pub struct Enum {
 }
 
 /// An Extension.
+///
+/// ```text
+/// :ext <parameters>? <extended-type> { <function> ... }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Extension {
     /// Extended type.
     pub extended: TypeId,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// Functions.
     pub functions: Id<[FunctionId]>,
     /// Offset of the `:ext` keyword.
@@ -88,10 +100,16 @@ pub struct Extension {
 }
 
 /// A Function.
+///
+/// ```text
+/// :fun <name> <parameters>? (<argument>, ...) ->? <result>? ;
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Function {
     /// Name of the function.
     pub name: VariableIdentifier,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// List of arguments of the function.
     pub arguments: Id<[Argument]>,
     /// Return type of the function.
@@ -109,12 +127,18 @@ pub struct Function {
 }
 
 /// An Implementation.
+///
+/// ```text
+/// :imp <parameters>? <implemented-interface> :for <extended-type> { <function> ... }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Implementation {
     /// Implemented interface.
     pub implemented: TypeId,
     /// Extended type.
     pub extended: TypeId,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// Functions.
     pub functions: Id<[FunctionId]>,
     /// Offset of the `:imp` keyword.
@@ -153,10 +177,16 @@ impl InnerRecord {
 }
 
 /// An Interface.
+///
+/// ```text
+/// :int <interface> <parameters>? { <function> ... }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Interface {
     /// Name of the enum.
     pub name: TypeIdentifier,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// Functions.
     pub functions: Id<[FunctionId]>,
     /// Offset of the `:int` keyword.
@@ -168,10 +198,16 @@ pub struct Interface {
 }
 
 /// A Record.
+///
+/// ```text
+/// :rec <inner.type-identifier> <parameters>? <inner.tuple>? ;
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Record {
     /// Inner representation of the record.
     pub inner: InnerRecord,
+    /// Generic parameters, if any.
+    pub parameters: Option<Id<GenericParameterPack>>,
     /// Offset of the `:rec` keyword.
     pub keyword: u32,
     /// Offset of the semi-colon, for unit records.

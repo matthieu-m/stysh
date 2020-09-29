@@ -106,6 +106,8 @@ pub enum FieldIdentifier {
 pub struct FunctionCall {
     /// Function called.
     pub function: ExpressionId,
+    /// Generic Arguments.
+    pub generics: Option<Id<GenericVariablePack>>,
     /// Arguments.
     pub arguments: Tuple<Expression>,
 }
@@ -158,6 +160,8 @@ pub struct MethodCall {
     pub receiver: ExpressionId,
     /// Method name.
     pub method: FieldIdentifier,
+    /// Generic Arguments.
+    pub generics: Option<Id<GenericVariablePack>>,
     /// Arguments.
     pub arguments: Tuple<Expression>,
 }

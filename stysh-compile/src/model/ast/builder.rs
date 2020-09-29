@@ -16,7 +16,7 @@ pub type RcModule = rc::Rc<cell::RefCell<Module>>;
 pub type RcTree = rc::Rc<cell::RefCell<Tree>>;
 
 //
-//  High-Level Builders
+//  Factory
 //
 
 /// Factory
@@ -26,216 +26,6 @@ pub struct Factory {
     tree: RcTree,
     resolver: Resolver,
 }
-
-/// ExprFactory
-#[derive(Clone)]
-pub struct ExprFactory {
-    module: RcModule,
-    tree: RcTree,
-    resolver: Resolver,
-}
-
-/// PatternFactory
-#[derive(Clone)]
-pub struct PatternFactory {
-    tree: RcTree,
-    resolver: Resolver,
-}
-
-/// StmtFactory
-#[derive(Clone)]
-pub struct StmtFactory {
-    tree: RcTree,
-}
-
-//
-//  Expression Builders
-//
-
-/// BinOpBuilder
-#[derive(Clone)]
-pub struct BinOpBuilder {
-    tree: RcTree,
-    op: BinaryOperator,
-    pos: u32,
-    left: ExpressionId,
-    right: ExpressionId,
-}
-
-/// BlockBuilder
-#[derive(Clone)]
-pub struct BlockBuilder {
-    module: RcModule,
-    tree: RcTree,
-    statements: Vec<StatementId>,
-    expr: Option<ExpressionId>,
-    open: u32,
-    close: u32,
-}
-
-/// FieldAccessBuilder
-#[derive(Clone)]
-pub struct FieldAccessBuilder {
-    tree: RcTree,
-    resolver: Resolver,
-    accessed: ExpressionId,
-    field: FieldIdentifier,
-}
-
-/// FunctionCallBuilder
-#[derive(Clone)]
-pub struct FunctionCallBuilder {
-    tree: RcTree,
-    callee: ExpressionId,
-    arguments: TupleBuilder<Tree, Expression>,
-}
-
-/// IfElseBuilder
-#[derive(Clone)]
-pub struct IfElseBuilder {
-    tree: RcTree,
-    condition: ExpressionId,
-    true_: ExpressionId,
-    false_: ExpressionId,
-    if_: u32,
-    else_: u32,
-}
-
-/// LiteralBuilder
-#[derive(Clone)]
-pub struct LiteralBuilder {
-    tree: RcTree,
-    resolver: Resolver,
-    literal: Literal,
-    range: com::Range,
-    fragments: Vec<tt::StringFragment>,
-}
-
-/// LoopBuilder
-pub struct LoopBuilder {
-    tree: RcTree,
-    statements: Vec<StatementId>,
-    loop_: u32,
-    open: u32,
-    close: u32,
-}
-
-/// MethodCallBuilder
-#[derive(Clone)]
-pub struct MethodCallBuilder {
-    tree: RcTree,
-    receiver: ExpressionId,
-    method: FieldIdentifier,
-    arguments: TupleBuilder<Tree, Expression>,
-}
-
-/// NestedVarBuilder
-#[derive(Clone)]
-pub struct NestedVarBuilder {
-    name: VariableIdentifier,
-    path: PathBuilder<Tree>,
-}
-
-/// PreOpBuilder
-#[derive(Clone)]
-pub struct PreOpBuilder {
-    tree: RcTree,
-    op: PrefixOperator,
-    pos: u32,
-    expr: ExpressionId,
-}
-
-//
-//  Pattern Builders
-//
-
-//
-//  Statement Builders
-//
-
-/// ReturnBuilder
-#[derive(Clone)]
-pub struct ReturnBuilder {
-    tree: RcTree,
-    expr: Option<ExpressionId>,
-    ret: u32,
-    semi: u32,
-}
-
-/// VariableReBindingBuilder
-#[derive(Clone)]
-pub struct VariableReBindingBuilder {
-    tree: RcTree,
-    left: ExpressionId,
-    expr: ExpressionId,
-    set: u32,
-    bind: u32,
-    semi: u32,
-}
-
-/// VariableBindingBuilder
-#[derive(Clone)]
-pub struct VariableBindingBuilder {
-    tree: RcTree,
-    pattern: PatternId,
-    expr: ExpressionId,
-    var: u32,
-    colon: u32,
-    bind: u32,
-    semi: u32,
-    type_: Option<TypeId>,
-}
-
-//
-//  Low-Level Builders
-//
-
-/// ConstructorBuilder
-#[derive(Clone)]
-pub struct ConstructorBuilder<T> {
-    type_: TypeId,
-    arguments: TupleBuilder<Tree, T>,
-}
-
-/// TupleBuilder
-#[derive(Clone)]
-pub struct TupleBuilder<S, T> {
-    store: rc::Rc<cell::RefCell<S>>,
-    resolver: Resolver,
-    fields: Vec<Id<T>>,
-    commas: Vec<u32>,
-    names: Vec<Identifier>,
-    separators: Vec<u32>,
-    open: u32,
-    close: u32,
-}
-
-/// TypeFactory
-#[derive(Clone)]
-pub struct TypeFactory<S> {
-    store: rc::Rc<cell::RefCell<S>>,
-    resolver: Resolver,
-}
-
-/// NestedTypeBuilder
-#[derive(Clone)]
-pub struct NestedTypeBuilder<S> {
-    name: TypeIdentifier,
-    path: PathBuilder<S>,
-}
-
-/// PathBuilder
-#[derive(Clone)]
-pub struct PathBuilder<S> {
-    store: rc::Rc<cell::RefCell<S>>,
-    resolver: Resolver,
-    components: Vec<Identifier>,
-    colons: Vec<u32>,
-}
-
-//
-//  Implementations of Factory
-//
 
 impl Factory {
     /// Creates an instance.
@@ -260,6 +50,11 @@ impl Factory {
 
     /// Creates a StmtFactory.
     pub fn stmt(&self) -> StmtFactory { StmtFactory::new(self.tree.clone()) }
+
+    /// Creates a GenericFactory.
+    pub fn generic(&self) -> GenericFactory {
+        GenericFactory::new(self.module.clone(), self.tree.clone(), self.resolver.clone())
+    }
 
     /// Creates a TupleBuilder.
     pub fn module_tuple<T>(&self) -> TupleBuilder<Module, T> {
@@ -290,6 +85,14 @@ impl Factory {
 //
 //  Implementations of Expr builders
 //
+
+/// ExprFactory
+#[derive(Clone)]
+pub struct ExprFactory {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
+}
 
 impl ExprFactory {
     /// Creates a new instance.
@@ -407,6 +210,16 @@ impl ExprFactory {
     }
 }
 
+/// BinOpBuilder
+#[derive(Clone)]
+pub struct BinOpBuilder {
+    tree: RcTree,
+    op: BinaryOperator,
+    pos: u32,
+    left: ExpressionId,
+    right: ExpressionId,
+}
+
 impl BinOpBuilder {
     /// Creates an instance, default to Plus.
     pub fn new(
@@ -492,6 +305,17 @@ impl BinOpBuilder {
     }
 }
 
+/// BlockBuilder
+#[derive(Clone)]
+pub struct BlockBuilder {
+    module: RcModule,
+    tree: RcTree,
+    statements: Vec<StatementId>,
+    expr: Option<ExpressionId>,
+    open: u32,
+    close: u32,
+}
+
 impl BlockBuilder {
     /// Creates a new instance, defaults the range.
     pub fn new(module: RcModule, tree: RcTree, expr: ExpressionId) -> Self {
@@ -569,6 +393,15 @@ impl BlockBuilder {
     }
 }
 
+/// FieldAccessBuilder
+#[derive(Clone)]
+pub struct FieldAccessBuilder {
+    tree: RcTree,
+    resolver: Resolver,
+    accessed: ExpressionId,
+    field: FieldIdentifier,
+}
+
 impl FieldAccessBuilder {
     /// Creates a new instance, default to Named.
     pub fn new(
@@ -619,6 +452,15 @@ impl FieldAccessBuilder {
     }
 }
 
+/// FunctionCallBuilder
+#[derive(Clone)]
+pub struct FunctionCallBuilder {
+    tree: RcTree,
+    callee: ExpressionId,
+    generics: Option<Id<GenericVariablePack>>,
+    arguments: TupleBuilder<Tree, Expression>,
+}
+
 impl FunctionCallBuilder {
     /// Creates an instance.
     pub fn new(
@@ -633,7 +475,13 @@ impl FunctionCallBuilder {
         let mut arguments = TupleBuilder::new(tree.clone(), resolver);
         arguments.parens(open, close);
 
-        FunctionCallBuilder { tree, callee, arguments, }
+        FunctionCallBuilder { tree, callee, generics: None, arguments, }
+    }
+
+    /// Sets the generic arguments.
+    pub fn generics(&mut self, generics: Id<GenericVariablePack>) -> &mut Self {
+        self.generics = Some(generics);
+        self
     }
 
     /// Appends an argument.
@@ -652,6 +500,7 @@ impl FunctionCallBuilder {
     pub fn build(&mut self) -> ExpressionId {
         let expr = FunctionCall {
             function: self.callee,
+            generics: self.generics,
             arguments: self.arguments.build_tuple(),
         };
         let range = {
@@ -660,6 +509,17 @@ impl FunctionCallBuilder {
         };
         self.tree.borrow_mut().push_expression(expr.into(), range)
     }
+}
+
+/// IfElseBuilder
+#[derive(Clone)]
+pub struct IfElseBuilder {
+    tree: RcTree,
+    condition: ExpressionId,
+    true_: ExpressionId,
+    false_: ExpressionId,
+    if_: u32,
+    else_: u32,
 }
 
 impl IfElseBuilder {
@@ -722,6 +582,16 @@ impl IfElseBuilder {
 
         self.tree.borrow_mut().push_expression(expr.into(), range)
     }
+}
+
+/// LiteralBuilder
+#[derive(Clone)]
+pub struct LiteralBuilder {
+    tree: RcTree,
+    resolver: Resolver,
+    literal: Literal,
+    range: com::Range,
+    fragments: Vec<tt::StringFragment>,
 }
 
 impl LiteralBuilder {
@@ -813,6 +683,15 @@ impl LiteralBuilder {
     }
 }
 
+/// LoopBuilder
+pub struct LoopBuilder {
+    tree: RcTree,
+    statements: Vec<StatementId>,
+    loop_: u32,
+    open: u32,
+    close: u32,
+}
+
 impl LoopBuilder {
     /// Creates a new instance, defaults the range.
     pub fn new(tree: RcTree, loop_: u32) -> Self {
@@ -869,6 +748,16 @@ impl LoopBuilder {
     }
 }
 
+/// MethodCallBuilder
+#[derive(Clone)]
+pub struct MethodCallBuilder {
+    tree: RcTree,
+    receiver: ExpressionId,
+    method: FieldIdentifier,
+    generics: Option<Id<GenericVariablePack>>,
+    arguments: TupleBuilder<Tree, Expression>,
+}
+
 impl MethodCallBuilder {
     pub fn new(
         tree: RcTree,
@@ -888,6 +777,7 @@ impl MethodCallBuilder {
             tree,
             receiver,
             method: FieldIdentifier::Index(0, range(end, open - end)),
+            generics: None,
             arguments,
         }
     }
@@ -911,6 +801,12 @@ impl MethodCallBuilder {
         self
     }
 
+    /// Sets the generic arguments.
+    pub fn generics(&mut self, generics: Id<GenericVariablePack>) -> &mut Self {
+        self.generics = Some(generics);
+        self
+    }
+
     /// Appends an argument.
     pub fn push(&mut self, arg: ExpressionId) -> &mut Self {
         self.arguments.push(arg);
@@ -928,6 +824,7 @@ impl MethodCallBuilder {
         let expr = MethodCall {
             receiver: self.receiver,
             method: self.method,
+            generics: self.generics,
             arguments: self.arguments.build_tuple(),
         };
         let range = {
@@ -937,6 +834,13 @@ impl MethodCallBuilder {
         };
         self.tree.borrow_mut().push_expression(expr.into(), range)
     }
+}
+
+/// NestedVarBuilder
+#[derive(Clone)]
+pub struct NestedVarBuilder {
+    name: VariableIdentifier,
+    path: PathBuilder<Tree>,
 }
 
 impl NestedVarBuilder {
@@ -994,6 +898,15 @@ impl NestedVarBuilder {
     }
 }
 
+/// PreOpBuilder
+#[derive(Clone)]
+pub struct PreOpBuilder {
+    tree: RcTree,
+    op: PrefixOperator,
+    pos: u32,
+    expr: ExpressionId,
+}
+
 impl PreOpBuilder {
     /// Creates an instance, default to Not.
     pub fn new(tree: RcTree, expr: ExpressionId) -> Self {
@@ -1033,6 +946,7 @@ impl PreOpBuilder {
         self.tree.borrow_mut().push_expression(expr, range)
     }
 }
+
 
 //
 //  Item builders
@@ -1158,6 +1072,7 @@ pub struct EnumBuilder {
     module: RcModule,
     resolver: Resolver,
     name: TypeIdentifier,
+    parameters: Option<Id<GenericParameterPack>>,
     keyword: u32,
     open: u32,
     close: u32,
@@ -1191,6 +1106,7 @@ impl EnumBuilder {
             module,
             resolver,
             name,
+            parameters: None,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1202,6 +1118,12 @@ impl EnumBuilder {
     /// Sets the position of the :enum keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1308,7 +1230,7 @@ impl EnumBuilder {
 
         let variant_ids: Vec<_> = self.variants.iter()
             .map(|&inner| {
-                let record = Record { inner, keyword: 0, semi_colon: 0 };
+                let record = Record { inner, parameters: self.parameters, keyword: 0, semi_colon: 0 };
                 self.module.borrow_mut().push_record(record)
             })
             .collect();
@@ -1318,6 +1240,7 @@ impl EnumBuilder {
 
         let enum_ = Enum {
             name: self.name,
+            parameters: self.parameters,
             variants,
             keyword,
             open,
@@ -1334,6 +1257,7 @@ impl EnumBuilder {
 pub struct ExtensionBuilder {
     module: RcModule,
     extended: TypeId,
+    parameters: Option<Id<GenericParameterPack>>,
     keyword: u32,
     open: u32,
     close: u32,
@@ -1366,6 +1290,7 @@ impl ExtensionBuilder {
         ExtensionBuilder {
             module,
             extended,
+            parameters: None,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1376,6 +1301,12 @@ impl ExtensionBuilder {
     /// Sets the position of the :ext keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters and patterns.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1400,7 +1331,11 @@ impl ExtensionBuilder {
         let extended_range = self.module.borrow().get_type_range(self.extended);
 
         let keyword = if self.keyword == U32_NONE {
-            extended_range.offset() as u32 - 5
+            if let Some(parameters) = self.parameters {
+                self.module.borrow().get_range(parameters).offset() as u32 - 4
+            } else {
+                extended_range.offset() as u32 - 5
+            }
         } else {
             self.keyword
         };
@@ -1425,6 +1360,7 @@ impl ExtensionBuilder {
 
         let ext = Extension {
             extended: self.extended,
+            parameters: self.parameters,
             functions,
             keyword,
             open,
@@ -1448,6 +1384,7 @@ pub struct FunctionBuilder {
     tree: RcTree,
     resolver: Resolver,
     name: VariableIdentifier,
+    parameters: Option<Id<GenericParameterPack>>,
     result: TypeId,
     keyword: u32,
     open: u32,
@@ -1489,6 +1426,7 @@ impl FunctionBuilder {
             resolver,
             name,
             result,
+            parameters: None,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1498,23 +1436,15 @@ impl FunctionBuilder {
         }
     }
 
-    /// Appends an argument.
-    pub fn push(&mut self, pos: u32, len: u32, type_: TypeId)
-        -> &mut Self
-    {
-        let name = var_id(&self.resolver, pos, len);
-        self.arguments.push(Argument {
-            name,
-            type_,
-            colon: U32_NONE,
-            comma: U32_NONE,
-        });
-        self
-    }
-
     /// Sets the position of the :fun keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1534,6 +1464,20 @@ impl FunctionBuilder {
     /// Sets the position of the semi-colon.
     pub fn semi_colon(&mut self, pos: u32) -> &mut Self {
         self.semi_colon = pos;
+        self
+    }
+
+    /// Appends an argument.
+    pub fn push(&mut self, pos: u32, len: u32, type_: TypeId)
+        -> &mut Self
+    {
+        let name = var_id(&self.resolver, pos, len);
+        self.arguments.push(Argument {
+            name,
+            type_,
+            colon: U32_NONE,
+            comma: U32_NONE,
+        });
         self
     }
 
@@ -1576,7 +1520,11 @@ impl FunctionBuilder {
         };
 
         let open = if self.open == U32_NONE {
-            self.name.span().end_offset() as u32
+            if let Some(parameters) = self.parameters {
+                self.module.borrow().get_range(parameters).end_offset() as u32
+            } else {
+                self.name.span().end_offset() as u32
+            }
         } else {
             self.open
         };
@@ -1595,6 +1543,7 @@ impl FunctionBuilder {
 
         let fun = Function {
             name: self.name,
+            parameters: self.parameters,
             result: self.result,
             arguments,
             keyword,
@@ -1620,6 +1569,7 @@ pub struct ImplementationBuilder {
     module: RcModule,
     implemented: TypeId,
     extended: TypeId,
+    parameters: Option<Id<GenericParameterPack>>,
     keyword: u32,
     for_: u32,
     open: u32,
@@ -1675,6 +1625,7 @@ impl ImplementationBuilder {
             module,
             implemented,
             extended,
+            parameters: None,
             keyword: U32_NONE,
             for_: U32_NONE,
             open: U32_NONE,
@@ -1686,6 +1637,12 @@ impl ImplementationBuilder {
     /// Sets the position of the :imp keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters and patterns.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1717,7 +1674,11 @@ impl ImplementationBuilder {
         let extended_range = self.module.borrow().get_type_range(self.extended);
 
         let keyword = if self.keyword == U32_NONE {
-            implemented_range.offset() as u32 - 5
+            if let Some(parameters) = self.parameters {
+                self.module.borrow().get_range(parameters).offset() as u32 - 4
+            } else {
+                implemented_range.offset() as u32 - 5
+            }
         } else {
             self.keyword
         };
@@ -1749,6 +1710,7 @@ impl ImplementationBuilder {
         let imp = Implementation {
             implemented: self.implemented,
             extended: self.extended,
+            parameters: self.parameters,
             functions,
             keyword,
             for_,
@@ -1771,6 +1733,7 @@ impl ImplementationBuilder {
 pub struct InterfaceBuilder {
     module: RcModule,
     name: TypeIdentifier,
+    parameters: Option<Id<GenericParameterPack>>,
     keyword: u32,
     open: u32,
     close: u32,
@@ -1801,6 +1764,7 @@ impl InterfaceBuilder {
         InterfaceBuilder {
             module,
             name,
+            parameters: None,
             keyword: U32_NONE,
             open: U32_NONE,
             close: U32_NONE,
@@ -1811,6 +1775,12 @@ impl InterfaceBuilder {
     /// Sets the position of the :int keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1839,7 +1809,11 @@ impl InterfaceBuilder {
         };
 
         let open = if self.open == U32_NONE {
-            self.name.span().end_offset() as u32 + 1
+            if let Some(parameters) = self.parameters {
+                self.module.borrow().get_range(parameters).end_offset() as u32 + 1
+            } else {
+                self.name.span().end_offset() as u32 + 1
+            }
         } else {
             self.open
         };
@@ -1856,6 +1830,7 @@ impl InterfaceBuilder {
 
         let int = Interface {
             name: self.name,
+            parameters: self.parameters,
             functions: function_ids,
             keyword,
             open,
@@ -1877,6 +1852,7 @@ impl InterfaceBuilder {
 pub struct RecordBuilder {
     module: RcModule,
     inner: InnerRecord,
+    parameters: Option<Id<GenericParameterPack>>,
     keyword: u32,
     semi_colon: u32,
 }
@@ -1894,6 +1870,7 @@ impl RecordBuilder {
         RecordBuilder {
             module,
             inner,
+            parameters: None,
             keyword: U32_NONE,
             semi_colon: U32_NONE,
         }
@@ -1902,6 +1879,12 @@ impl RecordBuilder {
     /// Sets the position of the :rec keyword.
     pub fn keyword(&mut self, pos: u32) -> &mut Self {
         self.keyword = pos;
+        self
+    }
+
+    /// Sets the generic parameters.
+    pub fn parameters(&mut self, parameters: Id<GenericParameterPack>) -> &mut Self {
+        self.parameters = Some(parameters);
         self
     }
 
@@ -1955,6 +1938,7 @@ impl RecordBuilder {
 
         let rec = Record {
             inner: self.inner,
+            parameters: self.parameters,
             keyword: keyword,
             semi_colon: semi_colon,
         };
@@ -1974,8 +1958,16 @@ impl RecordBuilder {
 }
 
 //
-//  Implementations of Pattern builds
+//  Pattern builders
 //
+
+/// PatternFactory
+#[derive(Clone)]
+pub struct PatternFactory {
+    tree: RcTree,
+    resolver: Resolver,
+}
+
 impl PatternFactory {
     /// Creates an instance.
     pub fn new(tree: RcTree, resolver: Resolver) -> PatternFactory {
@@ -2007,8 +1999,15 @@ impl PatternFactory {
 }
 
 //
-//  Implementations of Stmt builders
+//  Statement builders
 //
+
+/// StmtFactory
+#[derive(Clone)]
+pub struct StmtFactory {
+    tree: RcTree,
+}
+
 impl StmtFactory {
     /// Creates a new instance.
     pub fn new(tree: RcTree) -> Self { StmtFactory { tree } }
@@ -2029,6 +2028,15 @@ impl StmtFactory {
     {
         VariableBindingBuilder::new(self.tree.clone(), pattern, expr)
     }
+}
+
+/// ReturnBuilder
+#[derive(Clone)]
+pub struct ReturnBuilder {
+    tree: RcTree,
+    expr: Option<ExpressionId>,
+    ret: u32,
+    semi: u32,
 }
 
 impl ReturnBuilder {
@@ -2069,6 +2077,17 @@ impl ReturnBuilder {
         let stmt = Return { expr: self.expr, ret: ret, semi: semi, };
         self.tree.borrow_mut().push_statement(stmt.into())
     }
+}
+
+/// VariableReBindingBuilder
+#[derive(Clone)]
+pub struct VariableReBindingBuilder {
+    tree: RcTree,
+    left: ExpressionId,
+    expr: ExpressionId,
+    set: u32,
+    bind: u32,
+    semi: u32,
 }
 
 impl VariableReBindingBuilder {
@@ -2134,6 +2153,19 @@ impl VariableReBindingBuilder {
         };
         self.tree.borrow_mut().push_statement(stmt.into())
     }
+}
+
+/// VariableBindingBuilder
+#[derive(Clone)]
+pub struct VariableBindingBuilder {
+    tree: RcTree,
+    pattern: PatternId,
+    expr: ExpressionId,
+    var: u32,
+    colon: u32,
+    bind: u32,
+    semi: u32,
+    type_: Option<TypeId>,
 }
 
 impl VariableBindingBuilder {
@@ -2225,9 +2257,183 @@ impl VariableBindingBuilder {
     }
 }
 
+
 //
-//  Implementations of Low-Level builders
+//  Generic builders
 //
+
+/// GenericFactory
+#[derive(Clone)]
+pub struct GenericFactory {
+    module: RcModule,
+    tree: RcTree,
+    resolver: Resolver,
+}
+
+impl GenericFactory {
+    /// Creates an instance.
+    pub fn new(module: RcModule, tree: RcTree, resolver: Resolver) -> Self {
+        Self { module, tree, resolver, }
+    }
+
+    /// Creates a generic parameter pack builder.
+    pub fn parameters(&self) -> GenericPackBuilder<Module, Identifier> {
+        GenericPackBuilder::new(self.module.clone(), |parameter, _| parameter.span())
+    }
+
+    /// Creates a parameter.
+    pub fn parameter(&self, pos: u32, len: u32) -> Identifier {
+        self.resolver.resolve_identifier(range(pos, len))
+    }
+
+    /// Creates a generic variable pack builder, for a Module.
+    pub fn variables(&self) -> GenericPackBuilder<Module, GenericVariable> {
+        GenericPackBuilder::new(self.module.clone(), |variable, module| variable.range(module))
+    }
+
+    /// Creates a generic variable pack builder, for a Tree.
+    pub fn variables_tree(&self) -> GenericPackBuilder<Tree, GenericVariable> {
+        GenericPackBuilder::new(self.tree.clone(), |variable, tree| variable.range(tree))
+    }
+
+    /// Creates a variable literal.
+    pub fn variable_literal(&self, literal: Literal, pos: u32, len: u32) -> GenericVariable {
+        GenericVariable::Literal(literal, range(pos, len))
+    }
+
+    /// Creates a variable type.
+    pub fn variable_type(&self, typ: TypeId) -> GenericVariable {
+        GenericVariable::Type(typ)
+    }
+
+    /// Creates a variable value.
+    pub fn variable_value(&self, pos: u32, len: u32) -> GenericVariable {
+        GenericVariable::Value(self.resolver.resolve_variable_identifier(range(pos, len)))
+    }
+
+    /// Creates a path, for a Module.
+    pub fn path(&self) -> PathBuilder<Module> { PathBuilder::new(self.module.clone(), self.resolver.clone()) }
+
+    /// Creates a path, for a Tree.
+    pub fn path_tree(&self) -> PathBuilder<Tree> { PathBuilder::new(self.tree.clone(), self.resolver.clone()) }
+}
+
+#[derive(Clone)]
+pub struct GenericPackBuilder<S, T> {
+    store: rc::Rc<cell::RefCell<S>>,
+    get_range: fn(&T, &S) -> com::Range,
+    elements: Vec<T>,
+    commas: Vec<u32>,
+    open: u32,
+    close: u32,
+}
+
+impl<S, T> GenericPackBuilder<S, T> {
+    /// Creates a new instance.
+    pub fn new(store: rc::Rc<cell::RefCell<S>>, get_range: fn(&T, &S) -> com::Range) -> Self {
+        GenericPackBuilder { store, get_range, elements: vec!(), commas: vec!(), open: U32_NONE, close: U32_NONE, }
+    }
+
+    /// Sets the position of the brackets.
+    pub fn brackets(&mut self, open: u32, close: u32) -> &mut Self {
+        debug_assert!(
+            close >= open,
+            "GenericPackBuilder::brackets - open ({}) > close ({})",
+            open, close,
+        );
+
+        self.open = open;
+        self.close = close;
+        self
+    }
+
+    /// Appends an element.
+    pub fn push(&mut self, element: T) -> &mut Self {
+        self.elements.push(element);
+        self.commas.push(U32_NONE);
+        self
+    }
+
+    /// Overrides the position of the last inserted comma.
+    pub fn comma(&mut self, pos: u32) -> &mut Self {
+        if let Some(c) = self.commas.last_mut() {
+            *c = pos;
+        }
+        self
+    }
+}
+
+impl<S, T> GenericPackBuilder<S, T>
+    where
+        S: Store<GenericPack<T>> + MultiStore<T> + MultiStore<u32>,
+        T: Clone,
+{
+    /// Creates a new GenericPack instance.
+    ///
+    /// Returns its ID.
+    pub fn build(&self) -> Id<GenericPack<T>> {
+        if let Some(pack) = self.build_pack() {
+            let range = pack.span();
+
+            let mut store = self.store.borrow_mut();
+            store.push(pack, range)
+        } else {
+            Id::default()
+        }
+    }
+
+    /// Creates a new GenericPack instance.
+    pub fn build_pack(&self) -> Option<GenericPack<T>> {
+        assert_eq!(self.elements.len(), self.commas.len());
+
+        if self.elements.is_empty() && self.open == U32_NONE && self.close == U32_NONE {
+            return None;
+        }
+
+        if self.elements.is_empty() {
+            return Some(GenericPack { elements: Id::empty(), commas: Id::empty(), open: self.open, close: self.close, });
+        }
+
+        let mut commas = self.commas.clone();
+
+        for (i, (c, e)) in commas.iter_mut().zip(self.elements.iter()).enumerate() {
+            if *c != U32_NONE { continue; }
+
+            let offset = if i + 1 == self.elements.len() { 1 } else { 0 };
+            *c = (self.get_range)(e, &*self.store.borrow()).end_offset() as u32 - offset;
+        }
+
+        let open = if self.open == U32_NONE {
+            (self.get_range)(&self.elements[0], &*self.store.borrow()).offset() as u32 - 1
+        } else {
+            self.open
+        };
+
+        let close = if self.close == U32_NONE {
+            commas[commas.len() - 1] + 1
+        } else {
+            self.close
+        };
+
+        let mut store = self.store.borrow_mut();
+
+        let elements = store.push_slice(&self.elements);
+        let commas = store.push_slice(&commas);
+
+        Some(GenericPack { elements, commas, open, close })
+    }
+}
+
+//
+//  Low-Level builders
+//
+
+/// ConstructorBuilder
+#[derive(Clone)]
+pub struct ConstructorBuilder<T> {
+    type_: TypeId,
+    arguments: TupleBuilder<Tree, T>,
+}
 
 impl<T> ConstructorBuilder<T> {
     /// Creates a new instance.
@@ -2292,6 +2498,19 @@ impl<T> ConstructorBuilder<T>
         let mut store = self.arguments.store.borrow_mut();
         store.push(T::from(cons), range)
     }
+}
+
+/// TupleBuilder
+#[derive(Clone)]
+pub struct TupleBuilder<S, T> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
+    fields: Vec<Id<T>>,
+    commas: Vec<u32>,
+    names: Vec<Identifier>,
+    separators: Vec<u32>,
+    open: u32,
+    close: u32,
 }
 
 impl<S, T> TupleBuilder<S, T> {
@@ -2433,6 +2652,13 @@ impl<S, T> TupleBuilder<S, T>
     }
 }
 
+/// TypeFactory
+#[derive(Clone)]
+pub struct TypeFactory<S> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
+}
+
 impl<S> TypeFactory<S>
     where
         S: Store<Type>
@@ -2440,6 +2666,11 @@ impl<S> TypeFactory<S>
     /// Creates an instance.
     pub fn new(store: rc::Rc<cell::RefCell<S>>, resolver: Resolver) -> Self {
         TypeFactory { store, resolver }
+    }
+
+    /// Creates a GenericTypeBuilder.
+    pub fn generic(&self, pos: u32, len: u32) -> GenericTypeBuilder<S> {
+        GenericTypeBuilder::new(self.store.clone(), self.resolver.clone(), pos, len)
     }
 
     /// Creates a Missing Type.
@@ -2474,6 +2705,71 @@ impl<S> TypeFactory<S>
     pub fn tuple(&self) -> TupleBuilder<S, Type> {
         TupleBuilder::new(self.store.clone(), self.resolver.clone())
     }
+}
+
+/// GenericTypeBuilder
+#[derive(Clone)]
+pub struct GenericTypeBuilder<S> {
+    store: rc::Rc<cell::RefCell<S>>,
+    name: TypeIdentifier,
+    path: Path,
+    variables: Option<Id<GenericVariablePack>>,
+}
+
+impl<S> GenericTypeBuilder<S> {
+    /// Creates an instance.
+    pub fn new(
+        store: rc::Rc<cell::RefCell<S>>,
+        resolver: Resolver,
+        pos: u32,
+        len: u32,
+    )
+        -> Self
+    {
+        let name = resolver.resolve_type_identifier(range(pos, len));
+        GenericTypeBuilder::named(store, name)
+    }
+
+    /// Creates an instance, named.
+    pub fn named(
+        store: rc::Rc<cell::RefCell<S>>,
+        name: TypeIdentifier,
+    )
+        -> Self
+    {
+        GenericTypeBuilder { store, name, path: Path::empty(), variables: None }
+    }
+
+    /// Sets a path.
+    pub fn path(&mut self, path: Path) -> &mut Self {
+        self.path = path;
+        self
+    }
+
+    /// Sets the variables.
+    pub fn variables(&mut self, variables: Id<GenericVariablePack>) -> &mut Self {
+        self.variables = Some(variables);
+        self
+    }
+}
+
+impl<S> GenericTypeBuilder<S>
+    where
+        S: Store<Type> + Store<GenericVariablePack> + MultiStore<Identifier> + MultiStore<u32>
+{
+    /// Creates a Nested Type.
+    pub fn build(&self) -> TypeId {
+        let typ = Type::Generic(self.name, self.variables.unwrap(), self.path);
+        let range = typ.range(&*self.store.borrow());
+        self.store.borrow_mut().push(typ, range)
+    }
+}
+
+/// NestedTypeBuilder
+#[derive(Clone)]
+pub struct NestedTypeBuilder<S> {
+    name: TypeIdentifier,
+    path: PathBuilder<S>,
 }
 
 impl<S> NestedTypeBuilder<S> {
@@ -2530,12 +2826,30 @@ impl<S> NestedTypeBuilder<S>
 {
     /// Creates a Nested Type.
     pub fn build(&self) -> TypeId {
+        let (name, path, range) = self.build_parts();
+        self.path.store.borrow_mut().push(Type::Nested(name, path), range)
+    }
+
+    /// Creates a Nested Type.
+    pub fn build_parts(&self) -> (TypeIdentifier, Path, com::Range) {
+        let name = self.name;
         let path = self.path.build();
         let range = path.range(&*self.path.store.borrow())
             .map(|r| r.extend(self.name.1))
             .unwrap_or(self.name.1);
-        self.path.store.borrow_mut().push(Type::Nested(self.name, path), range)
+
+        (name, path, range)
     }
+
+}
+
+/// PathBuilder
+#[derive(Clone)]
+pub struct PathBuilder<S> {
+    store: rc::Rc<cell::RefCell<S>>,
+    resolver: Resolver,
+    components: Vec<Identifier>,
+    colons: Vec<u32>,
 }
 
 impl<S> PathBuilder<S> {
@@ -2602,19 +2916,13 @@ fn ends<'a, T: 'a>(slice: &'a [T]) -> Option<(&'a T, &'a T)> {
 fn range(pos: u32, len: u32) -> com::Range { com::Range::new(pos as usize, len as usize) }
 
 fn field_id(resolver: &Resolver, pos: u32, len: u32) -> FieldIdentifier {
-    resolver.resolve_field_identifier(
-        FieldIdentifier::Name(Identifier(Default::default(), range(pos, len)))
-    )
+    resolver.resolve_field_identifier(range(pos, len))
 }
 
 fn type_id(resolver: &Resolver, pos: u32, len: u32) -> TypeIdentifier {
-    resolver.resolve_type_identifier(
-        TypeIdentifier(Default::default(), range(pos, len))
-    )
+    resolver.resolve_type_identifier(range(pos, len))
 }
 
 fn var_id(resolver: &Resolver, pos: u32, len: u32) -> VariableIdentifier {
-    resolver.resolve_variable_identifier(
-        VariableIdentifier(Default::default(), range(pos, len))
-    )
+    resolver.resolve_variable_identifier(range(pos, len))
 }

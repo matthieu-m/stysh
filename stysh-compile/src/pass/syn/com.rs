@@ -228,6 +228,19 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
 
     pub fn peek(&self) -> Option<tt::Node<'a>> { self.state.peek() }
 
+    pub fn peek_braced(&self, kind: tt::Kind) -> Option<(tt::Token, &'a [tt::Node<'a>], tt::Token)> {
+        debug_assert!([tt::Kind::BraceOpen, tt::Kind::BracketOpen, tt::Kind::ParenthesisOpen].contains(&kind),
+            "Unexpected kind: {:?}", kind);
+
+        if let Some(tt::Node::Braced(o, ns, c)) = self.peek() {
+            if o.kind() == kind {
+                return Some((o, ns, c))
+            }
+        }
+
+        None
+    }
+
     pub fn peek_kind(&self) -> Option<tt::Kind> {
         self.peek_token().map(|tok| tok.kind())
     }
@@ -239,6 +252,16 @@ impl<'a, 'tree> RawParser<'a, 'tree> {
     pub fn pop_kind(&mut self, kind: tt::Kind) -> Option<tt::Token> {
         if let Some(tok) = self.peek_token() {
             if tok.kind() == kind {
+                self.pop_tokens(1);
+                return Some(tok);
+            }
+        }
+        None
+    }
+
+    pub fn pop_kinds(&mut self, kinds: &[tt::Kind]) -> Option<tt::Token> {
+        if let Some(tok) = self.peek_token() {
+            if kinds.contains(&tok.kind()) {
                 self.pop_tokens(1);
                 return Some(tok);
             }
@@ -361,8 +384,8 @@ pub mod tests {
     use crate::basic::mem;
     use crate::model::ast;
     use crate::model::ast::builder::{
-        Factory, ExprFactory, ItemFactory, PatternFactory, StmtFactory,
-        TypeFactory, RcModule, RcTree,
+        Factory, ExprFactory, GenericFactory, ItemFactory, PatternFactory,
+        StmtFactory, TypeFactory, RcModule, RcTree,
     };
     use crate::model::ast::interning::Resolver;
     use super::RawParser;
@@ -422,6 +445,7 @@ pub mod tests {
 
         pub fn factories(&self) -> (
             ExprFactory,
+            GenericFactory,
             ItemFactory,
             PatternFactory,
             StmtFactory,
@@ -430,7 +454,7 @@ pub mod tests {
         )
         {
             let f = self.factory();
-            (f.expr(), f.item(), f.pat(), f.stmt(), f.type_module(), f.type_())
+            (f.expr(), f.generic(), f.item(), f.pat(), f.stmt(), f.type_module(), f.type_())
         }
 
         pub fn raw<'a>(&'a self) -> RawParser<'a, 'a> {

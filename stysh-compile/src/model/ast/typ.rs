@@ -13,6 +13,8 @@ pub type TypeId = Id<Type>;
 /// A Type.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum Type {
+    /// A generic nominal type.
+    Generic(TypeIdentifier, Id<GenericVariablePack>, Path),
     /// A missing type.
     Missing(Range),
     /// A nested nominal type.
@@ -29,8 +31,35 @@ impl Type {
         use self::Type::*;
 
         match *self {
-            Nested(t, _) | Simple(t) => Some(t),
+            Generic(t, _, _) | Nested(t, _) | Simple(t) => Some(t),
             Missing(_) | Tuple(_) => None,
+        }
+    }
+
+    /// Returns the Range of the Type.
+    pub fn range<S>(&self, store: &S) -> Range
+        where
+            S: Store<GenericVariablePack> + MultiStore<Identifier> + MultiStore<u32>,
+    {
+        use self::Type::*;
+
+        match *self {
+            Generic(name, variables, path) => Self::elaborate_range(name, path, store).extend(store.get_range(variables)),
+            Missing(range) => range,
+            Nested(name, path) => Self::elaborate_range(name, path, store),
+            Simple(name) => name.span(),
+            Tuple(tuple) => tuple.span(),
+        }
+    }
+    
+    fn elaborate_range<S>(name: TypeIdentifier, path: Path, store: &S) -> Range
+        where
+            S: MultiStore<Identifier> + MultiStore<u32>,
+    {
+        if let Some (range) = path.range(store) {
+            name.span().extend(range)
+        } else {
+            name.span()
         }
     }
 }
@@ -57,8 +86,8 @@ pub fn replicate_type<Source, Target>(
 )
     -> TypeId
     where
-        Source: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
-        Target: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+        Source: Store<Type> + Store<GenericVariablePack> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<GenericVariable> + MultiStore<u32>,
+        Target: Store<Type> + Store<GenericVariablePack> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<GenericVariable> + MultiStore<u32>,
 {
     use self::Type::*;
 
@@ -67,6 +96,15 @@ pub fn replicate_type<Source, Target>(
 
     match ty {
         Missing(_) | Simple(_) => target.push(ty, range),
+        Generic(name, pack, path) => {
+            let pack = {
+                let pack = source.get(pack);
+                let pack = pack.replicate(source, target);
+                target.push(pack, pack.span())
+            };
+            let path = path.replicate(source, target);
+            target.push(Generic(name, pack, path), range)
+        },
         Nested(name, path) => {
             let path = path.replicate(source, target);
             target.push(Nested(name, path), range)
@@ -106,8 +144,8 @@ fn replicate_tuple<Source, Target>(
 )
     -> Tuple<Type>
     where
-        Source: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
-        Target: Store<Type> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<u32>,
+        Source: Store<Type> + Store<GenericVariablePack> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<GenericVariable> + MultiStore<u32>,
+        Target: Store<Type> + Store<GenericVariablePack> + MultiStore<TypeId> + MultiStore<Identifier> + MultiStore<GenericVariable> + MultiStore<u32>,
 {
     let fields: Vec<_> = source.get_slice(tuple.fields)
         .iter()

@@ -7,9 +7,10 @@ mod body;
 mod com;
 mod expr;
 mod ext;
+mod fun;
+mod gen;
 mod imp;
 mod int;
-mod fun;
 mod syn;
 mod typ;
 

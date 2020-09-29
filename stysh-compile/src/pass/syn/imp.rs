@@ -5,7 +5,7 @@
 use crate::model::tt::Kind;
 use crate::model::ast::*;
 
-use super::{body, typ};
+use super::{body, gen, typ};
 use super::com::RawParser;
 
 /// Parses an implementation.
@@ -31,11 +31,14 @@ impl<'a, 'tree> ImplementationParser<'a, 'tree> {
     fn parse_implementation(&mut self) -> ImplementationId {
         //  Expects:
         //  -   :imp
+        //  -   <parameters>
         //  -   type
         //  -   :for
         //  -   type
         //  -   <body>
         let keyword = self.raw.pop_kind(Kind::KeywordImp).expect(":imp");
+
+        let parameters = gen::try_parse_generic_parameters(&mut self.raw);
 
         let implemented = typ::parse_type(&mut self.raw);
 
@@ -48,6 +51,7 @@ impl<'a, 'tree> ImplementationParser<'a, 'tree> {
         let imp = Implementation {
             implemented,
             extended,
+            parameters,
             functions: body.functions,
             keyword: keyword.offset() as u32,
             for_: for_.offset() as u32,
@@ -90,7 +94,7 @@ mod tests {
     #[test]
     fn implementation_single_function() {
         let env = LocalEnv::new(b":imp Magic :for Simple { :fun id() -> Simple { Simple } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let mut imp = i.implementation(5, 5, 6);
 
@@ -112,7 +116,7 @@ mod tests {
         let env = LocalEnv::new(
             b":imp Magic :for Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
         );
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let mut imp = i.implementation(5, 5, 6);
 
@@ -152,7 +156,7 @@ mod tests {
     #[test]
     fn implementation_nested() {
         let env = LocalEnv::new(b":imp A::B :for X::Y { :fun id() -> Self { Self } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let imp = tm.nested(8, 1).push(5, 1).build();
         let ext = tm.nested(18, 1).push(15, 1).build();
@@ -172,9 +176,39 @@ mod tests {
     }
 
     #[test]
+    fn implementation_generic() {
+        let env = LocalEnv::new(b":imp[T] Magic[T] :for Simple[T] { :fun id() -> Self { Self } }");
+        let (e, g, i, _, _, tm, t) = env.factories();
+
+        let parameters = g.parameters().push(g.parameter(5, 1)).build();
+        let magic = {
+            let variables = g.variables().push(g.variable_type(tm.simple(14, 1))).build();
+            tm.generic(8, 5).variables(variables).build()
+        };
+        let simple = {
+            let variables = g.variables().push(g.variable_type(tm.simple(29, 1))).build();
+            tm.generic(22, 6).variables(variables).build()
+        };
+
+        let fun = i.function(
+            39,
+            2,
+            tm.simple(47, 4),
+        ).build();
+        e.block(e.constructor(t.simple(54, 4)).build()).build_body(fun);
+
+        i.implementation_typed(magic, simple)
+            .parameters(parameters)
+            .push_function(fun)
+            .build();
+
+        assert_eq!(env.actual_implementation(), env.expected_module());
+    }
+
+    #[test]
     fn implementation_tuple() {
         let env = LocalEnv::new(b":imp Magic :for (A, B) { :fun id() -> Simple { Simple } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let imp = tm.simple(5, 5);
         let ext = {

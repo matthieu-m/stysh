@@ -302,7 +302,17 @@ impl Range {
         debug_assert!(offset <= std::u32::MAX as usize);
         debug_assert!(length <= std::u32::MAX as usize);
         debug_assert!(offset <= (std::u32::MAX as usize - length));
+
         Range { offset: offset as u32, length: length as u32 }
+    }
+
+    /// Creates a new `Range` from a start and end position.
+    ///
+    /// As the name implies, this creates a half-open range, similar to `start..end`.
+    pub fn half_open(start: u32, end: u32) -> Range {
+        debug_assert!(start <= end);
+
+        Range { offset: start, length: end - start }
     }
 
     /// Returns the start position of the range.

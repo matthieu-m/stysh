@@ -77,6 +77,10 @@ pub struct Tree {
     arguments: KeyedMulti<Argument>,
     /// Expression IDs.
     expression_ids: KeyedMulti<ExpressionId>,
+    /// Generic Variable Pack.
+    generic_variable_pack: KeyedSingle<GenericVariablePack>,
+    /// Generic Variables.
+    generic_variables: KeyedMulti<GenericVariable>,
     /// Identifiers.
     identifiers: KeyedMulti<Identifier>,
     /// Pattern IDs.
@@ -291,6 +295,36 @@ impl Tree {
     }
 
 
+    //  Generics
+
+    /// Returns the generic variable pack associated to the ID.
+    pub fn get_generic_variable_pack(&self, id: Id<GenericVariablePack>) -> GenericVariablePack {
+        *self.generic_variable_pack.at(&id)
+    }
+
+    /// Pushes a new generic variable pack.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_generic_variable_pack(&mut self, pack: GenericVariablePack) -> Id<GenericVariablePack> {
+        let id = Id::new(self.generic_variable_pack.len() as u32);
+        self.generic_variable_pack.push(&id, pack);
+
+        id
+    }
+
+    /// Returns the generic variables associated to the ID.
+    pub fn get_generic_variables(&self, id: Id<[GenericVariable]>) -> &[GenericVariable] {
+        if id.is_empty() { &[] } else { self.generic_variables.get(&id) }
+    }
+
+    /// Pushes a new slice of generic variables.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_generic_variables(&mut self, variables: &[GenericVariable]) -> Id<[GenericVariable]> {
+        Self::push_slice(&mut self.generic_variables, variables)
+    }
+
+
     //  Identifiers
 
     /// Returns the identifiers associated to the ID.
@@ -393,6 +427,13 @@ impl Store<Expression> for Tree {
     fn push(&mut self, e: Expression, r: Range) -> ExpressionId { self.push_expression(e, r) }
 }
 
+impl Store<GenericVariablePack> for Tree {
+    fn len(&self) -> usize { self.generic_variable_pack.len() }
+    fn get(&self, id: Id<GenericVariablePack>) -> GenericVariablePack { self.get_generic_variable_pack(id) }
+    fn get_range(&self, id: Id<GenericVariablePack>) -> Range { self.get_generic_variable_pack(id).span() }
+    fn push(&mut self, e: GenericVariablePack, _: Range) -> Id<GenericVariablePack> { self.push_generic_variable_pack(e) }
+}
+
 impl Store<Pattern> for Tree {
     fn len(&self) -> usize { self.len_patterns() }
     fn get(&self, id: PatternId) -> Pattern { self.get_pattern(id) }
@@ -427,6 +468,11 @@ impl MultiStore<Argument> for Tree {
 impl MultiStore<ExpressionId> for Tree {
     fn get_slice(&self, id: Id<[ExpressionId]>) -> &[ExpressionId] { self.get_expression_ids(id) }
     fn push_slice(&mut self, items: &[ExpressionId]) -> Id<[ExpressionId]> { self.push_expression_ids(items) }
+}
+
+impl MultiStore<GenericVariable> for Tree {
+    fn get_slice(&self, id: Id<[GenericVariable]>) -> &[GenericVariable] { self.get_generic_variables(id) }
+    fn push_slice(&mut self, items: &[GenericVariable]) -> Id<[GenericVariable]> { self.push_generic_variables(items) }
 }
 
 impl MultiStore<Identifier> for Tree {
@@ -492,6 +538,12 @@ impl fmt::Debug for Tree {
         }
         if !self.expression_ids.is_empty() {
             write!(f, "expression_ids: {:?}, ", self.expression_ids)?;
+        }
+        if !self.generic_variable_pack.is_empty() {
+            write!(f, "generic_variable_pack: {:?}, ", self.generic_variable_pack)?;
+        }
+        if !self.generic_variables.is_empty() {
+            write!(f, "generic_variables: {:?}, ", self.generic_variables)?;
         }
         if !self.identifiers.is_empty() {
             write!(f, "identifiers: {:?}, ", self.identifiers)?;

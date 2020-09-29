@@ -532,7 +532,7 @@ fn merge_in_place(existing: &mut CallableCandidate, new: CallableCandidate)
     let tmp = CallableCandidate::Unknown(Default::default());
     let extracted = std::mem::replace(existing, tmp);
     let extracted = merge(extracted, new);
-    std::mem::replace(existing, extracted);
+    let _ = std::mem::replace(existing, extracted);
 }
 
 //

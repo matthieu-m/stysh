@@ -58,6 +58,7 @@ impl<'a> SymbolMapper<'a> {
         use self::ast::Type;
 
         match self.ast_tree.get_type(t) {
+            Type::Generic(..) => todo!("Generics!"),
             Type::Missing(_) => unimplemented!(),
             Type::Nested(t, p) => self.type_of_nested(t, p),
             Type::Simple(t) => self.type_of_simple(t),

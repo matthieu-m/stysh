@@ -13,6 +13,7 @@ pub mod interning;
 
 mod common;
 mod expr;
+mod gen;
 mod item;
 mod module;
 mod pattern;
@@ -22,6 +23,7 @@ mod typ;
 
 pub use self::common::*;
 pub use self::expr::*;
+pub use self::gen::*;
 pub use self::item::*;
 pub use self::pattern::*;
 pub use self::stmt::*;

@@ -5,7 +5,7 @@
 use crate::model::tt::Kind;
 use crate::model::ast::*;
 
-use super::{body, typ};
+use super::{body, gen, typ};
 use super::com::RawParser;
 
 /// Parses an extension.
@@ -31,9 +31,12 @@ impl<'a, 'tree> ExtensionParser<'a, 'tree> {
     fn parse_extension(&mut self) -> ExtensionId {
         //  Expects:
         //  -   :ext
+        //  -   <parameters>
         //  -   type
         //  -   <body>
         let keyword = self.raw.pop_kind(Kind::KeywordExt).expect(":ext");
+
+        let parameters = gen::try_parse_generic_parameters(&mut self.raw);
 
         let extended = typ::parse_type(&mut self.raw);
 
@@ -41,6 +44,7 @@ impl<'a, 'tree> ExtensionParser<'a, 'tree> {
 
         let ext = Extension {
             extended,
+            parameters,
             functions: body.functions,
             keyword: keyword.offset() as u32,
             open: body.open,
@@ -82,7 +86,7 @@ mod tests {
     #[test]
     fn extension_single_function() {
         let env = LocalEnv::new(b":ext Simple { :fun id() -> Simple { Simple } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let mut ext = i.extension(5, 6);
 
@@ -104,7 +108,7 @@ mod tests {
         let env = LocalEnv::new(
             b":ext Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
         );
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let mut ext = i.extension(5, 6);
 
@@ -144,7 +148,7 @@ mod tests {
     #[test]
     fn extension_nested() {
         let env = LocalEnv::new(b":ext Nested::Rec { :fun id() -> Self { Self } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let ext = tm.nested(13, 3).push(5, 6).build();
 
@@ -163,9 +167,36 @@ mod tests {
     }
 
     #[test]
+    fn extension_generic() {
+        let env = LocalEnv::new(b":ext[T] Vec[T] { :fun id() -> Self { Self } }");
+        let (e, g, i, _, _, tm, t) = env.factories();
+
+        let parameters = g.parameters().push(g.parameter(5, 1)).build();
+        let variables = g.variables().push(g.variable_type(tm.simple(12, 1))).build();
+
+        let ext = tm.generic(8, 3)
+            .variables(variables)
+            .build();
+
+        let fun = i.function(
+            22,
+            2,
+            tm.simple(30, 4),
+        ).build();
+        e.block(e.constructor(t.simple(37, 4)).build()).build_body(fun);
+
+        i.extension_typed(ext)
+            .parameters(parameters)
+            .push_function(fun)
+            .build();
+
+        assert_eq!(env.actual_extension(), env.expected_module());
+    }
+
+    #[test]
     fn extension_tuple() {
         let env = LocalEnv::new(b":ext (Int, String) { :fun id() -> Self { Self } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let ext = {
             let int = tm.simple(6, 3);
@@ -181,6 +212,33 @@ mod tests {
         e.block(e.constructor(t.simple(41, 4)).build()).build_body(fun);
 
         i.extension_typed(ext)
+            .push_function(fun)
+            .build();
+
+        assert_eq!(env.actual_extension(), env.expected_module());
+    }
+
+    #[test]
+    fn extension_tuple_generic() {
+        let env = LocalEnv::new(b":ext[T, U] (T, U) { :fun id() -> Self { Self } }");
+        let (e, g, i, _, _, tm, t) = env.factories();
+
+        let parameters = g.parameters()
+            .push(g.parameter(5, 1))
+            .push(g.parameter(8, 1))
+            .build();
+
+        let ext = tm.tuple().push(tm.simple(12, 1)).push(tm.simple(15, 1)).build();
+
+        let fun = i.function(
+            25,
+            2,
+            tm.simple(33, 4),
+        ).build();
+        e.block(e.constructor(t.simple(40, 4)).build()).build_body(fun);
+
+        i.extension_typed(ext)
+            .parameters(parameters)
             .push_function(fun)
             .build();
 

@@ -10,7 +10,7 @@ use crate::model::ast::*;
 use crate::model::tt;
 
 use super::com::RawParser;
-use super::{expr, typ};
+use super::{expr, gen, typ};
 
 pub fn parse_function<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> FunctionId {
     let mut signature = {
@@ -71,6 +71,8 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
             (keyword.offset() as u32, self.raw.resolve_variable(name))
         };
 
+        let parameters = gen::try_parse_generic_parameters(&mut self.raw);
+
         let (open, arguments, close) = {
             let (o, a, c) = match self.raw.peek() {
                 Some(tt::Node::Braced(open, a, close)) => (open, a, close),
@@ -96,7 +98,7 @@ impl<'a, 'tree> FunParser<'a, 'tree> {
 
         let semi_colon = 0;
 
-        Function { name, arguments, result, keyword, open, close, arrow, semi_colon }
+        Function { name, parameters, arguments, result, keyword, open, close, arrow, semi_colon }
     }
 
     fn parse(&mut self) {
@@ -192,7 +194,7 @@ mod tests {
     #[test]
     fn basic_declaration() {
         let env = LocalEnv::new(b":fun add() -> Int;");
-        let (_, i, _, _, t, _) = env.factories();
+        let (_, _, i, _, _, t, _) = env.factories();
         i.function(
             5,
             3,
@@ -207,7 +209,7 @@ mod tests {
     #[test]
     fn basic_argument_less() {
         let env = LocalEnv::new(b":fun add() -> Int { 1 + 2 }");
-        let (e, i, _, _, t, _) = env.factories();
+        let (e, _, i, _, _, t, _) = env.factories();
         let fun = i.function(
             5,
             3,
@@ -221,7 +223,7 @@ mod tests {
     #[test]
     fn basic_add() {
         let env = LocalEnv::new(b":fun add(a: Int, b: Int) -> Int { a + b }");
-        let (e, i, _, _, t, _) = env.factories();
+        let (e, _, i, _, _, t, _) = env.factories();
         let (a_type, b_type) = (t.simple(12, 3), t.simple(20, 3));
         let fun = i.function(
             5,
@@ -237,9 +239,31 @@ mod tests {
     }
 
     #[test]
+    fn basic_generic_add() {
+        let env = LocalEnv::new(b":fun add[T](a: T, b: T) -> T { a + b }");
+        let (e, g, i, _, _, t, _) = env.factories();
+
+        let parameters = g.parameters().push(g.parameter(9, 1)).build();
+
+        let (a_type, b_type) = (t.simple(15, 1), t.simple(21, 1));
+        let fun = i.function(
+            5,
+            3,
+            t.simple(27, 1),
+        )
+            .parameters(parameters)
+            .push(12, 1, a_type)
+            .push(18, 1, b_type)
+            .build();
+        e.block(e.bin_op(e.var(31, 1), e.var(35, 1)).build()).build_body(fun);
+
+        assert_eq!(env.actual_function(), env.expected_module());
+    }
+
+    #[test]
     fn self_typed() {
         let env = LocalEnv::new(b":fun id(self: Int) -> Int { self }");
-        let (e, i, _, _, t, _) = env.factories();
+        let (e, _, i, _, _, t, _) = env.factories();
         let self_type = t.simple(14, 3);
         let fun = i.function(
             5,
@@ -256,7 +280,7 @@ mod tests {
     #[test]
     fn self_untyped() {
         let env = LocalEnv::new(b":fun id(self) -> Int { self }");
-        let (e, i, _, _, t, _) = env.factories();
+        let (e, _, i, _, _, t, _) = env.factories();
         let self_type = t.self_(8, 4);
         let fun = i.function(
             5,

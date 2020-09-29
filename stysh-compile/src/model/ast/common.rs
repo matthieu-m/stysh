@@ -111,7 +111,7 @@ pub struct Tuple<T> {
     /// Offset of the opening parenthesis.
     pub open: u32,
     /// Offset of the closing parenthesis, an absent parenthesis is placed at
-    /// at the offset of the last character of the field it would have followed.
+    /// the offset of the last character of the field it would have followed.
     pub close: u32,
 }
 

@@ -10,6 +10,7 @@ use crate::model::tt::{Kind, Node};
 use crate::model::ast::*;
 
 use super::com::RawParser;
+use super::gen;
 
 pub fn parse_enum<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> EnumId {
     let mut parser = EnumRecParser::new(*raw);
@@ -30,10 +31,12 @@ pub fn parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>) -> TypeId {
     parse_type_impl(raw, module)
 }
 
-pub fn try_parse_type<'a, 'tree>(raw: &mut RawParser<'a, 'tree>, path: Path)
+pub fn try_parse_type<'a, 'tree, 'store, S>(raw: &mut RawParser<'a, 'tree>, store: &'store cell::RefCell<S>, path: Path)
     -> Option<TypeId>
+    where
+        S: Store<Type> + Store<GenericVariablePack> + MultiStore<GenericVariable> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
 {
-    let mut parser = TypeParser::new(*raw, raw.tree());
+    let mut parser = TypeParser::new(*raw, store);
     let t = parser.try_parse(path);
     *raw = parser.into_raw();
     t
@@ -62,6 +65,9 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
         //  Expects:
         //  -   :enum
         //  -   type-identifier
+        //  -   [
+        //  -       generic parameters (with trailing comma)
+        //  -   ]?
         //  -   {
         //  -       variants (with trailing comma)
         //  -   }
@@ -73,17 +79,24 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
                 .map(|t| self.raw.resolve_type(t))
                 .unwrap_or(TypeIdentifier::default());
 
+        let parameters = self.try_parse_generic_parameters();
+
         let enum_ = match self.raw.peek() {
             Some(Node::Braced(o, ns, c)) => {
+                self.raw.pop_node();
+
                 let mut parser = EnumRecParser::new(self.raw.spawn(ns));
 
                 let mut variants = vec!();
                 let mut commas = vec!();
-                while let Some((v, c)) =
-                    parser.parse_inner_record(Kind::SignComma)
+                while let Some(identifier) =
+                    parser.raw.pop_kind(Kind::NameType)
+                        .map(|n| self.raw.resolve_type(n))
                 {
+                    let (v, c) = parser.parse_inner_record(Kind::SignComma, identifier);
+
                     let v = self.raw.module().borrow_mut()
-                        .push_record(Record { inner: v, keyword: 0, semi_colon: 0 });
+                        .push_record(Record { inner: v, parameters, keyword: 0, semi_colon: 0 });
                     variants.push(v);
                     commas.push(c);
                 }
@@ -91,7 +104,8 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
                 let mut module = self.raw.module().borrow_mut();
 
                 Enum {
-                    name: name,
+                    name,
+                    parameters,
                     variants: module.push_record_ids(&variants),
                     keyword: keyword.offset() as u32,
                     open: o.offset() as u32,
@@ -101,6 +115,7 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
             },
             _ => Enum {
                 name: name,
+                parameters,
                 variants: Id::empty(),
                 keyword: keyword.offset() as u32,
                 open: 0,
@@ -114,14 +129,20 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
 
     fn parse_record(&mut self) -> RecordId {
         let keyword = self.raw.pop_kind(Kind::KeywordRec).expect(":rec");
-        let missing = Range::new(keyword.span().end_offset(), 0);
 
-        let (inner, semi) =
-            self.parse_inner_record(Kind::SignSemiColon)
-                .unwrap_or((InnerRecord::Missing(missing), 0));
+        let identifier =
+            self.raw
+                .pop_kind(Kind::NameType)
+                .map(|n| self.raw.resolve_type(n))
+                .expect("Record name");
+
+        let parameters = self.try_parse_generic_parameters();
+
+        let (inner, semi) = self.parse_inner_record(Kind::SignSemiColon, identifier);
 
         let record = Record {
-            inner: inner,
+            inner,
+            parameters,
             keyword: keyword.offset() as u32,
             semi_colon: semi
         };
@@ -129,55 +150,38 @@ impl<'a, 'tree> EnumRecParser<'a, 'tree> {
         self.raw.module().borrow_mut().push_record(record)
     }
 
-    fn parse_inner_record(&mut self, end: Kind) -> Option<(InnerRecord, u32)> {
-        if self.raw.peek().is_none() {
-            return None;
-        }
-
-        let variant = self.parse_inner_record_variant();
+    fn parse_inner_record(&mut self, end: Kind, identifier: TypeIdentifier) -> (InnerRecord, u32) {
+        let variant = self.parse_inner_record_variant(identifier);
 
         let semi =
             self.raw
                 .pop_kind(end)
-                .map(|c| c.offset() as u32);
+                .map(|c| c.offset())
+                .unwrap_or(identifier.span().end_offset() - 1) as u32;
 
-        match (variant, semi) {
-            (Some(variant), Some(semi)) => Some((variant, semi)),
-            (Some(variant), None)
-                => Some((variant, variant.span().end_offset() as u32 - 1)),
-            (None, Some(semi)) => Some((
-                InnerRecord::Missing(Range::new(semi as usize, 0)),
-                semi
-            )),
-            (None, None) => unimplemented!(),
+        (variant, semi)
+    }
+
+    fn parse_inner_record_variant(&mut self, identifier: TypeIdentifier) -> InnerRecord {
+        if let Some(_) = self.raw.peek_braced(Kind::ParenthesisOpen) {
+            let mut inner = TypeParser::new(self.raw.clone(), self.raw.module());
+            let tuple = inner.parse_tuple();
+            self.raw = inner.into_raw();
+
+            InnerRecord::Tuple(identifier, tuple)
+        } else {
+            InnerRecord::Unit(identifier)
         }
     }
 
-    fn parse_inner_record_variant(&mut self) -> Option<InnerRecord> {
-        let identifier =
-            self.raw
-                .pop_kind(Kind::NameType)
-                .map(|n| self.raw.resolve_type(n));
-
-        if let Some(identifier) = identifier {
-            if let Some(Node::Braced(..)) = self.raw.peek() {
-                let mut inner = TypeParser::new(self.raw.clone(), self.raw.module());
-                let tuple = inner.parse_tuple();
-                self.raw = inner.into_raw();
-
-                return Some(InnerRecord::Tuple(identifier, tuple));
-            }
-
-            return Some(InnerRecord::Unit(identifier));
-        }
-
-        None
+    fn try_parse_generic_parameters(&mut self) -> Option<Id<GenericParameterPack>> {
+        gen::try_parse_generic_parameters(&mut self.raw)
     }
 }
 
 impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
     where
-        S: Store<Type> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
+        S: Store<Type> + Store<GenericVariablePack> + MultiStore<GenericVariable> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
 {
     fn new(raw: RawParser<'a, 'tree>, store: &'store cell::RefCell<S>) -> Self {
         TypeParser { raw, store, }
@@ -200,7 +204,7 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
     }
 
     fn parse_tuple(&mut self) -> Tuple<Type> {
-        if let Some(Node::Braced(o, ns, c)) = self.raw.peek() {
+        if let Some((o, ns, c)) = self.raw.peek_braced(Kind::ParenthesisOpen) {
             self.raw.pop_node();
 
             let store = self.store;
@@ -216,32 +220,33 @@ impl<'a, 'tree, 'store, S> TypeParser<'a, 'tree, 'store, S>
     fn try_parse(&mut self, path: Path) -> Option<TypeId> {
         self.raw.peek().and_then(|node| {
             match node {
-                Node::Run(run) => {
-                    if run[0].kind() != Kind::NameType {
+                Node::Run(..) => {
+                    let typ = if let Some(typ) = self.raw.pop_kind(Kind::NameType) {
+                        typ
+                    } else {
                         return None;
-                    }
-
-                    let typ = self.raw.pop_kind(Kind::NameType).expect("Type");
-                    let range = typ.span();
+                    };
 
                     let typ = self.raw.resolve_type(typ);
 
-                    if path.is_empty() {
-                        Some((Type::Simple(typ), range))
-                    } else {
-                        let range = path.range(&*self.store.borrow())
-                            .map(|r| r.extend(range))
-                            .unwrap_or(range);
-                        Some((Type::Nested(typ, path), range))
-                    }
+                    let variables = gen::try_parse_generic_variables(&mut self.raw, &self.store);
+
+                    Some(match variables {
+                        Some(variables) => Type::Generic(typ, variables, path),
+                        None if path.is_empty() => Type::Simple(typ),
+                        None => Type::Nested(typ, path),
+                    })
                 },
                 Node::Braced(..) => {
                     let tup = self.parse_tuple();
-                    Some((Type::Tuple(tup), tup.span()))
+                    Some(Type::Tuple(tup))
                 },
                 _ => unimplemented!()
             }
-        }).map(|(ty, range)| self.store.borrow_mut().push(ty, range))
+        }).map(|ty| {
+            let range = ty.range(&*self.store.borrow());
+            self.store.borrow_mut().push(ty, range)
+        })
     }
 }
 
@@ -251,7 +256,7 @@ fn parse_type_impl<'a, 'tree, S>(
 )
     -> TypeId
     where
-        S: Store<Type> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
+        S: Store<Type> + Store<GenericVariablePack> + MultiStore<GenericVariable> + MultiStore<Id<Type>> + MultiStore<Identifier> + MultiStore<u32>
 {
     let path = raw.parse_path(store);
     let mut parser = TypeParser::new(*raw, store);
@@ -310,9 +315,27 @@ mod tests {
     }
 
     #[test]
+    fn enum_generic_variants() {
+        let env = LocalEnv::new(b":enum Option [T] { Some(T), None }");
+        let (_, g, i, _, _, t, _) = env.factories();
+
+        let parameters = g.parameters().push(g.parameter(14, 1)).build();
+        let tuple = t.tuple().push(t.simple(24, 1)).build_tuple();
+
+        i.enum_(6, 6)
+            .parameters(parameters)
+            .braces(17, 33)
+            .push_tuple(19, 4, tuple)
+            .push_unit(28, 4)
+            .build();
+
+        assert_eq!(env.actual_enum(), env.expected_module());
+    }
+
+    #[test]
     fn rec_tuple() {
         let env = LocalEnv::new(b":rec Tup(Int, String);");
-        let (_, i, _, _, t, _) = env.factories();
+        let (_, _, i, _, _, t, _) = env.factories();
         let tuple = t.tuple().push(t.simple(9, 3)).push(t.simple(14, 6)).build_tuple();
         i.record(5, 3).tuple(tuple).build();
 
@@ -322,7 +345,7 @@ mod tests {
     #[test]
     fn rec_tuple_keyed() {
         let env = LocalEnv::new(b":rec Person(.name: String, .age: Int);");
-        let (_, i, _, _, t, _) = env.factories();
+        let (_, _, i, _, _, t, _) = env.factories();
         let tuple = t.tuple()
                     .name(12, 5).push(t.simple(19, 6))
                     .name(27, 4).push(t.simple(33, 3))
@@ -337,6 +360,20 @@ mod tests {
         let env = LocalEnv::new(b":rec Simple;");
         let i = env.factory().item();
         i.record(5, 6).build();
+
+        assert_eq!(env.actual_record(), env.expected_module());
+    }
+
+    #[test]
+    fn rec_generic_pair() {
+        let env = LocalEnv::new(b":rec Pair[T, U](T, U);");
+        let (_, g, i, _, _, t, _) = env.factories();
+        let parameters = g.parameters()
+            .push(g.parameter(10, 1))
+            .push(g.parameter(13, 1))
+            .build();
+        let tuple = t.tuple().push(t.simple(16, 1)).push(t.simple(19, 1)).build_tuple();
+        i.record(5, 4).parameters(parameters).tuple(tuple).build();
 
         assert_eq!(env.actual_record(), env.expected_module());
     }

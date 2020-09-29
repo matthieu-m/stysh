@@ -22,7 +22,7 @@
 use std::fmt;
 use std::collections::BTreeMap;
 
-use crate::basic::com::{Range, Span, Store, MultiStore};
+use crate::basic::com::{IdIterator, Range, Span, Store, MultiStore};
 use crate::basic::sea::{MultiTable, Table};
 
 use crate::model::com::ModuleId;
@@ -90,6 +90,12 @@ pub struct Module {
     arguments: KeyedMulti<Argument>,
     /// Functions.
     functions: KeyedMulti<FunctionId>,
+    /// Generic Parameter Pack.
+    generic_parameter_pack: KeyedSingle<GenericParameterPack>,
+    /// Generic Variable Pack.
+    generic_variable_pack: KeyedSingle<GenericVariablePack>,
+    /// Generic Variables.
+    generic_variables: KeyedMulti<GenericVariable>,
     /// Identifiers.
     identifiers: KeyedMulti<Identifier>,
     /// Positions.
@@ -122,8 +128,8 @@ impl Module {
     pub fn len_enums(&self) -> usize { self.enum_lookup.len() }
 
     /// Returns the enum IDs.
-    pub fn enums(&self) -> Vec<EnumId> {
-        (0..(self.len_enums() as u32)).into_iter().map(EnumId::new).collect()
+    pub fn enums(&self) -> IdIterator<Enum> {
+        IdIterator::new(0, self.len_enums() as u32)
     }
 
     /// Looks up an enum ID by identifier.
@@ -160,8 +166,8 @@ impl Module {
     pub fn len_extensions(&self) -> usize { self.extension.len() }
 
     /// Returns the extension IDs.
-    pub fn extensions(&self) -> Vec<ExtensionId> {
-        (0..(self.len_extensions() as u32)).into_iter().map(ExtensionId::new).collect()
+    pub fn extensions(&self) -> IdIterator<Extension> {
+        IdIterator::new(0, self.len_extensions() as u32)
     }
 
     /// Returns the extension associated to the ID.
@@ -190,8 +196,8 @@ impl Module {
     pub fn len_functions(&self) -> usize { self.function_lookup.len() }
 
     /// Returns the function IDs.
-    pub fn functions(&self) -> Vec<FunctionId> {
-        (0..(self.len_functions() as u32)).into_iter().map(FunctionId::new).collect()
+    pub fn functions(&self) -> IdIterator<Function> {
+        IdIterator::new(0, self.len_functions() as u32)
     }
 
     /// Looks up an function ID by identifier.
@@ -299,8 +305,8 @@ impl Module {
     pub fn len_implementations(&self) -> usize { self.implementation.len() }
 
     /// Returns the implementation IDs.
-    pub fn implementations(&self) -> Vec<ImplementationId> {
-        (0..(self.len_implementations() as u32)).into_iter().map(ImplementationId::new).collect()
+    pub fn implementations(&self) -> IdIterator<Implementation> {
+        IdIterator::new(0, self.len_implementations() as u32)
     }
 
     /// Returns the implementation associated to the ID.
@@ -329,8 +335,8 @@ impl Module {
     pub fn len_interfaces(&self) -> usize { self.interface_lookup.len() }
 
     /// Returns the interface IDs.
-    pub fn interfaces(&self) -> Vec<InterfaceId> {
-        (0..(self.len_interfaces() as u32)).into_iter().map(InterfaceId::new).collect()
+    pub fn interfaces(&self) -> IdIterator<Interface> {
+        IdIterator::new(0, self.len_interfaces() as u32)
     }
 
     /// Looks up an interface ID by identifier.
@@ -367,8 +373,8 @@ impl Module {
     pub fn len_records(&self) -> usize { self.record_lookup.len() }
 
     /// Returns the record IDs.
-    pub fn records(&self) -> Vec<RecordId> {
-        (0..(self.len_records() as u32)).into_iter().map(RecordId::new).collect()
+    pub fn records(&self) -> IdIterator<Record> {
+        IdIterator::new(0, self.len_records() as u32)
     }
 
     /// Looks up an record ID by identifier.
@@ -457,6 +463,51 @@ impl Module {
     }
 
 
+    //  Generics.
+
+    /// Returns the generic parameter pack associated to the ID.
+    pub fn get_generic_parameter_pack(&self, id: Id<GenericParameterPack>) -> GenericParameterPack {
+        *self.generic_parameter_pack.at(&id)
+    }
+
+    /// Pushes a new generic parameter pack.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_generic_parameter_pack(&mut self, pack: GenericParameterPack) -> Id<GenericParameterPack> {
+        let id = Id::new(self.generic_parameter_pack.len() as u32);
+        self.generic_parameter_pack.push(&id, pack);
+
+        id
+    }
+
+    /// Returns the generic variable pack associated to the ID.
+    pub fn get_generic_variable_pack(&self, id: Id<GenericVariablePack>) -> GenericVariablePack {
+        *self.generic_variable_pack.at(&id)
+    }
+
+    /// Pushes a new generic variable pack.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_generic_variable_pack(&mut self, pack: GenericVariablePack) -> Id<GenericVariablePack> {
+        let id = Id::new(self.generic_variable_pack.len() as u32);
+        self.generic_variable_pack.push(&id, pack);
+
+        id
+    }
+
+    /// Returns the generic variables associated to the ID.
+    pub fn get_generic_variables(&self, id: Id<[GenericVariable]>) -> &[GenericVariable] {
+        if id.is_empty() { &[] } else { self.generic_variables.get(&id) }
+    }
+
+    /// Pushes a new slice of generic variables.
+    ///
+    /// Returns the ID created for it.
+    pub fn push_generic_variables(&mut self, variables: &[GenericVariable]) -> Id<[GenericVariable]> {
+        Self::push_slice(&mut self.generic_variables, variables)
+    }
+
+
     //  Identifiers
 
     /// Returns the identifiers associated to the ID.
@@ -464,7 +515,7 @@ impl Module {
         if id.is_empty() { &[] } else { self.identifiers.get(&id) }
     }
 
-    /// Pushes a new slice of expression IDs.
+    /// Pushes a new slice of identifiers.
     ///
     /// Returns the ID created for it.
     pub fn push_identifiers(&mut self, identifiers: &[Identifier]) -> Id<[Identifier]> {
@@ -536,6 +587,20 @@ impl Store<Extension> for Module {
     fn push(&mut self, e: Extension, _: Range) -> ExtensionId { self.push_extension(e) }
 }
 
+impl Store<GenericParameterPack> for Module {
+    fn len(&self) -> usize { self.generic_parameter_pack.len() }
+    fn get(&self, id: Id<GenericParameterPack>) -> GenericParameterPack { self.get_generic_parameter_pack(id) }
+    fn get_range(&self, id: Id<GenericParameterPack>) -> Range { self.get_generic_parameter_pack(id).span() }
+    fn push(&mut self, e: GenericParameterPack, _: Range) -> Id<GenericParameterPack> { self.push_generic_parameter_pack(e) }
+}
+
+impl Store<GenericVariablePack> for Module {
+    fn len(&self) -> usize { self.generic_variable_pack.len() }
+    fn get(&self, id: Id<GenericVariablePack>) -> GenericVariablePack { self.get_generic_variable_pack(id) }
+    fn get_range(&self, id: Id<GenericVariablePack>) -> Range { self.get_generic_variable_pack(id).span() }
+    fn push(&mut self, e: GenericVariablePack, _: Range) -> Id<GenericVariablePack> { self.push_generic_variable_pack(e) }
+}
+
 impl Store<Implementation> for Module {
     fn len(&self) -> usize { self.len_implementations() }
     fn get(&self, id: ImplementationId) -> Implementation { self.get_implementation(id) }
@@ -577,6 +642,11 @@ impl MultiStore<Argument> for Module {
 impl MultiStore<FunctionId> for Module {
     fn get_slice(&self, id: Id<[FunctionId]>) -> &[FunctionId] { self.get_function_ids(id) }
     fn push_slice(&mut self, items: &[FunctionId]) -> Id<[FunctionId]> { self.push_function_ids(items) }
+}
+
+impl MultiStore<GenericVariable> for Module {
+    fn get_slice(&self, id: Id<[GenericVariable]>) -> &[GenericVariable] { self.get_generic_variables(id) }
+    fn push_slice(&mut self, items: &[GenericVariable]) -> Id<[GenericVariable]> { self.push_generic_variables(items) }
 }
 
 impl MultiStore<Identifier> for Module {
@@ -652,6 +722,15 @@ impl fmt::Debug for Module {
         }
         if !self.functions.is_empty() {
             write!(f, "functions: {:?}, ", self.functions)?;
+        }
+        if !self.generic_parameter_pack.is_empty() {
+            write!(f, "generic_parameter_pack: {:?}, ", self.generic_parameter_pack)?;
+        }
+        if !self.generic_variable_pack.is_empty() {
+            write!(f, "generic_variable_pack: {:?}, ", self.generic_variable_pack)?;
+        }
+        if !self.generic_variables.is_empty() {
+            write!(f, "generic_variables: {:?}, ", self.generic_variables)?;
         }
         if !self.identifiers.is_empty() {
             write!(f, "identifiers: {:?}, ", self.identifiers)?;

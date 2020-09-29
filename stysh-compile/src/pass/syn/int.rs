@@ -5,7 +5,7 @@
 use crate::model::tt::Kind;
 use crate::model::ast::*;
 
-use super::body;
+use super::{body, gen};
 use super::com::RawParser;
 
 /// Parses an interface.
@@ -32,6 +32,7 @@ impl<'a, 'tree> InterfaceParser<'a, 'tree> {
         //  Expects:
         //  -   :int
         //  -   type-identifier
+        //  -   <parameters>
         //  -   <body>
         let keyword = self.raw.pop_kind(Kind::KeywordInt).expect(":int");
 
@@ -41,10 +42,13 @@ impl<'a, 'tree> InterfaceParser<'a, 'tree> {
                 .map(|t| self.raw.resolve_type(t))
                 .unwrap_or(TypeIdentifier::default());
 
+        let parameters = gen::try_parse_generic_parameters(&mut self.raw);
+
         let body = body::parse_body(&mut self.raw, TypeId::default());
 
         let int = Interface {
             name,
+            parameters,
             functions: body.functions,
             keyword: keyword.offset() as u32,
             open: body.open,
@@ -86,7 +90,7 @@ mod tests {
     #[test]
     fn interface_single_function() {
         let env = LocalEnv::new(b":int Simple { :fun id() -> Simple { Simple } }");
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let fun = i.function(
             19,
@@ -107,7 +111,7 @@ mod tests {
         let env = LocalEnv::new(
             b":int Simple { :fun one() -> O { O } :fun two() -> W { W } :fun three() -> R { R } }"
         );
-        let (e, i, _, _, tm, t) = env.factories();
+        let (e, _, i, _, _, tm, t) = env.factories();
 
         let one = i.function(
             19,
@@ -138,6 +142,28 @@ mod tests {
             .push_function(one)
             .push_function(two)
             .push_function(three)
+            .build();
+
+        assert_eq!(env.actual_interface(), env.expected_module());
+    }
+
+    #[test]
+    fn interface_generic() {
+        let env = LocalEnv::new(b":int Simple[T] { :fun id() -> Simple { Simple } }");
+        let (e, g, i, _, _, tm, t) = env.factories();
+
+        let parameters = g.parameters().push(g.parameter(12, 1)).build();
+
+        let fun = i.function(
+            22,
+            2,
+            tm.simple(30, 6),
+        ).build();
+        e.block(e.constructor(t.simple(39, 6)).build()).build_body(fun);
+
+        i.interface(5, 6)
+            .parameters(parameters)
+            .push_function(fun)
             .build();
 
         assert_eq!(env.actual_interface(), env.expected_module());

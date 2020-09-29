@@ -9,7 +9,7 @@ use crate::basic::com::{Range, Span, Store, MultiStore};
 use crate::model::tt;
 use crate::model::ast::*;
 
-use super::typ;
+use super::{gen, typ};
 use super::com::RawParser;
 
 pub fn parse_expression<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
@@ -44,21 +44,6 @@ pub fn parse_statement<'a, 'tree>(raw: &mut RawParser<'a, 'tree>)
 //
 struct ExprParser<'a, 'tree> {
     raw: RawParser<'a, 'tree>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-struct Precedence(u8);
-
-struct ShuntingYard<'a> {
-    tree: &'a cell::RefCell<Tree>,
-    op_stack: Vec<(Operator, u32, Precedence)>,
-    expr_stack: Vec<(Expression, Range)>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
-enum Operator {
-    Bin(BinaryOperator),
-    Pre(PrefixOperator),
 }
 
 impl<'a, 'tree> ExprParser<'a, 'tree> {
@@ -121,7 +106,15 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
                         LoopResult::Break => break,
                     }
                 },
-                tt::Node::Braced(..) => self.parse_braced(node),
+                tt::Node::Braced(..) => {
+                    let mut raw = &mut self.raw;
+                    let tree = raw.tree();
+                    if let Some(generics) = gen::try_parse_generic_variables(&mut raw, tree) {
+                        yard.push_generics(generics);
+                        continue;
+                    }
+                    self.parse_braced(node)
+                },
                 tt::Node::Bytes(..) => self.parse_bytes(node),
                 tt::Node::String(..) => self.parse_string(node),
                 tt::Node::UnexpectedBrace(..) => unimplemented!(),
@@ -142,12 +135,16 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
                 //  It might be a field access
                 Some(K::NameField) |
                 //  It might be a constructor or function call.
-                Some(K::ParenthesisOpen) => continue,
+                Some(K::ParenthesisOpen) |
+                //  It is a pack of generic arguments.
+                Some(K::BracketOpen) => continue,
                 _ => break,
             };
         }
 
-        let (expr, range) = yard.pop_expression();
+        let (expr, generics, range) = yard.pop_expression();
+        assert!(generics.is_none());
+
         self.raw.tree().borrow_mut().push_expression(expr, range)
     }
 
@@ -197,7 +194,8 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
             },
             K::SignBind => Break,
             _ => {
-                let ty = typ::try_parse_type(&mut self.raw, path);
+                let raw = &mut self.raw;
+                let ty = typ::try_parse_type(raw, raw.tree(), path);
                 if let Some(ty) = ty {
                     Done(self.parse_constructor(ty))
                 } else {
@@ -429,6 +427,21 @@ impl<'a, 'tree> ExprParser<'a, 'tree> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+enum Operator {
+    Bin(BinaryOperator),
+    Pre(PrefixOperator),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+struct Precedence(u8);
+
+struct ShuntingYard<'a> {
+    tree: &'a cell::RefCell<Tree>,
+    op_stack: Vec<(Operator, u32, Precedence)>,
+    expr_stack: Vec<(Expression, Option<Id<GenericVariablePack>>, Range)>,
+}
+
 impl<'a> ShuntingYard<'a> {
     fn new(tree: &'a cell::RefCell<Tree>) -> ShuntingYard<'a> {
         ShuntingYard {
@@ -443,28 +456,41 @@ impl<'a> ShuntingYard<'a> {
         //  a normal expression immediately followed by a tuple expression
         //  without an intervening operator.
         if let Expression::Tuple(arguments) = expr {
-            if let Some((callee, range)) = self.pop_trailing_expression() {
+            if let Some((callee, generics, range)) = self.pop_trailing_expression() {
                 //  Method calls are distinguished from Function calls by
                 //  having a tuple expression following a field access.
                 let expr = if let Expression::FieldAccess(fa) = callee {
-                    MethodCall { receiver: fa.accessed, method: fa.field, arguments, }.into()
+                    MethodCall { receiver: fa.accessed, method: fa.field, generics, arguments, }.into()
                 } else {
                     let function = self.insert(callee, range);
-                    FunctionCall { function, arguments, }.into()
+                    FunctionCall { function, generics, arguments, }.into()
                 };
                 let range = range.extend(arguments.span());
-                self.expr_stack.push((expr, range));
+                self.expr_stack.push((expr, None, range));
                 return;
             }
         }
-        self.expr_stack.push((expr, range));
+
+        self.expr_stack.push((expr, None, range));
+    }
+
+    fn push_generics(&mut self, generics: Id<GenericVariablePack>) {
+        if let Some((_, g, _)) = self.expr_stack.last_mut() {
+            assert!(g.is_none());
+            *g = Some(generics);
+        } else {
+            unreachable!("Cannot push generics without an expression!");
+        }
     }
 
     fn push_field(&mut self, field: FieldIdentifier) {
-        if let Some((accessed, range)) = self.pop_trailing_expression() {
+        if let Some((accessed, generics, range)) = self.pop_trailing_expression() {
+            assert!(generics.is_none());
+
             let accessed = self.insert(accessed, range);
             self.expr_stack.push((
                 FieldAccess { accessed, field, }.into(),
+                None,
                 range.extend(field.span()),
             ));
             return;
@@ -483,7 +509,7 @@ impl<'a> ShuntingYard<'a> {
         self.op_stack.push((op, pos, prec));
     }
 
-    fn pop_expression(&mut self) -> (Expression, Range) {
+    fn pop_expression(&mut self) -> (Expression, Option<Id<GenericVariablePack>>, Range) {
         self.pop_operators(Precedence(0));
 
         if let Some(r) = self.expr_stack.pop() {
@@ -497,20 +523,26 @@ impl<'a> ShuntingYard<'a> {
         while let Some((op, pos)) = self.pop_operator_impl(threshold) {
             match op {
                 Operator::Bin(op) => {
-                    let (right_hand, right_range) = self.expr_stack.pop().expect("Right");
-                    let (left_hand, left_range) = self.expr_stack.pop().expect("Left");
+                    let (right_hand, right_generics, right_range) = self.expr_stack.pop().expect("Right");
+                    let (left_hand, left_generics, left_range) = self.expr_stack.pop().expect("Left");
+                    assert!(right_generics.is_none() && left_generics.is_none());
+
                     let left = self.insert(left_hand, left_range);
                     let right = self.insert(right_hand, right_range);
                     self.expr_stack.push((
                         Expression::BinOp(op, pos, left, right),
+                        None,
                         left_range.extend(right_range),
                     ));
                 },
                 Operator::Pre(op) => {
-                    let (expr, range) = self.expr_stack.pop().expect("Expression");
+                    let (expr, generics, range) = self.expr_stack.pop().expect("Expression");
+                    assert!(generics.is_none());
+
                     let expr = self.insert(expr, range);
                     self.expr_stack.push((
                         Expression::PreOp(op, pos, expr),
+                        None,
                         Range::new(pos as usize, 1).extend(range),
                     ));
                 },
@@ -519,9 +551,9 @@ impl<'a> ShuntingYard<'a> {
     }
 
     /// Pops the last expression if there was no operator afterwards
-    fn pop_trailing_expression(&mut self) -> Option<(Expression, Range)> {
+    fn pop_trailing_expression(&mut self) -> Option<(Expression, Option<Id<GenericVariablePack>>, Range)> {
         let last_op = self.op_stack.last().map(|&(_, pos, _)| pos).unwrap_or(0);
-        if let Some((_, range)) = self.expr_stack.last().cloned() {
+        if let Some((_, _, range)) = self.expr_stack.last().cloned() {
             if last_op as usize <= range.offset() {
                 return self.expr_stack.pop();
             }
@@ -613,10 +645,11 @@ impl<'a, 'tree> PatternParser<'a, 'tree> {
     }
 
     fn parse_type_name(&mut self) -> PatternId {
-        if let Some(ty) = typ::try_parse_type(&mut self.raw, Path::empty()) {
+        let raw = &mut self.raw;
+        if let Some(ty) = typ::try_parse_type(raw, raw.tree(), Path::empty()) {
             let sep = tt::Kind::SignColon;
             let (c, range) =
-                parse_constructor_impl(&mut self.raw, parse_pattern, sep, ty);
+                parse_constructor_impl(raw, parse_pattern, sep, ty);
             self.insert(Pattern::Constructor(c), range)
         } else {
             unimplemented!("parse_type_name - {:?}", self)
@@ -832,7 +865,7 @@ mod tests {
     #[test]
     fn basic_var() {
         let env = LocalEnv::new(b" :var fool := 1234;");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(p.var(6, 4), e.int(1234, 14)).build();
 
         assert_eq!(env.actual_statement(), env.expected_tree());
@@ -841,7 +874,7 @@ mod tests {
     #[test]
     fn basic_var_automatic_insertion() {
         let env = LocalEnv::new(b" :var fool 1234");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(p.var(6, 4), e.int(1234, 11))
             .bind(0)
             .semi_colon(14)
@@ -862,7 +895,7 @@ mod tests {
     #[test]
     fn basic_constructor() {
         let env = LocalEnv::new(b"True");
-        let (e, _, _, _, _, t) = env.factories();
+        let (e, _, _, _, _, _, t) = env.factories();
         e.constructor(t.simple(0, 4)).build();
 
         assert_eq!(env.actual_expression(), env.expected_tree());
@@ -871,7 +904,7 @@ mod tests {
     #[test]
     fn basic_constructor_arguments() {
         let env = LocalEnv::new(b"Some(1)");
-        let (e, _, _, _, _, t) = env.factories();
+        let (e, _, _, _, _, _, t) = env.factories();
         e.constructor(t.simple(0, 4)).push(e.int(1, 5)).build();
 
         assert_eq!(env.actual_expression(), env.expected_tree());
@@ -880,7 +913,7 @@ mod tests {
     #[test]
     fn basic_nested_constructor() {
         let env = LocalEnv::new(b"Bool::True");
-        let (e, _, _, _, _, t) = env.factories();
+        let (e, _, _, _, _, _, t) = env.factories();
         e.constructor(t.nested(6, 4).push(0, 4).build()).build();
 
         assert_eq!(env.actual_expression(), env.expected_tree());
@@ -889,7 +922,7 @@ mod tests {
     #[test]
     fn basic_function_call() {
         let env = LocalEnv::new(b"basic(1, 2)");
-        let (e, _, _, _, _, _) = env.factories();
+        let (e, _, _, _, _, _, _) = env.factories();
         let (one, two) = (e.int(1, 6), e.int(2, 9));
         e.function_call(e.var(0, 5), 5, 10).push(one).push(two).build();
 
@@ -899,7 +932,7 @@ mod tests {
     #[test]
     fn basic_nested_function_call() {
         let env = LocalEnv::new(b"Nested::basic(1, 2)");
-        let (e, _, _, _, _, _) = env.factories();
+        let (e, _, _, _, _, _, _) = env.factories();
         let (one, two) = (e.int(1, 14), e.int(2, 17));
         e.function_call(
             e.nested(8, 5).push(0, 6).build(),
@@ -914,9 +947,20 @@ mod tests {
     }
 
     #[test]
+    fn basic_generic_function_call() {
+        let env = LocalEnv::new(b"basic[Int](1, 2)");
+        let (e, g, _, _, _, _, t) = env.factories();
+        let (one, two) = (e.int(1, 11), e.int(2, 14));
+        let generics = g.variables_tree().push(g.variable_type(t.simple(6, 3))).build();
+        e.function_call(e.var(0, 5), 10, 15).generics(generics).push(one).push(two).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
     fn basic_function_call_statement() {
         let env = LocalEnv::new(b":var a := basic(1, 2);");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         let (one, two) = (e.int(1, 16), e.int(2, 19));
         let fun = e.function_call(e.var(10, 5), 15, 20)
             .push(one)
@@ -949,7 +993,7 @@ mod tests {
     #[test]
     fn block_basic() {
         let env = LocalEnv::new(b"{\n    :var fool := 1234;\n    fool\n}");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         let int = e.int(1234, 19);
         e.block(e.var(29, 4))
             .range(0, 35)
@@ -962,7 +1006,7 @@ mod tests {
     #[test]
     fn block_return() {
         let env = LocalEnv::new(b"{ :return 1; }");
-        let (e, _, _, s, _, _) = env.factories();
+        let (e, _, _, _, s, _, _) = env.factories();
         e.block_expression_less()
             .push_stmt(s.ret().expr(e.int(1, 10)).build())
             .build();
@@ -973,7 +1017,7 @@ mod tests {
     #[test]
     fn boolean_basic() {
         let env = LocalEnv::new(b":var x := true;");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(p.var(5, 1), e.bool_(true, 10)).build();
 
         assert_eq!(env.actual_statement(), env.expected_tree());
@@ -982,7 +1026,7 @@ mod tests {
     #[test]
     fn constructor_keyed() {
         let env = LocalEnv::new(b"Person(.name := jack_jack, .age := 1)");
-        let (e, _, _, _, _, t) = env.factories();
+        let (e, _, _, _, _, _, t) = env.factories();
         e.constructor(t.simple(0, 6))
             .name(7, 5).separator(13).push(e.var(16, 9))
             .name(27, 4).separator(32).push(e.int(1, 35))
@@ -1069,9 +1113,19 @@ mod tests {
     }
 
     #[test]
+    fn method_call_generic() {
+        let env = LocalEnv::new(b"foo.bar[3]()");
+        let (e, g, _, _, _, _, _) = env.factories();
+        let generics = g.variables_tree().push(g.variable_literal(Literal::Integral(3), 8, 1)).build();
+        e.method_call(e.var(0, 3), 10, 11).generics(generics).name(3, 4).build();
+
+        assert_eq!(env.actual_expression(), env.expected_tree());
+    }
+
+    #[test]
     fn set_basic() {
         let env = LocalEnv::new(b" :set fool := 1234;");
-        let (e, _, _, s, _, _) = env.factories();
+        let (e, _, _, _, s, _, _) = env.factories();
         s.set(e.var(6, 4), e.int(1234, 14)).build();
 
         assert_eq!(env.actual_statement(), env.expected_tree());
@@ -1080,7 +1134,7 @@ mod tests {
     #[test]
     fn set_field() {
         let env = LocalEnv::new(b" :set foo.0 := 1234;");
-        let (e, _, _, s, _, _) = env.factories();
+        let (e, _, _, _, s, _, _) = env.factories();
         s.set(
             e.field_access(e.var(6, 3)).index(0).build(),
             e.int(1234, 15)
@@ -1092,7 +1146,7 @@ mod tests {
     #[test]
     fn var_constructor() {
         let env = LocalEnv::new(b":var Some(x) := Some(1);");
-        let (e, _, p, s, _, t) = env.factories();
+        let (e, _, _, p, s, _, t) = env.factories();
         s.var(
             p.constructor(t.simple(5, 4)).push(p.var(10, 1)).build(),
             e.constructor(t.simple(16, 4)).push(e.int(1, 21)).build(),
@@ -1104,7 +1158,7 @@ mod tests {
     #[test]
     fn var_constructor_keyed() {
         let env = LocalEnv::new(b":var Person(.name: n, .age: a) := p;");
-        let (e, _, p, s, _, t) = env.factories();
+        let (e, _, _, p, s, _, t) = env.factories();
         let pat = p.constructor(t.simple(5, 6))
             .name(12, 5).push(p.var(19, 1))
             .name(22, 4).push(p.var(28, 1))
@@ -1117,7 +1171,7 @@ mod tests {
     #[test]
     fn var_ignored() {
         let env = LocalEnv::new(b":var _ := 1;");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(p.ignored(5), e.int(1, 10)).build();
 
         assert_eq!(env.actual_statement(), env.expected_tree());
@@ -1126,7 +1180,7 @@ mod tests {
     #[test]
     fn var_ignored_nested() {
         let env = LocalEnv::new(b":var (_, b) := (1, 2);");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(
             p.tuple().push(p.ignored(6)).push(p.var(9, 1)).build(),
             e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
@@ -1138,7 +1192,7 @@ mod tests {
     #[test]
     fn var_tuple() {
         let env = LocalEnv::new(b":var (a, b) := (1, 2);");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(
             p.tuple().push(p.var(6, 1)).push(p.var(9, 1)).build(),
             e.tuple().push(e.int(1, 16)).push(e.int(2, 19)).build(),
@@ -1150,7 +1204,7 @@ mod tests {
     #[test]
     fn var_tuple_keyed() {
         let env = LocalEnv::new(b":var (.x: a, .y: b) := foo();");
-        let (e, _, p, s, _, _) = env.factories();
+        let (e, _, _, p, s, _, _) = env.factories();
         s.var(
             p.tuple()
                 .name(6, 2).push(p.var(10, 1))
